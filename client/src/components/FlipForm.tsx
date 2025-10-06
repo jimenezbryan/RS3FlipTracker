@@ -8,6 +8,7 @@ import { CalendarIcon } from "lucide-react";
 interface FlipFormProps {
   onSubmit: (flip: {
     itemName: string;
+    quantity: number;
     buyPrice: number;
     sellPrice?: number;
     buyDate: Date;
@@ -17,6 +18,7 @@ interface FlipFormProps {
 
 export function FlipForm({ onSubmit }: FlipFormProps) {
   const [itemName, setItemName] = useState("");
+  const [quantity, setQuantity] = useState("1");
   const [buyPrice, setBuyPrice] = useState("");
   const [sellPrice, setSellPrice] = useState("");
   const [buyDate, setBuyDate] = useState(new Date().toISOString().split('T')[0]);
@@ -25,10 +27,11 @@ export function FlipForm({ onSubmit }: FlipFormProps) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!itemName || !buyPrice || !buyDate) return;
+    if (!itemName || !quantity || !buyPrice || !buyDate) return;
 
     onSubmit({
       itemName,
+      quantity: parseInt(quantity),
       buyPrice: parseInt(buyPrice),
       sellPrice: sellPrice ? parseInt(sellPrice) : undefined,
       buyDate: new Date(buyDate),
@@ -37,6 +40,7 @@ export function FlipForm({ onSubmit }: FlipFormProps) {
 
     // Reset form
     setItemName("");
+    setQuantity("1");
     setBuyPrice("");
     setSellPrice("");
     setBuyDate(new Date().toISOString().split('T')[0]);
@@ -58,6 +62,21 @@ export function FlipForm({ onSubmit }: FlipFormProps) {
               onChange={(e) => setItemName(e.target.value)}
               placeholder="e.g., Abyssal whip"
               data-testid="input-item-name"
+              required
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="quantity">Quantity</Label>
+            <Input
+              id="quantity"
+              type="number"
+              value={quantity}
+              onChange={(e) => setQuantity(e.target.value)}
+              placeholder="1"
+              min="1"
+              data-testid="input-quantity"
+              className="font-mono"
               required
             />
           </div>

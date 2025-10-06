@@ -7,6 +7,7 @@ interface Flip {
   id: string;
   itemName: string;
   itemIcon?: string;
+  quantity: number;
   buyPrice: number;
   sellPrice?: number;
   buyDate: Date;
@@ -21,13 +22,13 @@ interface FlipTableProps {
 export function FlipTable({ flips, onDelete }: FlipTableProps) {
   const calculateProfit = (flip: Flip) => {
     if (!flip.sellPrice) return null;
-    return flip.sellPrice - flip.buyPrice;
+    return (flip.sellPrice - flip.buyPrice) * flip.quantity;
   };
 
   const calculateROI = (flip: Flip) => {
-    const profit = calculateProfit(flip);
-    if (profit === null) return null;
-    return ((profit / flip.buyPrice) * 100).toFixed(2);
+    if (!flip.sellPrice) return null;
+    const profitPerItem = flip.sellPrice - flip.buyPrice;
+    return ((profitPerItem / flip.buyPrice) * 100).toFixed(2);
   };
 
   const formatPrice = (price: number) => {
@@ -56,6 +57,9 @@ export function FlipTable({ flips, onDelete }: FlipTableProps) {
             <tr className="border-b bg-muted/50">
               <th className="px-4 py-3 text-left text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 Item
+              </th>
+              <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Qty
               </th>
               <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-muted-foreground">
                 Buy Price
@@ -95,6 +99,9 @@ export function FlipTable({ flips, onDelete }: FlipTableProps) {
                       <ItemIcon itemName={flip.itemName} itemIcon={flip.itemIcon} size="sm" />
                       <span className="font-medium">{flip.itemName}</span>
                     </div>
+                  </td>
+                  <td className="px-4 py-3 text-center font-mono text-sm">
+                    {flip.quantity}
                   </td>
                   <td className="px-4 py-3 text-right font-mono text-sm">
                     {formatPrice(flip.buyPrice)}

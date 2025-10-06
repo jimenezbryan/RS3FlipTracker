@@ -13,6 +13,7 @@ export const flips = pgTable("flips", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   itemName: text("item_name").notNull(),
   itemIcon: text("item_icon"),
+  quantity: integer("quantity").notNull().default(1),
   buyPrice: integer("buy_price").notNull(),
   sellPrice: integer("sell_price"),
   buyDate: timestamp("buy_date").notNull(),
@@ -27,6 +28,7 @@ export const insertUserSchema = createInsertSchema(users).pick({
 export const insertFlipSchema = createInsertSchema(flips).omit({
   id: true,
 }).extend({
+  quantity: z.number().int().positive().default(1),
   buyPrice: z.number().int().positive(),
   sellPrice: z.number().int().positive().optional(),
 });

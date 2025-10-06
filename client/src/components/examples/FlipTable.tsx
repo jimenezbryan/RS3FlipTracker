@@ -5,6 +5,7 @@ const mockFlips = [
   {
     id: "1",
     itemName: "Abyssal whip",
+    quantity: 10,
     buyPrice: 2500000,
     sellPrice: 2750000,
     buyDate: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
@@ -13,6 +14,7 @@ const mockFlips = [
   {
     id: "2",
     itemName: "Dragon platebody",
+    quantity: 5,
     buyPrice: 1200000,
     sellPrice: 1150000,
     buyDate: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
@@ -21,6 +23,7 @@ const mockFlips = [
   {
     id: "3",
     itemName: "Armadyl crossbow",
+    quantity: 1,
     buyPrice: 8500000,
     buyDate: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000),
   },
