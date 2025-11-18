@@ -1,50 +1,64 @@
-import { useState } from "react";
 import { Header } from "@/components/Header";
 import { FlipForm } from "@/components/FlipForm";
 import { FlipTable } from "@/components/FlipTable";
-
-interface Flip {
-  id: string;
-  itemName: string;
-  itemIcon?: string;
-  quantity: number;
-  buyPrice: number;
-  sellPrice?: number;
-  buyDate: Date;
-  sellDate?: Date;
-}
-
-// todo: remove mock functionality
-const initialFlips: Flip[] = [
-  {
-    id: "1",
-    itemName: "Abyssal whip",
-    quantity: 10,
-    buyPrice: 2500000,
-    sellPrice: 2750000,
-    buyDate: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000),
-    sellDate: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000),
-  },
-  {
-    id: "2",
-    itemName: "Dragon platebody",
-    quantity: 5,
-    buyPrice: 1200000,
-    sellPrice: 1150000,
-    buyDate: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000),
-    sellDate: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000),
-  },
-  {
-    id: "3",
-    itemName: "Armadyl crossbow",
-    quantity: 1,
-    buyPrice: 8500000,
-    buyDate: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000),
-  },
-];
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { queryClient, apiRequest } from "@/lib/queryClient";
+import type { Flip } from "@shared/schema";
+import { useToast } from "@/hooks/use-toast";
 
 export default function Home() {
-  const [flips, setFlips] = useState<Flip[]>(initialFlips);
+  const { toast } = useToast();
+  
+  const { data: flips = [], isLoading } = useQuery<Flip[]>({
+    queryKey: ["/api/flips"],
+  });
+
+  const createFlipMutation = useMutation({
+    mutationFn: async (flipData: {
+      itemName: string;
+      quantity: number;
+      buyPrice: number;
+      sellPrice?: number;
+      buyDate: Date;
+      sellDate?: Date;
+    }) => {
+      return await apiRequest("POST", "/api/flips", flipData);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/flips"] });
+      toast({
+        title: "Flip added",
+        description: "Your flip has been logged successfully",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to add flip",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteFlipMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return await apiRequest("DELETE", `/api/flips/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/flips"] });
+      toast({
+        title: "Flip deleted",
+        description: "Your flip has been removed",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to delete flip",
+        variant: "destructive",
+      });
+    },
+  });
 
   const handleAddFlip = (flipData: {
     itemName: string;
@@ -54,15 +68,11 @@ export default function Home() {
     buyDate: Date;
     sellDate?: Date;
   }) => {
-    const newFlip: Flip = {
-      id: Date.now().toString(),
-      ...flipData,
-    };
-    setFlips([newFlip, ...flips]);
+    createFlipMutation.mutate(flipData);
   };
 
   const handleDeleteFlip = (id: string) => {
-    setFlips(flips.filter((flip) => flip.id !== id));
+    deleteFlipMutation.mutate(id);
   };
 
   const totalProfit = flips.reduce((sum, flip) => {
@@ -73,6 +83,17 @@ export default function Home() {
   }, 0);
 
   const completedFlips = flips.filter((flip) => flip.sellPrice).length;
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-background">
+        <Header />
+        <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
+          <div className="text-center text-muted-foreground">Loading flips...</div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -109,7 +130,16 @@ export default function Home() {
             <FlipForm onSubmit={handleAddFlip} />
           </div>
           <div className="lg:col-span-2">
-            <FlipTable flips={flips} onDelete={handleDeleteFlip} />
+            <FlipTable 
+              flips={flips.map(flip => ({
+                ...flip,
+                itemIcon: flip.itemIcon ?? undefined,
+                sellPrice: flip.sellPrice ?? undefined,
+                buyDate: new Date(flip.buyDate),
+                sellDate: flip.sellDate ? new Date(flip.sellDate) : undefined,
+              }))} 
+              onDelete={handleDeleteFlip} 
+            />
           </div>
         </div>
       </main>
