@@ -1,7 +1,9 @@
 const GE_API_BASE = "https://api.weirdgloop.org/exchange/history/rs";
 const RS_ITEMDB_BASE = "https://secure.runescape.com/m=itemdb_rs";
+const GE_IDS_URL = "https://runescape.wiki/w/Module:GEIDs/data.json?action=raw";
+const GE_DUMP_URL = "https://chisel.weirdgloop.org/gazproj/gazbot/rs_dump.json";
 
-const USER_AGENT = "RS3FlipTracker/1.0 (Replit App)";
+const USER_AGENT = "RS3FlipTracker/1.0 (Replit App; contact@replit.com)";
 
 export interface GEItem {
   id: number;
@@ -25,6 +27,119 @@ export interface PriceTrend {
   recommendationReason: string;
 }
 
+interface CachedItem {
+  id: number;
+  name: string;
+  nameLower: string;
+}
+
+let itemCache: CachedItem[] = [];
+let itemPriceCache: Map<number, { price: number; volume?: number }> = new Map();
+let cacheLastUpdated = 0;
+const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+
+async function refreshItemCache(): Promise<void> {
+  const now = Date.now();
+  if (itemCache.length > 0 && now - cacheLastUpdated < CACHE_TTL) {
+    return;
+  }
+
+  try {
+    console.log("[ge-api] Refreshing item cache from GE dump...");
+    
+    const response = await fetch(GE_DUMP_URL, {
+      headers: { "User-Agent": USER_AGENT },
+    });
+
+    if (!response.ok) {
+      console.error("[ge-api] Failed to fetch GE dump:", response.status);
+      return;
+    }
+
+    const data = await response.json();
+    const items: CachedItem[] = [];
+    
+    for (const [key, value] of Object.entries(data)) {
+      if (key.startsWith("%")) continue;
+      
+      const itemData = value as any;
+      const id = parseInt(key);
+      
+      if (isNaN(id) || !itemData.name) continue;
+      
+      items.push({
+        id,
+        name: itemData.name,
+        nameLower: itemData.name.toLowerCase(),
+      });
+      
+      if (itemData.price) {
+        itemPriceCache.set(id, {
+          price: itemData.price,
+          volume: itemData.volume,
+        });
+      }
+    }
+    
+    itemCache = items;
+    cacheLastUpdated = now;
+    console.log(`[ge-api] Cached ${items.length} items`);
+  } catch (error) {
+    console.error("[ge-api] Failed to refresh item cache:", error);
+  }
+}
+
+function fuzzyMatch(query: string, name: string): number {
+  const queryLower = query.toLowerCase();
+  const nameLower = name.toLowerCase();
+  
+  if (nameLower === queryLower) return 100;
+  if (nameLower.startsWith(queryLower)) return 90;
+  
+  const words = nameLower.split(/\s+/);
+  for (const word of words) {
+    if (word.startsWith(queryLower)) return 80;
+  }
+  
+  if (nameLower.includes(queryLower)) return 70;
+  
+  return 0;
+}
+
+export async function searchItems(query: string): Promise<GEItem[]> {
+  await refreshItemCache();
+  
+  if (query.length < 2) return [];
+  
+  const queryLower = query.toLowerCase();
+  const matches: { item: CachedItem; score: number }[] = [];
+  
+  for (const item of itemCache) {
+    const score = fuzzyMatch(queryLower, item.name);
+    if (score > 0) {
+      matches.push({ item, score });
+    }
+  }
+  
+  matches.sort((a, b) => b.score - a.score);
+  
+  const results: GEItem[] = [];
+  for (const { item } of matches.slice(0, 15)) {
+    const priceData = itemPriceCache.get(item.id);
+    if (priceData && priceData.price > 0) {
+      results.push({
+        id: item.id,
+        name: item.name,
+        price: priceData.price,
+        volume: priceData.volume,
+        icon: `${RS_ITEMDB_BASE}/obj_sprite.gif?id=${item.id}`,
+      });
+    }
+  }
+  
+  return results;
+}
+
 export async function getItemPrice(itemName: string): Promise<GEItem | null> {
   try {
     const response = await fetch(
@@ -39,7 +154,7 @@ export async function getItemPrice(itemName: string): Promise<GEItem | null> {
     if (!response.ok) return null;
 
     const data = await response.json();
-    const keys = Object.keys(data);
+    const keys = Object.keys(data).filter(k => !k.startsWith("%"));
     
     if (keys.length === 0) return null;
 
@@ -58,41 +173,6 @@ export async function getItemPrice(itemName: string): Promise<GEItem | null> {
   } catch (error) {
     console.error("Failed to fetch GE price:", error);
     return null;
-  }
-}
-
-export async function searchItems(query: string): Promise<GEItem[]> {
-  try {
-    const response = await fetch(
-      `${GE_API_BASE}/latest?name=${encodeURIComponent(query)}`,
-      {
-        headers: {
-          "User-Agent": USER_AGENT,
-        },
-      }
-    );
-
-    if (!response.ok) return [];
-
-    const data = await response.json();
-    const items: GEItem[] = [];
-
-    for (const [itemName, itemData] of Object.entries(data)) {
-      const item = itemData as any;
-      items.push({
-        id: parseInt(item.id),
-        name: itemName,
-        price: item.price,
-        volume: item.volume,
-        timestamp: item.timestamp,
-        icon: `${RS_ITEMDB_BASE}/obj_sprite.gif?id=${item.id}`,
-      });
-    }
-
-    return items;
-  } catch (error) {
-    console.error("Failed to search items:", error);
-    return [];
   }
 }
 

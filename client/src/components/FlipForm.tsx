@@ -81,8 +81,9 @@ export function FlipForm({ onSubmit }: FlipFormProps) {
         const response = await fetch(`/api/ge/search?q=${encodeURIComponent(itemName)}`);
         if (response.ok) {
           const items: GEItem[] = await response.json();
-          setSuggestions(items.slice(0, 10));
-          setShowSuggestions(items.length > 0);
+          const validItems = items.filter(item => item.price && item.price > 0).slice(0, 10);
+          setSuggestions(validItems);
+          setShowSuggestions(validItems.length > 0);
         }
       } catch (error) {
         console.error("Search failed:", error);
@@ -350,7 +351,7 @@ export function FlipForm({ onSubmit }: FlipFormProps) {
                       <div className="flex-1 min-w-0">
                         <div className="font-medium truncate">{item.name}</div>
                         <div className="text-xs text-muted-foreground font-mono">
-                          {item.price.toLocaleString()} gp
+                          {item.price ? item.price.toLocaleString() : "N/A"} gp
                         </div>
                       </div>
                     </button>
