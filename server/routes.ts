@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertFlipSchema } from "@shared/schema";
-import { getItemPrice, searchItems } from "./ge-api";
+import { getItemPrice, searchItems, getItemTrend } from "./ge-api";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/ge/price", async (req, res) => {
@@ -34,6 +34,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(items);
     } catch (error) {
       res.status(500).json({ error: "Failed to search items" });
+    }
+  });
+
+  app.get("/api/ge/trend/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const itemId = parseInt(id);
+      
+      if (isNaN(itemId)) {
+        return res.status(400).json({ error: "Invalid item ID" });
+      }
+      
+      const trend = await getItemTrend(itemId);
+      if (!trend) {
+        return res.status(404).json({ error: "Trend data not found" });
+      }
+      
+      res.json(trend);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch trend data" });
     }
   });
 

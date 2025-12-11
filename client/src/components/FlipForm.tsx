@@ -3,7 +3,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { CalendarIcon, Search, Loader2, TrendingUp } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { CalendarIcon, Search, Loader2, TrendingUp, TrendingDown, Minus, ThumbsUp, ThumbsDown, Clock } from "lucide-react";
 
 interface GEItem {
   id: number;
@@ -11,6 +12,19 @@ interface GEItem {
   price: number;
   volume?: number;
   icon?: string;
+}
+
+interface PriceTrend {
+  direction: "rising" | "falling" | "stable";
+  changePercent: number;
+  changeAmount: number;
+  trendDays: number;
+  avgPrice7d: number;
+  avgPrice30d: number;
+  lowPrice30d: number;
+  highPrice30d: number;
+  recommendation: "buy" | "sell" | "hold";
+  recommendationReason: string;
 }
 
 interface FlipFormProps {
@@ -34,6 +48,7 @@ export function FlipForm({ onSubmit }: FlipFormProps) {
   const [sellDate, setSellDate] = useState("");
   
   const [gePrice, setGePrice] = useState<GEItem | null>(null);
+  const [priceTrend, setPriceTrend] = useState<PriceTrend | null>(null);
   const [isLookingUp, setIsLookingUp] = useState(false);
   const [lookupError, setLookupError] = useState("");
 
@@ -43,6 +58,7 @@ export function FlipForm({ onSubmit }: FlipFormProps) {
     setIsLookingUp(true);
     setLookupError("");
     setGePrice(null);
+    setPriceTrend(null);
     
     try {
       const response = await fetch(`/api/ge/price?name=${encodeURIComponent(itemName)}`);
@@ -53,12 +69,21 @@ export function FlipForm({ onSubmit }: FlipFormProps) {
         } else {
           setLookupError("Failed to fetch price");
         }
+        setIsLookingUp(false);
         return;
       }
       
       const data: GEItem = await response.json();
       setGePrice(data);
       setItemName(data.name || itemName);
+      
+      if (data.id) {
+        const trendResponse = await fetch(`/api/ge/trend/${data.id}`);
+        if (trendResponse.ok) {
+          const trendData: PriceTrend = await trendResponse.json();
+          setPriceTrend(trendData);
+        }
+      }
     } catch (error) {
       setLookupError("Failed to connect to GE API");
     } finally {
@@ -100,7 +125,59 @@ export function FlipForm({ onSubmit }: FlipFormProps) {
     setBuyDate(new Date().toISOString().split('T')[0]);
     setSellDate("");
     setGePrice(null);
+    setPriceTrend(null);
     setLookupError("");
+  };
+
+  const getTrendIcon = () => {
+    if (!priceTrend) return null;
+    switch (priceTrend.direction) {
+      case "rising":
+        return <TrendingUp className="h-4 w-4" />;
+      case "falling":
+        return <TrendingDown className="h-4 w-4" />;
+      default:
+        return <Minus className="h-4 w-4" />;
+    }
+  };
+
+  const getTrendColor = () => {
+    if (!priceTrend) return "";
+    switch (priceTrend.direction) {
+      case "rising":
+        return "text-success";
+      case "falling":
+        return "text-destructive";
+      default:
+        return "text-muted-foreground";
+    }
+  };
+
+  const getRecommendationBadge = () => {
+    if (!priceTrend) return null;
+    switch (priceTrend.recommendation) {
+      case "buy":
+        return (
+          <Badge variant="default" className="bg-success text-success-foreground">
+            <ThumbsUp className="mr-1 h-3 w-3" />
+            Good to Buy
+          </Badge>
+        );
+      case "sell":
+        return (
+          <Badge variant="destructive">
+            <ThumbsDown className="mr-1 h-3 w-3" />
+            Consider Selling
+          </Badge>
+        );
+      default:
+        return (
+          <Badge variant="secondary">
+            <Clock className="mr-1 h-3 w-3" />
+            Hold
+          </Badge>
+        );
+    }
   };
 
   return (
@@ -119,6 +196,7 @@ export function FlipForm({ onSubmit }: FlipFormProps) {
                 onChange={(e) => {
                   setItemName(e.target.value);
                   setGePrice(null);
+                  setPriceTrend(null);
                   setLookupError("");
                 }}
                 placeholder="e.g., Abyssal whip"
@@ -146,33 +224,83 @@ export function FlipForm({ onSubmit }: FlipFormProps) {
             )}
             
             {gePrice && (
-              <div className="rounded-md border bg-muted/50 p-3">
-                <div className="flex items-center gap-3">
-                  {gePrice.icon && (
-                    <img 
-                      src={gePrice.icon} 
-                      alt={gePrice.name}
-                      className="h-8 w-8 object-contain"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).style.display = 'none';
-                      }}
-                    />
-                  )}
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <TrendingUp className="h-4 w-4 text-success" />
-                      <span className="text-sm font-medium">GE Price</span>
-                    </div>
-                    <div className="font-mono text-lg font-semibold text-success">
-                      {gePrice.price.toLocaleString()} gp
-                    </div>
-                    {gePrice.volume && (
-                      <div className="text-xs text-muted-foreground">
-                        Volume: {gePrice.volume.toLocaleString()}
-                      </div>
+              <div className="space-y-3">
+                <div className="rounded-md border bg-muted/50 p-3">
+                  <div className="flex items-center gap-3">
+                    {gePrice.icon && (
+                      <img 
+                        src={gePrice.icon} 
+                        alt={gePrice.name}
+                        className="h-8 w-8 object-contain"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = 'none';
+                        }}
+                      />
                     )}
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <TrendingUp className="h-4 w-4 text-success" />
+                        <span className="text-sm font-medium">GE Price</span>
+                      </div>
+                      <div className="font-mono text-lg font-semibold text-success">
+                        {gePrice.price.toLocaleString()} gp
+                      </div>
+                      {gePrice.volume && (
+                        <div className="text-xs text-muted-foreground">
+                          Volume: {gePrice.volume.toLocaleString()}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
+
+                {priceTrend && (
+                  <div className="rounded-md border bg-card p-3 space-y-3">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <span className={`flex items-center gap-1 font-medium ${getTrendColor()}`}>
+                          {getTrendIcon()}
+                          {priceTrend.direction === "rising" ? "Rising" : 
+                           priceTrend.direction === "falling" ? "Falling" : "Stable"}
+                        </span>
+                        <span className="text-sm text-muted-foreground">
+                          for {priceTrend.trendDays} day{priceTrend.trendDays !== 1 ? "s" : ""}
+                        </span>
+                      </div>
+                      <span className={`font-mono text-sm ${priceTrend.changePercent > 0 ? "text-success" : priceTrend.changePercent < 0 ? "text-destructive" : ""}`}>
+                        {priceTrend.changePercent > 0 ? "+" : ""}{priceTrend.changePercent}% ({priceTrend.changeAmount > 0 ? "+" : ""}{priceTrend.changeAmount.toLocaleString()} gp)
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div>
+                        <span className="text-muted-foreground">7d Avg:</span>{" "}
+                        <span className="font-mono">{priceTrend.avgPrice7d.toLocaleString()}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">30d Avg:</span>{" "}
+                        <span className="font-mono">{priceTrend.avgPrice30d.toLocaleString()}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">30d Low:</span>{" "}
+                        <span className="font-mono text-success">{priceTrend.lowPrice30d.toLocaleString()}</span>
+                      </div>
+                      <div>
+                        <span className="text-muted-foreground">30d High:</span>{" "}
+                        <span className="font-mono text-destructive">{priceTrend.highPrice30d.toLocaleString()}</span>
+                      </div>
+                    </div>
+
+                    <div className="border-t pt-3">
+                      <div className="flex items-center gap-2 mb-1">
+                        {getRecommendationBadge()}
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        {priceTrend.recommendationReason}
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
