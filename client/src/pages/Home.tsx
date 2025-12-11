@@ -153,6 +153,16 @@ export default function Home() {
 
   const completedFlips = flips.filter((flip) => flip.sellPrice).length;
 
+  const openPositions = flips
+    .filter((flip) => !flip.sellPrice)
+    .map((flip) => ({
+      id: flip.id,
+      itemName: flip.itemName,
+      quantity: flip.quantity,
+      buyPrice: flip.buyPrice,
+      buyDate: new Date(flip.buyDate),
+    }));
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background">
@@ -201,7 +211,7 @@ export default function Home() {
 
         <div className="grid gap-8 lg:grid-cols-3">
           <div className="lg:col-span-1">
-            <FlipForm onSubmit={handleAddFlip} />
+            <FlipForm onSubmit={handleAddFlip} openPositions={openPositions} />
           </div>
           <div className="lg:col-span-2">
             <FlipTable 

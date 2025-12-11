@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { CalendarIcon, Search, Loader2, TrendingUp, TrendingDown, Minus, ThumbsUp, ThumbsDown, Clock } from "lucide-react";
+import { CalendarIcon, Search, Loader2, TrendingUp, TrendingDown, Minus, ThumbsUp, ThumbsDown, Clock, AlertTriangle } from "lucide-react";
 import { format, subDays } from "date-fns";
 import { cn } from "@/lib/utils";
 
@@ -31,6 +31,14 @@ interface PriceTrend {
   recommendationReason: string;
 }
 
+interface OpenPosition {
+  id: string;
+  itemName: string;
+  quantity: number;
+  buyPrice: number;
+  buyDate: Date;
+}
+
 interface FlipFormProps {
   onSubmit: (flip: {
     itemName: string;
@@ -41,9 +49,10 @@ interface FlipFormProps {
     buyDate: Date;
     sellDate?: Date;
   }) => void;
+  openPositions?: OpenPosition[];
 }
 
-export function FlipForm({ onSubmit }: FlipFormProps) {
+export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
   const [itemName, setItemName] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [buyPrice, setBuyPrice] = useState("");
@@ -63,6 +72,13 @@ export function FlipForm({ onSubmit }: FlipFormProps) {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const duplicatePosition = useMemo(() => {
+    if (!itemName.trim()) return null;
+    return openPositions.find(
+      pos => pos.itemName.toLowerCase() === itemName.toLowerCase()
+    );
+  }, [itemName, openPositions]);
 
   useEffect(() => {
     if (searchTimeoutRef.current) {
@@ -362,6 +378,20 @@ export function FlipForm({ onSubmit }: FlipFormProps) {
             
             {lookupError && (
               <p className="text-sm text-destructive">{lookupError}</p>
+            )}
+
+            {duplicatePosition && (
+              <div className="rounded-md border border-warning bg-warning/10 p-3" data-testid="warning-duplicate-position">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="h-4 w-4 text-warning mt-0.5 shrink-0" />
+                  <div className="text-sm">
+                    <p className="font-medium text-warning-foreground">Open position exists</p>
+                    <p className="text-muted-foreground">
+                      You already have an open position for {duplicatePosition.itemName}: {duplicatePosition.quantity.toLocaleString()} units at {duplicatePosition.buyPrice.toLocaleString()} gp each
+                    </p>
+                  </div>
+                </div>
+              </div>
             )}
             
             {gePrice && (

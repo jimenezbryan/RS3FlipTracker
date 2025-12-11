@@ -11,8 +11,14 @@ export default {
         sm: ".1875rem", /* 3px */
       },
       colors: {
-        success: "hsl(145 65% 50% / <alpha-value>)",
-        warning: "hsl(35 85% 55% / <alpha-value>)",
+        success: {
+          DEFAULT: "hsl(145 65% 50% / <alpha-value>)",
+          foreground: "hsl(145 65% 98% / <alpha-value>)",
+        },
+        warning: {
+          DEFAULT: "hsl(35 85% 55% / <alpha-value>)",
+          foreground: "hsl(35 85% 15% / <alpha-value>)",
+        },
         background: "hsl(var(--background) / <alpha-value>)",
         foreground: "hsl(var(--foreground) / <alpha-value>)",
         border: "hsl(var(--border) / <alpha-value>)",
