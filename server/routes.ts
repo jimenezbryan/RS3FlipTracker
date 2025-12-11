@@ -3,8 +3,22 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertFlipSchema } from "@shared/schema";
 import { getItemPrice, searchItems, getItemTrend } from "./ge-api";
+import { setupAuth, isAuthenticated } from "./replitAuth";
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  await setupAuth(app);
+
+  app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const user = await storage.getUser(userId);
+      res.json(user);
+    } catch (error) {
+      console.error("Error fetching user:", error);
+      res.status(500).json({ message: "Failed to fetch user" });
+    }
+  });
+
   app.get("/api/ge/price", async (req, res) => {
     try {
       const { name } = req.query;
@@ -57,30 +71,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/flips", async (_req, res) => {
+  app.get("/api/flips", isAuthenticated, async (req: any, res) => {
     try {
-      const flips = await storage.getFlips();
+      const userId = req.user.claims.sub;
+      const flips = await storage.getFlips(userId);
       res.json(flips);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch flips" });
     }
   });
 
-  app.post("/api/flips", async (req, res) => {
+  app.post("/api/flips", isAuthenticated, async (req: any, res) => {
     try {
+      const userId = req.user.claims.sub;
       const validatedFlip = insertFlipSchema.parse(req.body);
-      const newFlip = await storage.createFlip(validatedFlip);
+      const newFlip = await storage.createFlip(userId, validatedFlip);
       res.status(201).json(newFlip);
     } catch (error) {
       res.status(400).json({ error: "Invalid flip data" });
     }
   });
 
-  app.patch("/api/flips/:id", async (req, res) => {
+  app.patch("/api/flips/:id", isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
+      const userId = req.user.claims.sub;
       const validatedFlip = insertFlipSchema.partial().parse(req.body);
-      const updatedFlip = await storage.updateFlip(id, validatedFlip);
+      const updatedFlip = await storage.updateFlip(id, userId, validatedFlip);
       
       if (!updatedFlip) {
         return res.status(404).json({ error: "Flip not found" });
@@ -92,10 +109,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.delete("/api/flips/:id", async (req, res) => {
+  app.delete("/api/flips/:id", isAuthenticated, async (req: any, res) => {
     try {
       const { id } = req.params;
-      const success = await storage.deleteFlip(id);
+      const userId = req.user.claims.sub;
+      const success = await storage.deleteFlip(id, userId);
       
       if (!success) {
         return res.status(404).json({ error: "Flip not found" });

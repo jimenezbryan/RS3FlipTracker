@@ -1,18 +1,17 @@
-import { users, flips, type User, type InsertUser, type Flip, type InsertFlip } from "@shared/schema";
+import { users, flips, type User, type UpsertUser, type Flip, type InsertFlip } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and } from "drizzle-orm";
 import { randomUUID } from "crypto";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
-  getUserByUsername(username: string): Promise<User | undefined>;
-  createUser(user: InsertUser): Promise<User>;
+  upsertUser(user: UpsertUser): Promise<User>;
   
-  createFlip(flip: InsertFlip): Promise<Flip>;
-  getFlips(): Promise<Flip[]>;
+  createFlip(userId: string, flip: InsertFlip): Promise<Flip>;
+  getFlips(userId: string): Promise<Flip[]>;
   getFlip(id: string): Promise<Flip | undefined>;
-  updateFlip(id: string, flip: Partial<InsertFlip>): Promise<Flip | undefined>;
-  deleteFlip(id: string): Promise<boolean>;
+  updateFlip(id: string, userId: string, flip: Partial<InsertFlip>): Promise<Flip | undefined>;
+  deleteFlip(id: string, userId: string): Promise<boolean>;
 }
 
 export class MemStorage implements IStorage {
@@ -23,21 +22,36 @@ export class MemStorage implements IStorage {
     return this.users.get(id);
   }
 
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(u => u.username === username);
-  }
-
-  async createUser(insertUser: InsertUser): Promise<User> {
-    const id = randomUUID();
-    const user: User = { id, ...insertUser };
+  async upsertUser(userData: UpsertUser): Promise<User> {
+    const existing = userData.id ? this.users.get(userData.id) : undefined;
+    if (existing) {
+      const updated: User = {
+        ...existing,
+        ...userData,
+        updatedAt: new Date(),
+      };
+      this.users.set(existing.id, updated);
+      return updated;
+    }
+    const id = userData.id || randomUUID();
+    const user: User = {
+      id,
+      email: userData.email ?? null,
+      firstName: userData.firstName ?? null,
+      lastName: userData.lastName ?? null,
+      profileImageUrl: userData.profileImageUrl ?? null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
     this.users.set(id, user);
     return user;
   }
 
-  async createFlip(flip: InsertFlip): Promise<Flip> {
+  async createFlip(userId: string, flip: InsertFlip): Promise<Flip> {
     const id = randomUUID();
     const newFlip: Flip = {
       id,
+      userId,
       itemName: flip.itemName,
       itemIcon: flip.itemIcon ?? null,
       quantity: flip.quantity ?? 1,
@@ -50,19 +64,19 @@ export class MemStorage implements IStorage {
     return newFlip;
   }
 
-  async getFlips(): Promise<Flip[]> {
-    return Array.from(this.flips.values()).sort((a, b) => 
-      new Date(b.buyDate).getTime() - new Date(a.buyDate).getTime()
-    );
+  async getFlips(userId: string): Promise<Flip[]> {
+    return Array.from(this.flips.values())
+      .filter(f => f.userId === userId)
+      .sort((a, b) => new Date(b.buyDate).getTime() - new Date(a.buyDate).getTime());
   }
 
   async getFlip(id: string): Promise<Flip | undefined> {
     return this.flips.get(id);
   }
 
-  async updateFlip(id: string, flipUpdate: Partial<InsertFlip>): Promise<Flip | undefined> {
+  async updateFlip(id: string, userId: string, flipUpdate: Partial<InsertFlip>): Promise<Flip | undefined> {
     const existing = this.flips.get(id);
-    if (!existing) return undefined;
+    if (!existing || existing.userId !== userId) return undefined;
     
     const updated: Flip = {
       ...existing,
@@ -74,7 +88,9 @@ export class MemStorage implements IStorage {
     return updated;
   }
 
-  async deleteFlip(id: string): Promise<boolean> {
+  async deleteFlip(id: string, userId: string): Promise<boolean> {
+    const existing = this.flips.get(id);
+    if (!existing || existing.userId !== userId) return false;
     return this.flips.delete(id);
   }
 }
@@ -85,29 +101,31 @@ export class DatabaseStorage implements IStorage {
     return user || undefined;
   }
 
-  async getUserByUsername(username: string): Promise<User | undefined> {
-    const [user] = await db.select().from(users).where(eq(users.username, username));
-    return user || undefined;
-  }
-
-  async createUser(insertUser: InsertUser): Promise<User> {
+  async upsertUser(userData: UpsertUser): Promise<User> {
     const [user] = await db
       .insert(users)
-      .values(insertUser)
+      .values(userData)
+      .onConflictDoUpdate({
+        target: users.id,
+        set: {
+          ...userData,
+          updatedAt: new Date(),
+        },
+      })
       .returning();
     return user;
   }
 
-  async createFlip(flip: InsertFlip): Promise<Flip> {
+  async createFlip(userId: string, flip: InsertFlip): Promise<Flip> {
     const [newFlip] = await db
       .insert(flips)
-      .values(flip)
+      .values({ ...flip, userId })
       .returning();
     return newFlip;
   }
 
-  async getFlips(): Promise<Flip[]> {
-    return await db.select().from(flips).orderBy(desc(flips.buyDate));
+  async getFlips(userId: string): Promise<Flip[]> {
+    return await db.select().from(flips).where(eq(flips.userId, userId)).orderBy(desc(flips.buyDate));
   }
 
   async getFlip(id: string): Promise<Flip | undefined> {
@@ -115,17 +133,17 @@ export class DatabaseStorage implements IStorage {
     return flip || undefined;
   }
 
-  async updateFlip(id: string, flipUpdate: Partial<InsertFlip>): Promise<Flip | undefined> {
+  async updateFlip(id: string, userId: string, flipUpdate: Partial<InsertFlip>): Promise<Flip | undefined> {
     const [updatedFlip] = await db
       .update(flips)
       .set(flipUpdate)
-      .where(eq(flips.id, id))
+      .where(and(eq(flips.id, id), eq(flips.userId, userId)))
       .returning();
     return updatedFlip || undefined;
   }
 
-  async deleteFlip(id: string): Promise<boolean> {
-    const result = await db.delete(flips).where(eq(flips.id, id)).returning();
+  async deleteFlip(id: string, userId: string): Promise<boolean> {
+    const result = await db.delete(flips).where(and(eq(flips.id, id), eq(flips.userId, userId))).returning();
     return result.length > 0;
   }
 }
