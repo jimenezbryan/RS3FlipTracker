@@ -28,9 +28,9 @@ export const insertUserSchema = createInsertSchema(users).pick({
 export const insertFlipSchema = createInsertSchema(flips).omit({
   id: true,
 }).extend({
-  quantity: z.number().int().positive().default(1),
-  buyPrice: z.number().int().positive(),
-  sellPrice: z.number().int().positive().optional(),
+  quantity: z.coerce.number().int().positive().default(1),
+  buyPrice: z.coerce.number().int().positive(),
+  sellPrice: z.coerce.number().int().positive().optional(),
   buyDate: z.coerce.date(),
   sellDate: z.coerce.date().optional(),
 });
