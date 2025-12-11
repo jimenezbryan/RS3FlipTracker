@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
-import { CalendarIcon, Search, Loader2, TrendingUp, TrendingDown, Minus, ThumbsUp, ThumbsDown, Clock, Upload, Camera, X } from "lucide-react";
+import { CalendarIcon, Search, Loader2, TrendingUp, TrendingDown, Minus, ThumbsUp, ThumbsDown, Clock } from "lucide-react";
 import { format, subDays } from "date-fns";
 import { cn } from "@/lib/utils";
 
@@ -58,10 +58,68 @@ export function FlipForm({ onSubmit }: FlipFormProps) {
   const [isLookingUp, setIsLookingUp] = useState(false);
   const [lookupError, setLookupError] = useState("");
 
-  const [isOcrProcessing, setIsOcrProcessing] = useState(false);
-  const [ocrPreview, setOcrPreview] = useState<string | null>(null);
-  const [ocrError, setOcrError] = useState("");
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [suggestions, setSuggestions] = useState<GEItem[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+
+    if (itemName.trim().length < 2) {
+      setSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+
+    searchTimeoutRef.current = setTimeout(async () => {
+      setIsSearching(true);
+      try {
+        const response = await fetch(`/api/ge/search?q=${encodeURIComponent(itemName)}`);
+        if (response.ok) {
+          const items: GEItem[] = await response.json();
+          setSuggestions(items.slice(0, 10));
+          setShowSuggestions(items.length > 0);
+        }
+      } catch (error) {
+        console.error("Search failed:", error);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 300);
+
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
+  }, [itemName]);
+
+  const handleSelectItem = (item: GEItem) => {
+    setItemName(item.name);
+    setGePrice(item);
+    setSuggestions([]);
+    setShowSuggestions(false);
+    
+    if (item.id) {
+      fetchTrend(item.id);
+    }
+  };
+
+  const fetchTrend = async (itemId: number) => {
+    try {
+      const trendResponse = await fetch(`/api/ge/trend/${itemId}`);
+      if (trendResponse.ok) {
+        const trendData: PriceTrend = await trendResponse.json();
+        setPriceTrend(trendData);
+      }
+    } catch (error) {
+      console.error("Failed to fetch trend:", error);
+    }
+  };
 
   const handleLookup = async () => {
     if (!itemName.trim()) return;
@@ -89,11 +147,7 @@ export function FlipForm({ onSubmit }: FlipFormProps) {
       setItemName(data.name || itemName);
       
       if (data.id) {
-        const trendResponse = await fetch(`/api/ge/trend/${data.id}`);
-        if (trendResponse.ok) {
-          const trendData: PriceTrend = await trendResponse.json();
-          setPriceTrend(trendData);
-        }
+        await fetchTrend(data.id);
       }
     } catch (error) {
       setLookupError("Failed to connect to GE API");
@@ -112,60 +166,6 @@ export function FlipForm({ onSubmit }: FlipFormProps) {
     if (gePrice) {
       setSellPrice(gePrice.price.toString());
     }
-  };
-
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    if (!file.type.startsWith('image/')) {
-      setOcrError("Please upload an image file");
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = async () => {
-      const base64 = reader.result as string;
-      setOcrPreview(base64);
-      setOcrError("");
-      setIsOcrProcessing(true);
-
-      try {
-        const response = await fetch('/api/flips/ocr', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image: base64 }),
-        });
-
-        if (!response.ok) {
-          throw new Error('OCR processing failed');
-        }
-
-        const data = await response.json();
-        
-        if (data.itemName) setItemName(data.itemName);
-        if (data.quantity) setQuantity(data.quantity.toString());
-        if (data.buyPrice) setBuyPrice(data.buyPrice.toString());
-        if (data.sellPrice) setSellPrice(data.sellPrice.toString());
-        if (data.buyDate) setBuyDate(new Date(data.buyDate));
-        if (data.sellDate) setSellDate(new Date(data.sellDate));
-
-      } catch (error) {
-        setOcrError("Could not extract data from image. Please fill manually.");
-      } finally {
-        setIsOcrProcessing(false);
-      }
-    };
-    reader.readAsDataURL(file);
-
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
-    }
-  };
-
-  const clearOcrPreview = () => {
-    setOcrPreview(null);
-    setOcrError("");
   };
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -192,8 +192,8 @@ export function FlipForm({ onSubmit }: FlipFormProps) {
     setGePrice(null);
     setPriceTrend(null);
     setLookupError("");
-    setOcrPreview(null);
-    setOcrError("");
+    setSuggestions([]);
+    setShowSuggestions(false);
   };
 
   const getTrendIcon = () => {
@@ -273,98 +273,90 @@ export function FlipForm({ onSubmit }: FlipFormProps) {
   return (
     <Card>
       <CardHeader className="pb-4">
-        <div className="flex items-center justify-between gap-2">
-          <CardTitle className="text-lg">Log Flip</CardTitle>
-          <div className="relative">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              onChange={handleFileUpload}
-              className="hidden"
-              data-testid="input-screenshot-upload"
-            />
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isOcrProcessing}
-              data-testid="button-upload-screenshot"
-            >
-              {isOcrProcessing ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <Camera className="mr-2 h-4 w-4" />
-              )}
-              {isOcrProcessing ? "Processing..." : "Scan Screenshot"}
-            </Button>
-          </div>
-        </div>
+        <CardTitle className="text-lg">Log Flip</CardTitle>
       </CardHeader>
       <CardContent>
-        {ocrPreview && (
-          <div className="mb-4 relative">
-            <div className="rounded-md border overflow-hidden bg-muted/50">
-              <img 
-                src={ocrPreview} 
-                alt="Screenshot preview" 
-                className="w-full max-h-32 object-contain"
-              />
-            </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon"
-              className="absolute top-1 right-1 h-6 w-6"
-              onClick={clearOcrPreview}
-              data-testid="button-clear-screenshot"
-            >
-              <X className="h-4 w-4" />
-            </Button>
-            {isOcrProcessing && (
-              <div className="absolute inset-0 flex items-center justify-center bg-background/80">
-                <Loader2 className="h-8 w-8 animate-spin text-primary" />
-              </div>
-            )}
-          </div>
-        )}
-
-        {ocrError && (
-          <p className="text-sm text-destructive mb-4">{ocrError}</p>
-        )}
-
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="itemName">Item Name</Label>
-            <div className="flex gap-2">
-              <Input
-                id="itemName"
-                value={itemName}
-                onChange={(e) => {
-                  setItemName(e.target.value);
-                  setGePrice(null);
-                  setPriceTrend(null);
-                  setLookupError("");
-                }}
-                placeholder="e.g., Abyssal whip"
-                data-testid="input-item-name"
-                required
-              />
-              <Button 
-                type="button" 
-                variant="outline" 
-                size="icon"
-                onClick={handleLookup}
-                disabled={isLookingUp || !itemName.trim()}
-                data-testid="button-lookup-price"
-              >
-                {isLookingUp ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <Search className="h-4 w-4" />
-                )}
-              </Button>
+            <div className="relative">
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Input
+                    ref={inputRef}
+                    id="itemName"
+                    value={itemName}
+                    onChange={(e) => {
+                      setItemName(e.target.value);
+                      setGePrice(null);
+                      setPriceTrend(null);
+                      setLookupError("");
+                    }}
+                    onFocus={() => {
+                      if (suggestions.length > 0) {
+                        setShowSuggestions(true);
+                      }
+                    }}
+                    onBlur={() => {
+                      setTimeout(() => setShowSuggestions(false), 200);
+                    }}
+                    placeholder="Start typing to search..."
+                    data-testid="input-item-name"
+                    autoComplete="off"
+                    required
+                  />
+                  {isSearching && (
+                    <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                    </div>
+                  )}
+                </div>
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  size="icon"
+                  onClick={handleLookup}
+                  disabled={isLookingUp || !itemName.trim()}
+                  data-testid="button-lookup-price"
+                >
+                  {isLookingUp ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Search className="h-4 w-4" />
+                  )}
+                </Button>
+              </div>
+              
+              {showSuggestions && suggestions.length > 0 && (
+                <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-64 overflow-auto" data-testid="suggestions-dropdown">
+                  {suggestions.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className="w-full flex items-center gap-3 px-3 py-2 hover-elevate text-left"
+                      onClick={() => handleSelectItem(item)}
+                      data-testid={`suggestion-item-${item.id}`}
+                    >
+                      {item.icon && (
+                        <img 
+                          src={item.icon} 
+                          alt={item.name}
+                          className="h-6 w-6 object-contain"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).style.display = 'none';
+                          }}
+                        />
+                      )}
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium truncate">{item.name}</div>
+                        <div className="text-xs text-muted-foreground font-mono">
+                          {item.price.toLocaleString()} gp
+                        </div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             
             {lookupError && (
