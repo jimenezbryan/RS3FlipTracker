@@ -52,3 +52,56 @@ export const insertFlipSchema = createInsertSchema(flips).omit({
 
 export type InsertFlip = z.infer<typeof insertFlipSchema>;
 export type Flip = typeof flips.$inferSelect;
+
+// Watchlist table for tracking items without logging flips
+export const watchlist = pgTable("watchlist", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  itemId: integer("item_id").notNull(),
+  itemName: text("item_name").notNull(),
+  itemIcon: text("item_icon"),
+  targetBuyPrice: integer("target_buy_price"),
+  targetSellPrice: integer("target_sell_price"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertWatchlistSchema = createInsertSchema(watchlist).omit({
+  id: true,
+  createdAt: true,
+}).extend({
+  itemId: z.coerce.number().int().positive(),
+  targetBuyPrice: z.coerce.number().int().positive().optional(),
+  targetSellPrice: z.coerce.number().int().positive().optional(),
+});
+
+export type InsertWatchlistItem = z.infer<typeof insertWatchlistSchema>;
+export type WatchlistItem = typeof watchlist.$inferSelect;
+
+// Price alerts table
+export const priceAlerts = pgTable("price_alerts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  itemId: integer("item_id").notNull(),
+  itemName: text("item_name").notNull(),
+  itemIcon: text("item_icon"),
+  alertType: varchar("alert_type", { length: 10 }).notNull(), // 'above' or 'below'
+  targetPrice: integer("target_price").notNull(),
+  isActive: integer("is_active").notNull().default(1),
+  triggeredAt: timestamp("triggered_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertPriceAlertSchema = createInsertSchema(priceAlerts).omit({
+  id: true,
+  isActive: true,
+  triggeredAt: true,
+  createdAt: true,
+}).extend({
+  itemId: z.coerce.number().int().positive(),
+  alertType: z.enum(["above", "below"]),
+  targetPrice: z.coerce.number().int().positive(),
+});
+
+export type InsertPriceAlert = z.infer<typeof insertPriceAlertSchema>;
+export type PriceAlert = typeof priceAlerts.$inferSelect;

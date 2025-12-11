@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertFlipSchema } from "@shared/schema";
+import { insertFlipSchema, insertWatchlistSchema, insertPriceAlertSchema } from "@shared/schema";
 import { getItemPrice, searchItems, getItemTrend } from "./ge-api";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 
@@ -122,6 +122,114 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(204).send();
     } catch (error) {
       res.status(500).json({ error: "Failed to delete flip" });
+    }
+  });
+
+  app.get("/api/watchlist", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const items = await storage.getWatchlist(userId);
+      res.json(items);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch watchlist" });
+    }
+  });
+
+  app.post("/api/watchlist", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const validatedItem = insertWatchlistSchema.parse(req.body);
+      const newItem = await storage.createWatchlistItem(userId, validatedItem);
+      res.status(201).json(newItem);
+    } catch (error) {
+      res.status(400).json({ error: "Invalid watchlist item data" });
+    }
+  });
+
+  app.patch("/api/watchlist/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.claims.sub;
+      const validatedItem = insertWatchlistSchema.partial().parse(req.body);
+      const updatedItem = await storage.updateWatchlistItem(id, userId, validatedItem);
+      
+      if (!updatedItem) {
+        return res.status(404).json({ error: "Watchlist item not found" });
+      }
+      
+      res.json(updatedItem);
+    } catch (error) {
+      res.status(400).json({ error: "Invalid watchlist item data" });
+    }
+  });
+
+  app.delete("/api/watchlist/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.claims.sub;
+      const success = await storage.deleteWatchlistItem(id, userId);
+      
+      if (!success) {
+        return res.status(404).json({ error: "Watchlist item not found" });
+      }
+      
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete watchlist item" });
+    }
+  });
+
+  app.get("/api/alerts", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const alerts = await storage.getPriceAlerts(userId);
+      res.json(alerts);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch price alerts" });
+    }
+  });
+
+  app.post("/api/alerts", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const validatedAlert = insertPriceAlertSchema.parse(req.body);
+      const newAlert = await storage.createPriceAlert(userId, validatedAlert);
+      res.status(201).json(newAlert);
+    } catch (error) {
+      res.status(400).json({ error: "Invalid price alert data" });
+    }
+  });
+
+  app.patch("/api/alerts/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.claims.sub;
+      const validatedAlert = insertPriceAlertSchema.partial().parse(req.body);
+      const updatedAlert = await storage.updatePriceAlert(id, userId, validatedAlert);
+      
+      if (!updatedAlert) {
+        return res.status(404).json({ error: "Price alert not found" });
+      }
+      
+      res.json(updatedAlert);
+    } catch (error) {
+      res.status(400).json({ error: "Invalid price alert data" });
+    }
+  });
+
+  app.delete("/api/alerts/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.claims.sub;
+      const success = await storage.deletePriceAlert(id, userId);
+      
+      if (!success) {
+        return res.status(404).json({ error: "Price alert not found" });
+      }
+      
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete price alert" });
     }
   });
 
