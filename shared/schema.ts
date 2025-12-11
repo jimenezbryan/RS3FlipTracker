@@ -42,6 +42,7 @@ export type User = typeof users.$inferSelect;
 
 export const insertFlipSchema = createInsertSchema(flips).omit({
   id: true,
+  userId: true,
 }).extend({
   quantity: z.coerce.number().int().positive().default(1),
   buyPrice: z.coerce.number().int().positive(),
@@ -68,6 +69,7 @@ export const watchlist = pgTable("watchlist", {
 
 export const insertWatchlistSchema = createInsertSchema(watchlist).omit({
   id: true,
+  userId: true,
   createdAt: true,
 }).extend({
   itemId: z.coerce.number().int().positive(),
@@ -94,6 +96,7 @@ export const priceAlerts = pgTable("price_alerts", {
 
 export const insertPriceAlertSchema = createInsertSchema(priceAlerts).omit({
   id: true,
+  userId: true,
   isActive: true,
   triggeredAt: true,
   createdAt: true,
