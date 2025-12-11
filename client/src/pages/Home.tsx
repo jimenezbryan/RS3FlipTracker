@@ -61,6 +61,32 @@ export default function Home() {
     },
   });
 
+  const updateFlipMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: Partial<{
+      quantity: number;
+      buyPrice: number;
+      sellPrice?: number;
+      buyDate: Date;
+      sellDate?: Date;
+    }> }) => {
+      return await apiRequest("PATCH", `/api/flips/${id}`, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/flips"] });
+      toast({
+        title: "Flip updated",
+        description: "Your flip has been updated successfully",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to update flip",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleAddFlip = (flipData: {
     itemName: string;
     itemIcon?: string;
@@ -75,6 +101,16 @@ export default function Home() {
 
   const handleDeleteFlip = (id: string) => {
     deleteFlipMutation.mutate(id);
+  };
+
+  const handleEditFlip = (id: string, data: Partial<{
+    quantity: number;
+    buyPrice: number;
+    sellPrice?: number;
+    buyDate: Date;
+    sellDate?: Date;
+  }>) => {
+    updateFlipMutation.mutate({ id, data });
   };
 
   const GE_TAX_RATE = 0.02;
@@ -165,7 +201,8 @@ export default function Home() {
                 buyDate: new Date(flip.buyDate),
                 sellDate: flip.sellDate ? new Date(flip.sellDate) : undefined,
               }))} 
-              onDelete={handleDeleteFlip} 
+              onDelete={handleDeleteFlip}
+              onEdit={handleEditFlip}
             />
           </div>
         </div>
