@@ -77,9 +77,29 @@ export default function Home() {
     deleteFlipMutation.mutate(id);
   };
 
+  const GE_TAX_RATE = 0.02;
+  const GE_TAX_CAP = 5_000_000;
+
+  const calculateGETax = (sellPrice: number, quantity: number) => {
+    const grossRevenue = sellPrice * quantity;
+    const rawTax = grossRevenue * GE_TAX_RATE;
+    return Math.min(rawTax, GE_TAX_CAP);
+  };
+
   const totalProfit = flips.reduce((sum, flip) => {
     if (flip.sellPrice) {
-      return sum + (flip.sellPrice - flip.buyPrice) * flip.quantity;
+      const grossRevenue = flip.sellPrice * flip.quantity;
+      const tax = calculateGETax(flip.sellPrice, flip.quantity);
+      const netRevenue = grossRevenue - tax;
+      const totalCost = flip.buyPrice * flip.quantity;
+      return sum + (netRevenue - totalCost);
+    }
+    return sum;
+  }, 0);
+
+  const totalTaxPaid = flips.reduce((sum, flip) => {
+    if (flip.sellPrice) {
+      return sum + calculateGETax(flip.sellPrice, flip.quantity);
     }
     return sum;
   }, 0);
@@ -122,8 +142,13 @@ export default function Home() {
               }`}
               data-testid="text-total-profit"
             >
-              {totalProfit > 0 ? "+" : ""}{totalProfit.toLocaleString()}
+              {totalProfit > 0 ? "+" : ""}{Math.round(totalProfit).toLocaleString()}
             </div>
+            {totalTaxPaid > 0 && (
+              <div className="mt-1 text-xs text-muted-foreground font-mono" data-testid="text-total-tax">
+                -{Math.round(totalTaxPaid).toLocaleString()} tax paid
+              </div>
+            )}
           </div>
         </div>
 

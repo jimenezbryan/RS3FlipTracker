@@ -19,16 +19,36 @@ interface FlipTableProps {
   onDelete: (id: string) => void;
 }
 
+const GE_TAX_RATE = 0.02;
+const GE_TAX_CAP = 5_000_000;
+
 export function FlipTable({ flips, onDelete }: FlipTableProps) {
+  const calculateGETax = (sellPrice: number, quantity: number) => {
+    const grossRevenue = sellPrice * quantity;
+    const rawTax = grossRevenue * GE_TAX_RATE;
+    return Math.min(rawTax, GE_TAX_CAP);
+  };
+
   const calculateProfit = (flip: Flip) => {
     if (!flip.sellPrice) return null;
-    return (flip.sellPrice - flip.buyPrice) * flip.quantity;
+    const grossRevenue = flip.sellPrice * flip.quantity;
+    const tax = calculateGETax(flip.sellPrice, flip.quantity);
+    const netRevenue = grossRevenue - tax;
+    const totalCost = flip.buyPrice * flip.quantity;
+    return netRevenue - totalCost;
   };
 
   const calculateROI = (flip: Flip) => {
     if (!flip.sellPrice) return null;
-    const profitPerItem = flip.sellPrice - flip.buyPrice;
-    return ((profitPerItem / flip.buyPrice) * 100).toFixed(2);
+    const profit = calculateProfit(flip);
+    if (profit === null) return null;
+    const totalCost = flip.buyPrice * flip.quantity;
+    return ((profit / totalCost) * 100).toFixed(2);
+  };
+
+  const getTaxPaid = (flip: Flip) => {
+    if (!flip.sellPrice) return null;
+    return calculateGETax(flip.sellPrice, flip.quantity);
   };
 
   const formatPrice = (price: number) => {
@@ -113,16 +133,23 @@ export function FlipTable({ flips, onDelete }: FlipTableProps) {
                   </td>
                   <td className="px-4 py-3 text-right">
                     {profit !== null ? (
-                      <div className="flex items-center justify-end gap-1">
-                        {isProfit && <ArrowUpIcon className="h-4 w-4 text-success" />}
-                        {isLoss && <ArrowDownIcon className="h-4 w-4 text-destructive" />}
-                        <span
-                          className={`font-mono text-sm font-medium ${
-                            isProfit ? "text-success" : isLoss ? "text-destructive" : ""
-                          }`}
-                        >
-                          {profit > 0 ? "+" : ""}{formatPrice(profit)}
-                        </span>
+                      <div className="flex flex-col items-end">
+                        <div className="flex items-center gap-1">
+                          {isProfit && <ArrowUpIcon className="h-4 w-4 text-success" />}
+                          {isLoss && <ArrowDownIcon className="h-4 w-4 text-destructive" />}
+                          <span
+                            className={`font-mono text-sm font-medium ${
+                              isProfit ? "text-success" : isLoss ? "text-destructive" : ""
+                            }`}
+                          >
+                            {profit > 0 ? "+" : ""}{formatPrice(Math.round(profit))}
+                          </span>
+                        </div>
+                        {getTaxPaid(flip) !== null && (
+                          <span className="text-xs text-muted-foreground font-mono">
+                            -{formatPrice(Math.round(getTaxPaid(flip)!))} tax
+                          </span>
+                        )}
                       </div>
                     ) : (
                       <span className="text-muted-foreground">-</span>
