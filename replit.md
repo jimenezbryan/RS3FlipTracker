@@ -48,8 +48,8 @@ Database tables:
 - `flips` - Item flip records with buy/sell prices, quantities, dates, and item metadata
 
 ### Recent Updates
+- **Item Autocomplete**: Type to search all GE items with fuzzy matching, shows icons and live prices
 - **Date Input UX**: Calendar/Popover with quick presets (Today, Yesterday, Week ago)
-- **Screenshot OCR**: Upload screenshots to auto-extract flip data using Tesseract.js
 - **Storage Fallback**: MemStorage fallback when database is unavailable
 
 ### Design System
@@ -65,8 +65,9 @@ The application uses a gaming-themed dark mode design inspired by GE-Tracker:
 - **WeirdGloop GE API** (`api.weirdgloop.org/exchange/history/rs`) - Real-time Grand Exchange price data and historical trends
 - **RuneScape Item Database** (`secure.runescape.com/m=itemdb_rs`) - Item icons and metadata
 
-### OCR Processing
-- **Tesseract.js** - Client-side OCR for extracting flip data from uploaded screenshots
+### Item Search
+- **GE Dump API** (`chisel.weirdgloop.org/gazproj/gazbot/rs_dump.json`) - Complete item list with prices, cached for 30 minutes
+- **Fuzzy Matching** - Searches item names with priority: exact match > starts with > word starts with > contains
 
 ### Database
 - **Neon Serverless** (`@neondatabase/serverless`) - PostgreSQL database with WebSocket support for serverless environments
