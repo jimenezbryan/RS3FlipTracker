@@ -16,6 +16,7 @@ export default function Home() {
   const createFlipMutation = useMutation({
     mutationFn: async (flipData: {
       itemName: string;
+      itemIcon?: string;
       quantity: number;
       buyPrice: number;
       sellPrice?: number;
@@ -62,6 +63,7 @@ export default function Home() {
 
   const handleAddFlip = (flipData: {
     itemName: string;
+    itemIcon?: string;
     quantity: number;
     buyPrice: number;
     sellPrice?: number;

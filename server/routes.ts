@@ -2,8 +2,41 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertFlipSchema } from "@shared/schema";
+import { getItemPrice, searchItems } from "./ge-api";
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  app.get("/api/ge/price", async (req, res) => {
+    try {
+      const { name } = req.query;
+      if (!name || typeof name !== "string") {
+        return res.status(400).json({ error: "Item name required" });
+      }
+      
+      const item = await getItemPrice(name);
+      if (!item) {
+        return res.status(404).json({ error: "Item not found" });
+      }
+      
+      res.json(item);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch GE price" });
+    }
+  });
+
+  app.get("/api/ge/search", async (req, res) => {
+    try {
+      const { q } = req.query;
+      if (!q || typeof q !== "string") {
+        return res.status(400).json({ error: "Search query required" });
+      }
+      
+      const items = await searchItems(q);
+      res.json(items);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to search items" });
+    }
+  });
+
   app.get("/api/flips", async (_req, res) => {
     try {
       const flips = await storage.getFlips();
