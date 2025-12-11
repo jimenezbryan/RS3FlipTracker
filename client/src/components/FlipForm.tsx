@@ -1,10 +1,14 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { CalendarIcon, Search, Loader2, TrendingUp, TrendingDown, Minus, ThumbsUp, ThumbsDown, Clock } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { CalendarIcon, Search, Loader2, TrendingUp, TrendingDown, Minus, ThumbsUp, ThumbsDown, Clock, Upload, Camera, X } from "lucide-react";
+import { format, subDays } from "date-fns";
+import { cn } from "@/lib/utils";
 
 interface GEItem {
   id: number;
@@ -44,13 +48,20 @@ export function FlipForm({ onSubmit }: FlipFormProps) {
   const [quantity, setQuantity] = useState("1");
   const [buyPrice, setBuyPrice] = useState("");
   const [sellPrice, setSellPrice] = useState("");
-  const [buyDate, setBuyDate] = useState(new Date().toISOString().split('T')[0]);
-  const [sellDate, setSellDate] = useState("");
+  const [buyDate, setBuyDate] = useState<Date>(new Date());
+  const [sellDate, setSellDate] = useState<Date | undefined>(undefined);
+  const [buyDateOpen, setBuyDateOpen] = useState(false);
+  const [sellDateOpen, setSellDateOpen] = useState(false);
   
   const [gePrice, setGePrice] = useState<GEItem | null>(null);
   const [priceTrend, setPriceTrend] = useState<PriceTrend | null>(null);
   const [isLookingUp, setIsLookingUp] = useState(false);
   const [lookupError, setLookupError] = useState("");
+
+  const [isOcrProcessing, setIsOcrProcessing] = useState(false);
+  const [ocrPreview, setOcrPreview] = useState<string | null>(null);
+  const [ocrError, setOcrError] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleLookup = async () => {
     if (!itemName.trim()) return;
@@ -103,6 +114,60 @@ export function FlipForm({ onSubmit }: FlipFormProps) {
     }
   };
 
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.type.startsWith('image/')) {
+      setOcrError("Please upload an image file");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async () => {
+      const base64 = reader.result as string;
+      setOcrPreview(base64);
+      setOcrError("");
+      setIsOcrProcessing(true);
+
+      try {
+        const response = await fetch('/api/flips/ocr', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: base64 }),
+        });
+
+        if (!response.ok) {
+          throw new Error('OCR processing failed');
+        }
+
+        const data = await response.json();
+        
+        if (data.itemName) setItemName(data.itemName);
+        if (data.quantity) setQuantity(data.quantity.toString());
+        if (data.buyPrice) setBuyPrice(data.buyPrice.toString());
+        if (data.sellPrice) setSellPrice(data.sellPrice.toString());
+        if (data.buyDate) setBuyDate(new Date(data.buyDate));
+        if (data.sellDate) setSellDate(new Date(data.sellDate));
+
+      } catch (error) {
+        setOcrError("Could not extract data from image. Please fill manually.");
+      } finally {
+        setIsOcrProcessing(false);
+      }
+    };
+    reader.readAsDataURL(file);
+
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const clearOcrPreview = () => {
+    setOcrPreview(null);
+    setOcrError("");
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -114,19 +179,21 @@ export function FlipForm({ onSubmit }: FlipFormProps) {
       quantity: parseInt(quantity),
       buyPrice: parseInt(buyPrice),
       sellPrice: sellPrice ? parseInt(sellPrice) : undefined,
-      buyDate: new Date(buyDate),
-      sellDate: sellDate ? new Date(sellDate) : undefined,
+      buyDate: buyDate,
+      sellDate: sellDate,
     });
 
     setItemName("");
     setQuantity("1");
     setBuyPrice("");
     setSellPrice("");
-    setBuyDate(new Date().toISOString().split('T')[0]);
-    setSellDate("");
+    setBuyDate(new Date());
+    setSellDate(undefined);
     setGePrice(null);
     setPriceTrend(null);
     setLookupError("");
+    setOcrPreview(null);
+    setOcrError("");
   };
 
   const getTrendIcon = () => {
@@ -180,12 +247,93 @@ export function FlipForm({ onSubmit }: FlipFormProps) {
     }
   };
 
+  const setQuickDate = (type: 'buy' | 'sell', preset: 'today' | 'yesterday' | 'week') => {
+    let date: Date;
+    switch (preset) {
+      case 'today':
+        date = new Date();
+        break;
+      case 'yesterday':
+        date = subDays(new Date(), 1);
+        break;
+      case 'week':
+        date = subDays(new Date(), 7);
+        break;
+    }
+    
+    if (type === 'buy') {
+      setBuyDate(date);
+      setBuyDateOpen(false);
+    } else {
+      setSellDate(date);
+      setSellDateOpen(false);
+    }
+  };
+
   return (
     <Card>
       <CardHeader className="pb-4">
-        <CardTitle className="text-lg">Log Flip</CardTitle>
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle className="text-lg">Log Flip</CardTitle>
+          <div className="relative">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              onChange={handleFileUpload}
+              className="hidden"
+              data-testid="input-screenshot-upload"
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={isOcrProcessing}
+              data-testid="button-upload-screenshot"
+            >
+              {isOcrProcessing ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <Camera className="mr-2 h-4 w-4" />
+              )}
+              {isOcrProcessing ? "Processing..." : "Scan Screenshot"}
+            </Button>
+          </div>
+        </div>
       </CardHeader>
       <CardContent>
+        {ocrPreview && (
+          <div className="mb-4 relative">
+            <div className="rounded-md border overflow-hidden bg-muted/50">
+              <img 
+                src={ocrPreview} 
+                alt="Screenshot preview" 
+                className="w-full max-h-32 object-contain"
+              />
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="absolute top-1 right-1 h-6 w-6"
+              onClick={clearOcrPreview}
+              data-testid="button-clear-screenshot"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+            {isOcrProcessing && (
+              <div className="absolute inset-0 flex items-center justify-center bg-background/80">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              </div>
+            )}
+          </div>
+        )}
+
+        {ocrError && (
+          <p className="text-sm text-destructive mb-4">{ocrError}</p>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="itemName">Item Name</Label>
@@ -379,32 +527,126 @@ export function FlipForm({ onSubmit }: FlipFormProps) {
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="buyDate">Buy Date</Label>
-              <div className="relative">
-                <Input
-                  id="buyDate"
-                  type="date"
-                  value={buyDate}
-                  onChange={(e) => setBuyDate(e.target.value)}
-                  data-testid="input-buy-date"
-                  required
-                />
-                <CalendarIcon className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              </div>
+              <Label>Buy Date</Label>
+              <Popover open={buyDateOpen} onOpenChange={setBuyDateOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className={cn(
+                      "w-full justify-start text-left font-normal",
+                      !buyDate && "text-muted-foreground"
+                    )}
+                    data-testid="button-buy-date"
+                  >
+                    <CalendarIcon className="mr-2 h-4 w-4" />
+                    {buyDate ? format(buyDate, "MMM d, yyyy") : "Select date"}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <div className="flex gap-1 p-2 border-b">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setQuickDate('buy', 'today')}
+                      data-testid="button-buy-today"
+                    >
+                      Today
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setQuickDate('buy', 'yesterday')}
+                      data-testid="button-buy-yesterday"
+                    >
+                      Yesterday
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setQuickDate('buy', 'week')}
+                      data-testid="button-buy-week-ago"
+                    >
+                      Week ago
+                    </Button>
+                  </div>
+                  <Calendar
+                    mode="single"
+                    selected={buyDate}
+                    onSelect={(date) => {
+                      if (date) {
+                        setBuyDate(date);
+                        setBuyDateOpen(false);
+                      }
+                    }}
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="sellDate">Sell Date</Label>
-              <div className="relative">
-                <Input
-                  id="sellDate"
-                  type="date"
-                  value={sellDate}
-                  onChange={(e) => setSellDate(e.target.value)}
-                  data-testid="input-sell-date"
-                />
-                <CalendarIcon className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              </div>
+              <Label>Sell Date</Label>
+              <Popover open={sellDateOpen} onOpenChange={setSellDateOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className={cn(
+                      "w-full justify-start text-left font-normal",
+                      !sellDate && "text-muted-foreground"
+                    )}
+                    data-testid="button-sell-date"
+                  >
+                    <CalendarIcon className="mr-2 h-4 w-4" />
+                    {sellDate ? format(sellDate, "MMM d, yyyy") : "Not sold yet"}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <div className="flex gap-1 p-2 border-b">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setQuickDate('sell', 'today')}
+                      data-testid="button-sell-today"
+                    >
+                      Today
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setQuickDate('sell', 'yesterday')}
+                      data-testid="button-sell-yesterday"
+                    >
+                      Yesterday
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setSellDate(undefined);
+                        setSellDateOpen(false);
+                      }}
+                      data-testid="button-sell-clear"
+                    >
+                      Clear
+                    </Button>
+                  </div>
+                  <Calendar
+                    mode="single"
+                    selected={sellDate}
+                    onSelect={(date) => {
+                      setSellDate(date);
+                      setSellDateOpen(false);
+                    }}
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
             </div>
           </div>
 

@@ -3,6 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertFlipSchema } from "@shared/schema";
 import { getItemPrice, searchItems, getItemTrend } from "./ge-api";
+import { extractFlipData } from "./ocr";
 
 export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/ge/price", async (req, res) => {
@@ -104,6 +105,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(204).send();
     } catch (error) {
       res.status(500).json({ error: "Failed to delete flip" });
+    }
+  });
+
+  app.post("/api/flips/ocr", async (req, res) => {
+    try {
+      const { image } = req.body;
+      
+      if (!image || typeof image !== "string") {
+        return res.status(400).json({ error: "Image data required" });
+      }
+      
+      const extractedData = await extractFlipData(image);
+      res.json(extractedData);
+    } catch (error) {
+      console.error("OCR error:", error);
+      res.status(500).json({ error: "Failed to process image" });
     }
   });
 

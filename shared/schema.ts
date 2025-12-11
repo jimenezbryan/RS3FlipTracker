@@ -31,6 +31,8 @@ export const insertFlipSchema = createInsertSchema(flips).omit({
   quantity: z.number().int().positive().default(1),
   buyPrice: z.number().int().positive(),
   sellPrice: z.number().int().positive().optional(),
+  buyDate: z.coerce.date(),
+  sellDate: z.coerce.date().optional(),
 });
 
 export type InsertUser = z.infer<typeof insertUserSchema>;
