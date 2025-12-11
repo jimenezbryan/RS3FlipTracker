@@ -87,6 +87,17 @@ export default function Home() {
     },
   });
 
+  const handleBulkDelete = async (ids: string[]) => {
+    for (const id of ids) {
+      await apiRequest("DELETE", `/api/flips/${id}`);
+    }
+    queryClient.invalidateQueries({ queryKey: ["/api/flips"] });
+    toast({
+      title: "Flips deleted",
+      description: `${ids.length} flip(s) have been removed`,
+    });
+  };
+
   const handleAddFlip = (flipData: {
     itemName: string;
     itemIcon?: string;
@@ -203,6 +214,7 @@ export default function Home() {
               }))} 
               onDelete={handleDeleteFlip}
               onEdit={handleEditFlip}
+              onBulkDelete={handleBulkDelete}
             />
           </div>
         </div>
