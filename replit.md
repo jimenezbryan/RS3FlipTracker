@@ -39,12 +39,18 @@ Key server modules:
 ### Data Storage
 - **ORM**: Drizzle ORM with PostgreSQL dialect
 - **Database**: Neon serverless PostgreSQL (configured via `DATABASE_URL`)
-- **Schema**: Defined in `shared/schema.ts` with Zod validation via drizzle-zod
+- **Fallback**: MemStorage in-memory storage when database is unavailable
+- **Schema**: Defined in `shared/schema.ts` with Zod validation via drizzle-zod (uses z.coerce for type conversion)
 - **Migrations**: Output to `./migrations` directory
 
 Database tables:
 - `users` - User accounts with username/password
 - `flips` - Item flip records with buy/sell prices, quantities, dates, and item metadata
+
+### Recent Updates
+- **Date Input UX**: Calendar/Popover with quick presets (Today, Yesterday, Week ago)
+- **Screenshot OCR**: Upload screenshots to auto-extract flip data using Tesseract.js
+- **Storage Fallback**: MemStorage fallback when database is unavailable
 
 ### Design System
 The application uses a gaming-themed dark mode design inspired by GE-Tracker:
