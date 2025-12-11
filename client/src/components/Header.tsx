@@ -1,4 +1,4 @@
-import { TrendingUp, LogOut, Eye, Bell, Home } from "lucide-react";
+import { TrendingUp, LogOut, Eye, Bell, Home, BarChart3 } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -13,6 +13,7 @@ export function Header() {
     { href: "/", label: "Flips", icon: Home },
     { href: "/watchlist", label: "Watchlist", icon: Eye },
     { href: "/alerts", label: "Alerts", icon: Bell },
+    { href: "/stats", label: "Stats", icon: BarChart3 },
   ];
 
   return (

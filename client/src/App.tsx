@@ -8,6 +8,7 @@ import Home from "@/pages/Home";
 import Landing from "@/pages/Landing";
 import Watchlist from "@/pages/Watchlist";
 import Alerts from "@/pages/Alerts";
+import Stats from "@/pages/Stats";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -35,6 +36,7 @@ function Router() {
       <Route path="/" component={Home} />
       <Route path="/watchlist" component={Watchlist} />
       <Route path="/alerts" component={Alerts} />
+      <Route path="/stats" component={Stats} />
       <Route component={NotFound} />
     </Switch>
   );
