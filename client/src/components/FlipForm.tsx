@@ -2,10 +2,12 @@ import { useState, useEffect, useRef, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CalendarIcon, Search, Loader2, TrendingUp, TrendingDown, Minus, ThumbsUp, ThumbsDown, Clock, AlertTriangle } from "lucide-react";
 import { format, subDays } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -43,14 +45,19 @@ interface FlipFormProps {
   onSubmit: (flip: {
     itemName: string;
     itemIcon?: string;
+    itemId?: number;
     quantity: number;
     buyPrice: number;
     sellPrice?: number;
     buyDate: Date;
     sellDate?: Date;
+    notes?: string;
+    category?: string;
   }) => void;
   openPositions?: OpenPosition[];
 }
+
+const CATEGORIES = ["High Value", "Consumables", "Weapons", "Armor", "Skilling", "Misc"];
 
 export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
   const [itemName, setItemName] = useState("");
@@ -59,6 +66,8 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
   const [sellPrice, setSellPrice] = useState("");
   const [buyDate, setBuyDate] = useState<Date>(new Date());
   const [sellDate, setSellDate] = useState<Date | undefined>(undefined);
+  const [notes, setNotes] = useState("");
+  const [category, setCategory] = useState("");
   const [buyDateOpen, setBuyDateOpen] = useState(false);
   const [sellDateOpen, setSellDateOpen] = useState(false);
   
@@ -193,11 +202,14 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
     onSubmit({
       itemName,
       itemIcon: gePrice?.icon,
+      itemId: gePrice?.id,
       quantity: parseInt(quantity),
       buyPrice: parseInt(buyPrice),
       sellPrice: sellPrice ? parseInt(sellPrice) : undefined,
       buyDate: buyDate,
       sellDate: sellDate,
+      notes: notes || undefined,
+      category: category || undefined,
     });
 
     setItemName("");
@@ -206,6 +218,8 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
     setSellPrice("");
     setBuyDate(new Date());
     setSellDate(undefined);
+    setNotes("");
+    setCategory("");
     setGePrice(null);
     setPriceTrend(null);
     setLookupError("");
@@ -671,6 +685,34 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
                 </PopoverContent>
               </Popover>
             </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="category">Category</Label>
+            <Select value={category} onValueChange={setCategory}>
+              <SelectTrigger data-testid="select-category">
+                <SelectValue placeholder="Select category (optional)" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">None</SelectItem>
+                {CATEGORIES.map((cat) => (
+                  <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="notes">Notes</Label>
+            <Textarea
+              id="notes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Add notes about this flip (optional)..."
+              className="resize-none"
+              rows={2}
+              data-testid="input-notes"
+            />
           </div>
 
           <Button type="submit" className="w-full" data-testid="button-add-flip">

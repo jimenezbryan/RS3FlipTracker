@@ -17,11 +17,14 @@ export default function Home() {
     mutationFn: async (flipData: {
       itemName: string;
       itemIcon?: string;
+      itemId?: number;
       quantity: number;
       buyPrice: number;
       sellPrice?: number;
       buyDate: Date;
       sellDate?: Date;
+      notes?: string;
+      category?: string;
     }) => {
       return await apiRequest("POST", "/api/flips", flipData);
     },
@@ -68,6 +71,8 @@ export default function Home() {
       sellPrice?: number;
       buyDate: Date;
       sellDate?: Date;
+      notes?: string;
+      category?: string;
     }> }) => {
       return await apiRequest("PATCH", `/api/flips/${id}`, data);
     },
@@ -101,11 +106,14 @@ export default function Home() {
   const handleAddFlip = (flipData: {
     itemName: string;
     itemIcon?: string;
+    itemId?: number;
     quantity: number;
     buyPrice: number;
     sellPrice?: number;
     buyDate: Date;
     sellDate?: Date;
+    notes?: string;
+    category?: string;
   }) => {
     createFlipMutation.mutate(flipData);
   };
@@ -120,6 +128,8 @@ export default function Home() {
     sellPrice?: number;
     buyDate: Date;
     sellDate?: Date;
+    notes?: string;
+    category?: string;
   }>) => {
     updateFlipMutation.mutate({ id, data });
   };

@@ -2,8 +2,10 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { CalendarIcon } from "lucide-react";
 import { format, subDays } from "date-fns";
 import { cn } from "@/lib/utils";
@@ -25,6 +27,8 @@ interface Flip {
   sellPrice?: number;
   buyDate: Date;
   sellDate?: Date;
+  notes?: string;
+  category?: string;
 }
 
 interface EditFlipDialogProps {
@@ -37,8 +41,12 @@ interface EditFlipDialogProps {
     sellPrice?: number;
     buyDate: Date;
     sellDate?: Date;
+    notes?: string;
+    category?: string;
   }>) => void;
 }
+
+const CATEGORIES = ["High Value", "Consumables", "Weapons", "Armor", "Skilling", "Misc"];
 
 export function EditFlipDialog({ flip, open, onOpenChange, onSubmit }: EditFlipDialogProps) {
   const [quantity, setQuantity] = useState("");
@@ -46,6 +54,8 @@ export function EditFlipDialog({ flip, open, onOpenChange, onSubmit }: EditFlipD
   const [sellPrice, setSellPrice] = useState("");
   const [buyDate, setBuyDate] = useState<Date>(new Date());
   const [sellDate, setSellDate] = useState<Date | undefined>(undefined);
+  const [notes, setNotes] = useState("");
+  const [category, setCategory] = useState("");
   const [buyDateOpen, setBuyDateOpen] = useState(false);
   const [sellDateOpen, setSellDateOpen] = useState(false);
 
@@ -56,6 +66,8 @@ export function EditFlipDialog({ flip, open, onOpenChange, onSubmit }: EditFlipD
       setSellPrice(flip.sellPrice?.toString() ?? "");
       setBuyDate(new Date(flip.buyDate));
       setSellDate(flip.sellDate ? new Date(flip.sellDate) : undefined);
+      setNotes(flip.notes ?? "");
+      setCategory(flip.category ?? "");
     }
   }, [flip]);
 
@@ -68,6 +80,8 @@ export function EditFlipDialog({ flip, open, onOpenChange, onSubmit }: EditFlipD
       sellPrice: sellPrice ? parseInt(sellPrice) : undefined,
       buyDate,
       sellDate,
+      notes: notes || undefined,
+      category: category || undefined,
     });
   };
 
@@ -256,6 +270,34 @@ export function EditFlipDialog({ flip, open, onOpenChange, onSubmit }: EditFlipD
                 </PopoverContent>
               </Popover>
             </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="edit-category">Category</Label>
+            <Select value={category} onValueChange={setCategory}>
+              <SelectTrigger data-testid="select-edit-category">
+                <SelectValue placeholder="Select category" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="">None</SelectItem>
+                {CATEGORIES.map((cat) => (
+                  <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="edit-notes">Notes</Label>
+            <Textarea
+              id="edit-notes"
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              placeholder="Add notes about this flip..."
+              className="resize-none"
+              rows={2}
+              data-testid="input-edit-notes"
+            />
           </div>
 
           <DialogFooter>
