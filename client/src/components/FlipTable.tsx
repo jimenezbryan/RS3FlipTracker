@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { ArrowDownIcon, ArrowUpIcon, Trash2, Pencil, ChevronUp, ChevronDown, Search, X, Filter, MoreHorizontal, Tag, Zap, Loader2, Download } from "lucide-react";
+import { ArrowDownIcon, ArrowUpIcon, Trash2, Pencil, ChevronUp, ChevronDown, Search, X, Filter, MoreHorizontal, Tag, Zap, Loader2, Download, LineChart } from "lucide-react";
 import { ItemIcon } from "./ItemIcon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -27,6 +27,7 @@ interface Flip {
   id: string;
   itemName: string;
   itemIcon?: string;
+  itemId?: number;
   quantity: number;
   buyPrice: number;
   sellPrice?: number;
@@ -52,12 +53,13 @@ interface FlipTableProps {
   }>) => void;
   onBulkDelete?: (ids: string[]) => void;
   onQuickSell?: (id: string, itemName: string) => Promise<void>;
+  onViewChart?: (itemId: number, itemName: string) => void;
 }
 
 const GE_TAX_RATE = 0.02;
 const GE_TAX_CAP = 5_000_000;
 
-export function FlipTable({ flips, onDelete, onEdit, onBulkDelete, onQuickSell }: FlipTableProps) {
+export function FlipTable({ flips, onDelete, onEdit, onBulkDelete, onQuickSell, onViewChart }: FlipTableProps) {
   const [editingFlip, setEditingFlip] = useState<Flip | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortField, setSortField] = useState<SortField>("date");
@@ -547,6 +549,15 @@ export function FlipTable({ flips, onDelete, onEdit, onBulkDelete, onQuickSell }
                                     <Zap className="h-4 w-4 mr-2" />
                                   )}
                                   Quick Sell
+                                </DropdownMenuItem>
+                              )}
+                              {flip.itemId && onViewChart && (
+                                <DropdownMenuItem
+                                  onClick={() => onViewChart(flip.itemId!, flip.itemName)}
+                                  data-testid={`button-view-chart-${flip.id}`}
+                                >
+                                  <LineChart className="h-4 w-4 mr-2" />
+                                  View Price Chart
                                 </DropdownMenuItem>
                               )}
                               <DropdownMenuItem

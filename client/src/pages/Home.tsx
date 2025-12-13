@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { Header } from "@/components/Header";
 import { FlipForm } from "@/components/FlipForm";
 import { FlipTable } from "@/components/FlipTable";
 import { GoalsProgress } from "@/components/GoalsProgress";
+import { PriceHistoryChart } from "@/components/PriceHistoryChart";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import type { Flip } from "@shared/schema";
@@ -10,6 +12,7 @@ import { ToastAction } from "@/components/ui/toast";
 
 export default function Home() {
   const { toast } = useToast();
+  const [selectedChart, setSelectedChart] = useState<{ itemId: number; itemName: string } | null>(null);
   
   const { data: flips = [], isLoading } = useQuery<Flip[]>({
     queryKey: ["/api/flips"],
@@ -211,6 +214,10 @@ export default function Home() {
     }
   };
 
+  const handleViewChart = (itemId: number, itemName: string) => {
+    setSelectedChart({ itemId, itemName });
+  };
+
   const GE_TAX_RATE = 0.02;
   const GE_TAX_CAP = 5_000_000;
 
@@ -298,6 +305,16 @@ export default function Home() {
 
         <GoalsProgress flips={flips} />
 
+        {selectedChart && (
+          <div className="mb-8">
+            <PriceHistoryChart
+              itemId={selectedChart.itemId}
+              itemName={selectedChart.itemName}
+              onClose={() => setSelectedChart(null)}
+            />
+          </div>
+        )}
+
         <div className="grid gap-8 lg:grid-cols-3">
           <div className="lg:col-span-1">
             <FlipForm onSubmit={handleAddFlip} openPositions={openPositions} />
@@ -307,6 +324,7 @@ export default function Home() {
               flips={flips.map(flip => ({
                 ...flip,
                 itemIcon: flip.itemIcon ?? undefined,
+                itemId: flip.itemId ?? undefined,
                 sellPrice: flip.sellPrice ?? undefined,
                 buyDate: new Date(flip.buyDate),
                 sellDate: flip.sellDate ? new Date(flip.sellDate) : undefined,
@@ -315,6 +333,7 @@ export default function Home() {
               onEdit={handleEditFlip}
               onBulkDelete={handleBulkDelete}
               onQuickSell={handleQuickSell}
+              onViewChart={handleViewChart}
             />
           </div>
         </div>

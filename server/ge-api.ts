@@ -293,6 +293,45 @@ export async function getItemTrend(itemId: number): Promise<PriceTrend | null> {
   }
 }
 
+export interface PriceHistoryPoint {
+  date: string;
+  price: number;
+  volume?: number;
+}
+
+export async function getItemPriceHistory(itemId: number): Promise<PriceHistoryPoint[] | null> {
+  try {
+    const response = await fetch(
+      `${GE_API_BASE}/last90d?id=${itemId}`,
+      {
+        headers: {
+          "User-Agent": USER_AGENT,
+        },
+      }
+    );
+
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    const history = data[itemId.toString()];
+    
+    if (!history || history.length === 0) return null;
+
+    const sortedHistory = [...history].sort(
+      (a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+
+    return sortedHistory.map((h: any) => ({
+      date: h.timestamp.split('T')[0],
+      price: h.price,
+      volume: h.volume,
+    }));
+  } catch (error) {
+    console.error("Failed to fetch item price history:", error);
+    return null;
+  }
+}
+
 export async function getItemById(itemId: number): Promise<GEItem | null> {
   try {
     const response = await fetch(

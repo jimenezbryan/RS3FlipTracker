@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { insertFlipSchema, insertWatchlistSchema, insertPriceAlertSchema, insertFavoriteSchema, insertProfitGoalSchema } from "@shared/schema";
-import { getItemPrice, searchItems, getItemTrend } from "./ge-api";
+import { getItemPrice, searchItems, getItemTrend, getItemPriceHistory } from "./ge-api";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 
 export async function registerRoutes(app: Express): Promise<Server> {
@@ -68,6 +68,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(trend);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch trend data" });
+    }
+  });
+
+  app.get("/api/ge/history/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const itemId = parseInt(id);
+      
+      if (isNaN(itemId)) {
+        return res.status(400).json({ error: "Invalid item ID" });
+      }
+      
+      const history = await getItemPriceHistory(itemId);
+      if (!history) {
+        return res.status(404).json({ error: "Price history not found" });
+      }
+      
+      res.json(history);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch price history" });
     }
   });
 
