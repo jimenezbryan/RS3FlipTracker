@@ -1,6 +1,7 @@
 import { Header } from "@/components/Header";
 import { FlipForm } from "@/components/FlipForm";
 import { FlipTable } from "@/components/FlipTable";
+import { GoalsProgress } from "@/components/GoalsProgress";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import type { Flip } from "@shared/schema";
@@ -294,6 +295,8 @@ export default function Home() {
             )}
           </div>
         </div>
+
+        <GoalsProgress flips={flips} />
 
         <div className="grid gap-8 lg:grid-cols-3">
           <div className="lg:col-span-1">
