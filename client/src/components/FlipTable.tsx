@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { ArrowDownIcon, ArrowUpIcon, Trash2, Pencil, ChevronUp, ChevronDown, Search, X, Filter, MoreHorizontal, Tag } from "lucide-react";
+import { ArrowDownIcon, ArrowUpIcon, Trash2, Pencil, ChevronUp, ChevronDown, Search, X, Filter, MoreHorizontal, Tag, Zap, Loader2 } from "lucide-react";
 import { ItemIcon } from "./ItemIcon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -51,12 +51,13 @@ interface FlipTableProps {
     sellDate?: Date;
   }>) => void;
   onBulkDelete?: (ids: string[]) => void;
+  onQuickSell?: (id: string, itemName: string) => Promise<void>;
 }
 
 const GE_TAX_RATE = 0.02;
 const GE_TAX_CAP = 5_000_000;
 
-export function FlipTable({ flips, onDelete, onEdit, onBulkDelete }: FlipTableProps) {
+export function FlipTable({ flips, onDelete, onEdit, onBulkDelete, onQuickSell }: FlipTableProps) {
   const [editingFlip, setEditingFlip] = useState<Flip | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortField, setSortField] = useState<SortField>("date");
@@ -64,6 +65,17 @@ export function FlipTable({ flips, onDelete, onEdit, onBulkDelete }: FlipTablePr
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [quickSellLoadingId, setQuickSellLoadingId] = useState<string | null>(null);
+
+  const handleQuickSell = async (flip: Flip) => {
+    if (!onQuickSell || flip.sellPrice) return;
+    setQuickSellLoadingId(flip.id);
+    try {
+      await onQuickSell(flip.id, flip.itemName);
+    } finally {
+      setQuickSellLoadingId(null);
+    }
+  };
 
   const calculateGETax = (sellPrice: number, quantity: number) => {
     const grossRevenue = sellPrice * quantity;
@@ -477,6 +489,21 @@ export function FlipTable({ flips, onDelete, onEdit, onBulkDelete }: FlipTablePr
                               </Button>
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end">
+                              {!flip.sellPrice && onQuickSell && (
+                                <DropdownMenuItem
+                                  onClick={() => handleQuickSell(flip)}
+                                  disabled={quickSellLoadingId === flip.id}
+                                  className="text-success focus:text-success"
+                                  data-testid={`button-quick-sell-${flip.id}`}
+                                >
+                                  {quickSellLoadingId === flip.id ? (
+                                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                  ) : (
+                                    <Zap className="h-4 w-4 mr-2" />
+                                  )}
+                                  Quick Sell
+                                </DropdownMenuItem>
+                              )}
                               <DropdownMenuItem
                                 onClick={() => setEditingFlip(flip)}
                                 data-testid={`button-edit-${flip.id}`}

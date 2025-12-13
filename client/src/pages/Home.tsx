@@ -134,6 +134,34 @@ export default function Home() {
     updateFlipMutation.mutate({ id, data });
   };
 
+  const handleQuickSell = async (id: string, itemName: string) => {
+    try {
+      const response = await fetch(`/api/ge/price?name=${encodeURIComponent(itemName)}`);
+      if (!response.ok) {
+        throw new Error("Failed to fetch current price");
+      }
+      const priceData = await response.json();
+      
+      await apiRequest("PATCH", `/api/flips/${id}`, {
+        sellPrice: priceData.price,
+        sellDate: new Date().toISOString(),
+      });
+      
+      queryClient.invalidateQueries({ queryKey: ["/api/flips"] });
+      toast({
+        title: "Quick sell completed",
+        description: `Sold at current GE price: ${priceData.price.toLocaleString()} gp`,
+      });
+    } catch (error) {
+      toast({
+        title: "Quick sell failed",
+        description: "Could not complete quick sell",
+        variant: "destructive",
+      });
+      throw error;
+    }
+  };
+
   const GE_TAX_RATE = 0.02;
   const GE_TAX_CAP = 5_000_000;
 
@@ -235,6 +263,7 @@ export default function Home() {
               onDelete={handleDeleteFlip}
               onEdit={handleEditFlip}
               onBulkDelete={handleBulkDelete}
+              onQuickSell={handleQuickSell}
             />
           </div>
         </div>
