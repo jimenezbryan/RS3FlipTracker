@@ -46,8 +46,20 @@ Key server modules:
 Database tables:
 - `users` - User accounts with username/password
 - `flips` - Item flip records with buy/sell prices, quantities, dates, and item metadata
+- `favorites` - Saved favorite items for quick flip logging
+- `watchlist` - Items being tracked without active flips
+- `priceAlerts` - Price alert configurations for notification triggers
+- `profitGoals` - Daily/weekly/monthly profit targets
 
 ### Recent Updates
+- **Price History Charts**: View 90-day price trends with area charts, averages, and buy/sell recommendations
+- **Browser Push Notifications**: Get notified when price alerts trigger (60-second check interval)
+- **Profit Goals**: Set and track daily, weekly, and monthly profit targets with progress bars
+- **Soft Delete with Undo**: Delete flips with undo option in toast notifications
+- **CSV Export**: Download flip history as CSV file
+- **Portfolio View**: See all open positions with total investment
+- **Categories/Tags**: Organize flips by category with filter support
+- **Quick Sell**: Sell open positions at current GE price with one click
 - **Item Autocomplete**: Type to search all GE items with fuzzy matching, shows icons and live prices
 - **Date Input UX**: Calendar/Popover with quick presets (Today, Yesterday, Week ago)
 - **Storage Fallback**: MemStorage fallback when database is unavailable
