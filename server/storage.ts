@@ -1,6 +1,6 @@
-import { users, flips, watchlist, priceAlerts, type User, type UpsertUser, type Flip, type InsertFlip, type WatchlistItem, type InsertWatchlistItem, type PriceAlert, type InsertPriceAlert } from "@shared/schema";
+import { users, flips, watchlist, priceAlerts, favorites, profitGoals, type User, type UpsertUser, type Flip, type InsertFlip, type WatchlistItem, type InsertWatchlistItem, type PriceAlert, type InsertPriceAlert, type Favorite, type InsertFavorite, type ProfitGoal, type InsertProfitGoal } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and } from "drizzle-orm";
+import { eq, desc, and, isNull } from "drizzle-orm";
 import { randomUUID } from "crypto";
 
 export interface IStorage {
@@ -12,6 +12,8 @@ export interface IStorage {
   getFlip(id: string): Promise<Flip | undefined>;
   updateFlip(id: string, userId: string, flip: Partial<InsertFlip>): Promise<Flip | undefined>;
   deleteFlip(id: string, userId: string): Promise<boolean>;
+  softDeleteFlip(id: string, userId: string): Promise<Flip | undefined>;
+  restoreFlip(id: string, userId: string): Promise<Flip | undefined>;
   
   createWatchlistItem(userId: string, item: InsertWatchlistItem): Promise<WatchlistItem>;
   getWatchlist(userId: string): Promise<WatchlistItem[]>;
@@ -24,6 +26,15 @@ export interface IStorage {
   getPriceAlert(id: string): Promise<PriceAlert | undefined>;
   updatePriceAlert(id: string, userId: string, alert: Partial<InsertPriceAlert & { isActive?: number, triggeredAt?: Date }>): Promise<PriceAlert | undefined>;
   deletePriceAlert(id: string, userId: string): Promise<boolean>;
+  
+  createFavorite(userId: string, favorite: InsertFavorite): Promise<Favorite>;
+  getFavorites(userId: string): Promise<Favorite[]>;
+  deleteFavorite(id: string, userId: string): Promise<boolean>;
+  
+  createProfitGoal(userId: string, goal: InsertProfitGoal): Promise<ProfitGoal>;
+  getProfitGoals(userId: string): Promise<ProfitGoal[]>;
+  updateProfitGoal(id: string, userId: string, goal: Partial<InsertProfitGoal>): Promise<ProfitGoal | undefined>;
+  deleteProfitGoal(id: string, userId: string): Promise<boolean>;
 }
 
 export class MemStorage implements IStorage {
@@ -31,6 +42,8 @@ export class MemStorage implements IStorage {
   private flips: Map<string, Flip> = new Map();
   private watchlistItems: Map<string, WatchlistItem> = new Map();
   private alerts: Map<string, PriceAlert> = new Map();
+  private favoriteItems: Map<string, Favorite> = new Map();
+  private goals: Map<string, ProfitGoal> = new Map();
 
   async getUser(id: string): Promise<User | undefined> {
     return this.users.get(id);
@@ -68,11 +81,15 @@ export class MemStorage implements IStorage {
       userId,
       itemName: flip.itemName,
       itemIcon: flip.itemIcon ?? null,
+      itemId: flip.itemId ?? null,
       quantity: flip.quantity ?? 1,
       buyPrice: flip.buyPrice,
       sellPrice: flip.sellPrice ?? null,
       buyDate: flip.buyDate,
       sellDate: flip.sellDate ?? null,
+      notes: flip.notes ?? null,
+      category: flip.category ?? null,
+      deletedAt: null,
     };
     this.flips.set(id, newFlip);
     return newFlip;
@@ -80,7 +97,7 @@ export class MemStorage implements IStorage {
 
   async getFlips(userId: string): Promise<Flip[]> {
     return Array.from(this.flips.values())
-      .filter(f => f.userId === userId)
+      .filter(f => f.userId === userId && f.deletedAt === null)
       .sort((a, b) => new Date(b.buyDate).getTime() - new Date(a.buyDate).getTime());
   }
 
@@ -106,6 +123,22 @@ export class MemStorage implements IStorage {
     const existing = this.flips.get(id);
     if (!existing || existing.userId !== userId) return false;
     return this.flips.delete(id);
+  }
+
+  async softDeleteFlip(id: string, userId: string): Promise<Flip | undefined> {
+    const existing = this.flips.get(id);
+    if (!existing || existing.userId !== userId) return undefined;
+    const updated: Flip = { ...existing, deletedAt: new Date() };
+    this.flips.set(id, updated);
+    return updated;
+  }
+
+  async restoreFlip(id: string, userId: string): Promise<Flip | undefined> {
+    const existing = this.flips.get(id);
+    if (!existing || existing.userId !== userId) return undefined;
+    const updated: Flip = { ...existing, deletedAt: null };
+    this.flips.set(id, updated);
+    return updated;
   }
 
   async createWatchlistItem(userId: string, item: InsertWatchlistItem): Promise<WatchlistItem> {
@@ -190,6 +223,66 @@ export class MemStorage implements IStorage {
     if (!existing || existing.userId !== userId) return false;
     return this.alerts.delete(id);
   }
+
+  async createFavorite(userId: string, favorite: InsertFavorite): Promise<Favorite> {
+    const id = randomUUID();
+    const newFavorite: Favorite = {
+      id,
+      userId,
+      itemId: favorite.itemId,
+      itemName: favorite.itemName,
+      itemIcon: favorite.itemIcon ?? null,
+      createdAt: new Date(),
+    };
+    this.favoriteItems.set(id, newFavorite);
+    return newFavorite;
+  }
+
+  async getFavorites(userId: string): Promise<Favorite[]> {
+    return Array.from(this.favoriteItems.values())
+      .filter(f => f.userId === userId)
+      .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
+  async deleteFavorite(id: string, userId: string): Promise<boolean> {
+    const existing = this.favoriteItems.get(id);
+    if (!existing || existing.userId !== userId) return false;
+    return this.favoriteItems.delete(id);
+  }
+
+  async createProfitGoal(userId: string, goal: InsertProfitGoal): Promise<ProfitGoal> {
+    const id = randomUUID();
+    const newGoal: ProfitGoal = {
+      id,
+      userId,
+      goalType: goal.goalType,
+      targetAmount: goal.targetAmount,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.goals.set(id, newGoal);
+    return newGoal;
+  }
+
+  async getProfitGoals(userId: string): Promise<ProfitGoal[]> {
+    return Array.from(this.goals.values())
+      .filter(g => g.userId === userId)
+      .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
+  async updateProfitGoal(id: string, userId: string, goal: Partial<InsertProfitGoal>): Promise<ProfitGoal | undefined> {
+    const existing = this.goals.get(id);
+    if (!existing || existing.userId !== userId) return undefined;
+    const updated: ProfitGoal = { ...existing, ...goal, updatedAt: new Date() };
+    this.goals.set(id, updated);
+    return updated;
+  }
+
+  async deleteProfitGoal(id: string, userId: string): Promise<boolean> {
+    const existing = this.goals.get(id);
+    if (!existing || existing.userId !== userId) return false;
+    return this.goals.delete(id);
+  }
 }
 
 export class DatabaseStorage implements IStorage {
@@ -222,7 +315,9 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getFlips(userId: string): Promise<Flip[]> {
-    return await db.select().from(flips).where(eq(flips.userId, userId)).orderBy(desc(flips.buyDate));
+    return await db.select().from(flips)
+      .where(and(eq(flips.userId, userId), isNull(flips.deletedAt)))
+      .orderBy(desc(flips.buyDate));
   }
 
   async getFlip(id: string): Promise<Flip | undefined> {
@@ -242,6 +337,24 @@ export class DatabaseStorage implements IStorage {
   async deleteFlip(id: string, userId: string): Promise<boolean> {
     const result = await db.delete(flips).where(and(eq(flips.id, id), eq(flips.userId, userId))).returning();
     return result.length > 0;
+  }
+
+  async softDeleteFlip(id: string, userId: string): Promise<Flip | undefined> {
+    const [updatedFlip] = await db
+      .update(flips)
+      .set({ deletedAt: new Date() })
+      .where(and(eq(flips.id, id), eq(flips.userId, userId)))
+      .returning();
+    return updatedFlip || undefined;
+  }
+
+  async restoreFlip(id: string, userId: string): Promise<Flip | undefined> {
+    const [updatedFlip] = await db
+      .update(flips)
+      .set({ deletedAt: null })
+      .where(and(eq(flips.id, id), eq(flips.userId, userId)))
+      .returning();
+    return updatedFlip || undefined;
   }
 
   async createWatchlistItem(userId: string, item: InsertWatchlistItem): Promise<WatchlistItem> {
@@ -303,6 +416,49 @@ export class DatabaseStorage implements IStorage {
 
   async deletePriceAlert(id: string, userId: string): Promise<boolean> {
     const result = await db.delete(priceAlerts).where(and(eq(priceAlerts.id, id), eq(priceAlerts.userId, userId))).returning();
+    return result.length > 0;
+  }
+
+  async createFavorite(userId: string, favorite: InsertFavorite): Promise<Favorite> {
+    const [newFavorite] = await db
+      .insert(favorites)
+      .values({ ...favorite, userId })
+      .returning();
+    return newFavorite;
+  }
+
+  async getFavorites(userId: string): Promise<Favorite[]> {
+    return await db.select().from(favorites).where(eq(favorites.userId, userId)).orderBy(desc(favorites.createdAt));
+  }
+
+  async deleteFavorite(id: string, userId: string): Promise<boolean> {
+    const result = await db.delete(favorites).where(and(eq(favorites.id, id), eq(favorites.userId, userId))).returning();
+    return result.length > 0;
+  }
+
+  async createProfitGoal(userId: string, goal: InsertProfitGoal): Promise<ProfitGoal> {
+    const [newGoal] = await db
+      .insert(profitGoals)
+      .values({ ...goal, userId })
+      .returning();
+    return newGoal;
+  }
+
+  async getProfitGoals(userId: string): Promise<ProfitGoal[]> {
+    return await db.select().from(profitGoals).where(eq(profitGoals.userId, userId)).orderBy(desc(profitGoals.createdAt));
+  }
+
+  async updateProfitGoal(id: string, userId: string, goal: Partial<InsertProfitGoal>): Promise<ProfitGoal | undefined> {
+    const [updatedGoal] = await db
+      .update(profitGoals)
+      .set({ ...goal, updatedAt: new Date() })
+      .where(and(eq(profitGoals.id, id), eq(profitGoals.userId, userId)))
+      .returning();
+    return updatedGoal || undefined;
+  }
+
+  async deleteProfitGoal(id: string, userId: string): Promise<boolean> {
+    const result = await db.delete(profitGoals).where(and(eq(profitGoals.id, id), eq(profitGoals.userId, userId))).returning();
     return result.length > 0;
   }
 }

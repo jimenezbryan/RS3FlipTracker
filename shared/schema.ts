@@ -30,11 +30,15 @@ export const flips = pgTable("flips", {
   userId: varchar("user_id").notNull().references(() => users.id),
   itemName: text("item_name").notNull(),
   itemIcon: text("item_icon"),
+  itemId: integer("item_id"),
   quantity: integer("quantity").notNull().default(1),
   buyPrice: integer("buy_price").notNull(),
   sellPrice: integer("sell_price"),
   buyDate: timestamp("buy_date").notNull(),
   sellDate: timestamp("sell_date"),
+  notes: text("notes"),
+  category: varchar("category", { length: 50 }),
+  deletedAt: timestamp("deleted_at"),
 });
 
 export type UpsertUser = typeof users.$inferInsert;
@@ -43,12 +47,16 @@ export type User = typeof users.$inferSelect;
 export const insertFlipSchema = createInsertSchema(flips).omit({
   id: true,
   userId: true,
+  deletedAt: true,
 }).extend({
+  itemId: z.coerce.number().int().positive().optional(),
   quantity: z.coerce.number().int().positive().default(1),
   buyPrice: z.coerce.number().int().positive(),
   sellPrice: z.coerce.number().int().positive().optional(),
   buyDate: z.coerce.date(),
   sellDate: z.coerce.date().optional(),
+  notes: z.string().optional(),
+  category: z.string().max(50).optional(),
 });
 
 export type InsertFlip = z.infer<typeof insertFlipSchema>;
@@ -108,3 +116,47 @@ export const insertPriceAlertSchema = createInsertSchema(priceAlerts).omit({
 
 export type InsertPriceAlert = z.infer<typeof insertPriceAlertSchema>;
 export type PriceAlert = typeof priceAlerts.$inferSelect;
+
+// Favorite items for quick flip logging
+export const favorites = pgTable("favorites", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  itemId: integer("item_id").notNull(),
+  itemName: text("item_name").notNull(),
+  itemIcon: text("item_icon"),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertFavoriteSchema = createInsertSchema(favorites).omit({
+  id: true,
+  userId: true,
+  createdAt: true,
+}).extend({
+  itemId: z.coerce.number().int().positive(),
+});
+
+export type InsertFavorite = z.infer<typeof insertFavoriteSchema>;
+export type Favorite = typeof favorites.$inferSelect;
+
+// Profit goals for tracking targets
+export const profitGoals = pgTable("profit_goals", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  goalType: varchar("goal_type", { length: 10 }).notNull(), // 'daily', 'weekly', 'monthly'
+  targetAmount: integer("target_amount").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertProfitGoalSchema = createInsertSchema(profitGoals).omit({
+  id: true,
+  userId: true,
+  createdAt: true,
+  updatedAt: true,
+}).extend({
+  goalType: z.enum(["daily", "weekly", "monthly"]),
+  targetAmount: z.coerce.number().int().positive(),
+});
+
+export type InsertProfitGoal = z.infer<typeof insertProfitGoalSchema>;
+export type ProfitGoal = typeof profitGoals.$inferSelect;

@@ -1,7 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
-import { insertFlipSchema, insertWatchlistSchema, insertPriceAlertSchema } from "@shared/schema";
+import { insertFlipSchema, insertWatchlistSchema, insertPriceAlertSchema, insertFavoriteSchema, insertProfitGoalSchema } from "@shared/schema";
 import { getItemPrice, searchItems, getItemTrend } from "./ge-api";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 
@@ -113,15 +113,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { id } = req.params;
       const userId = req.user.claims.sub;
-      const success = await storage.deleteFlip(id, userId);
+      const { soft } = req.query;
       
-      if (!success) {
+      if (soft === 'true') {
+        const deletedFlip = await storage.softDeleteFlip(id, userId);
+        if (!deletedFlip) {
+          return res.status(404).json({ error: "Flip not found" });
+        }
+        res.json(deletedFlip);
+      } else {
+        const success = await storage.deleteFlip(id, userId);
+        if (!success) {
+          return res.status(404).json({ error: "Flip not found" });
+        }
+        res.status(204).send();
+      }
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete flip" });
+    }
+  });
+
+  app.post("/api/flips/:id/restore", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.claims.sub;
+      const restoredFlip = await storage.restoreFlip(id, userId);
+      
+      if (!restoredFlip) {
         return res.status(404).json({ error: "Flip not found" });
       }
       
-      res.status(204).send();
+      res.json(restoredFlip);
     } catch (error) {
-      res.status(500).json({ error: "Failed to delete flip" });
+      res.status(500).json({ error: "Failed to restore flip" });
     }
   });
 
@@ -230,6 +254,97 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(204).send();
     } catch (error) {
       res.status(500).json({ error: "Failed to delete price alert" });
+    }
+  });
+
+  app.get("/api/favorites", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const favorites = await storage.getFavorites(userId);
+      res.json(favorites);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch favorites" });
+    }
+  });
+
+  app.post("/api/favorites", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const validatedFavorite = insertFavoriteSchema.parse(req.body);
+      const newFavorite = await storage.createFavorite(userId, validatedFavorite);
+      res.status(201).json(newFavorite);
+    } catch (error) {
+      res.status(400).json({ error: "Invalid favorite data" });
+    }
+  });
+
+  app.delete("/api/favorites/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.claims.sub;
+      const success = await storage.deleteFavorite(id, userId);
+      
+      if (!success) {
+        return res.status(404).json({ error: "Favorite not found" });
+      }
+      
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete favorite" });
+    }
+  });
+
+  app.get("/api/goals", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const goals = await storage.getProfitGoals(userId);
+      res.json(goals);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch profit goals" });
+    }
+  });
+
+  app.post("/api/goals", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const validatedGoal = insertProfitGoalSchema.parse(req.body);
+      const newGoal = await storage.createProfitGoal(userId, validatedGoal);
+      res.status(201).json(newGoal);
+    } catch (error) {
+      res.status(400).json({ error: "Invalid profit goal data" });
+    }
+  });
+
+  app.patch("/api/goals/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.claims.sub;
+      const validatedGoal = insertProfitGoalSchema.partial().parse(req.body);
+      const updatedGoal = await storage.updateProfitGoal(id, userId, validatedGoal);
+      
+      if (!updatedGoal) {
+        return res.status(404).json({ error: "Profit goal not found" });
+      }
+      
+      res.json(updatedGoal);
+    } catch (error) {
+      res.status(400).json({ error: "Invalid profit goal data" });
+    }
+  });
+
+  app.delete("/api/goals/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.claims.sub;
+      const success = await storage.deleteProfitGoal(id, userId);
+      
+      if (!success) {
+        return res.status(404).json({ error: "Profit goal not found" });
+      }
+      
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete profit goal" });
     }
   });
 
