@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { ArrowDownIcon, ArrowUpIcon, Trash2, Pencil, ChevronUp, ChevronDown, Search, X, Filter, MoreHorizontal, Tag, Zap, Loader2 } from "lucide-react";
+import { ArrowDownIcon, ArrowUpIcon, Trash2, Pencil, ChevronUp, ChevronDown, Search, X, Filter, MoreHorizontal, Tag, Zap, Loader2, Download } from "lucide-react";
 import { ItemIcon } from "./ItemIcon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -194,6 +194,46 @@ export function FlipTable({ flips, onDelete, onEdit, onBulkDelete, onQuickSell }
     }
   };
 
+  const exportToCSV = () => {
+    const headers = ["Item Name", "Category", "Quantity", "Buy Price", "Sell Price", "Profit", "ROI %", "Tax Paid", "Buy Date", "Sell Date", "Notes"];
+    
+    const rows = filteredAndSortedFlips.map((flip) => {
+      const profit = calculateProfit(flip);
+      const roi = calculateROI(flip);
+      const tax = getTaxPaid(flip);
+      
+      return [
+        flip.itemName,
+        flip.category || "",
+        flip.quantity.toString(),
+        flip.buyPrice.toString(),
+        flip.sellPrice?.toString() || "",
+        profit !== null ? Math.round(profit).toString() : "",
+        roi !== null ? roi.toFixed(2) : "",
+        tax !== null ? Math.round(tax).toString() : "",
+        new Date(flip.buyDate).toISOString().split("T")[0],
+        flip.sellDate ? new Date(flip.sellDate).toISOString().split("T")[0] : "",
+        flip.notes || "",
+      ];
+    });
+
+    const csvContent = [
+      headers.join(","),
+      ...rows.map((row) => row.map((cell) => `"${cell.replace(/"/g, '""')}"`).join(",")),
+    ].join("\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `flip-history-${new Date().toISOString().split("T")[0]}.csv`);
+    link.style.visibility = "hidden";
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
   const SortIcon = ({ field }: { field: SortField }) => {
     if (sortField !== field) return null;
     return sortDirection === "asc" ? 
@@ -304,6 +344,11 @@ export function FlipTable({ flips, onDelete, onEdit, onBulkDelete, onQuickSell }
               Clear
             </Button>
           )}
+
+          <Button variant="outline" size="sm" onClick={exportToCSV} data-testid="button-export-csv">
+            <Download className="h-4 w-4 mr-2" />
+            Export CSV
+          </Button>
         </div>
 
         {selectedIds.size > 0 && onBulkDelete && (

@@ -5,6 +5,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import type { Flip } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
+import { ToastAction } from "@/components/ui/toast";
 
 export default function Home() {
   const { toast } = useToast();
@@ -44,15 +45,44 @@ export default function Home() {
     },
   });
 
-  const deleteFlipMutation = useMutation({
+  const restoreFlipMutation = useMutation({
     mutationFn: async (id: string) => {
-      return await apiRequest("DELETE", `/api/flips/${id}`);
+      return await apiRequest("POST", `/api/flips/${id}/restore`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/flips"] });
       toast({
+        title: "Flip restored",
+        description: "Your flip has been restored",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to restore flip",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteFlipMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return await apiRequest("DELETE", `/api/flips/${id}?soft=true`);
+    },
+    onSuccess: (_, deletedId) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/flips"] });
+      toast({
         title: "Flip deleted",
         description: "Your flip has been removed",
+        action: (
+          <ToastAction 
+            altText="Undo delete" 
+            onClick={() => restoreFlipMutation.mutate(deletedId)}
+            data-testid="button-undo-delete"
+          >
+            Undo
+          </ToastAction>
+        ),
       });
     },
     onError: () => {
@@ -94,12 +124,30 @@ export default function Home() {
 
   const handleBulkDelete = async (ids: string[]) => {
     for (const id of ids) {
-      await apiRequest("DELETE", `/api/flips/${id}`);
+      await apiRequest("DELETE", `/api/flips/${id}?soft=true`);
     }
     queryClient.invalidateQueries({ queryKey: ["/api/flips"] });
     toast({
       title: "Flips deleted",
       description: `${ids.length} flip(s) have been removed`,
+      action: (
+        <ToastAction 
+          altText="Undo delete" 
+          onClick={async () => {
+            for (const id of ids) {
+              await apiRequest("POST", `/api/flips/${id}/restore`);
+            }
+            queryClient.invalidateQueries({ queryKey: ["/api/flips"] });
+            toast({
+              title: "Flips restored",
+              description: `${ids.length} flip(s) have been restored`,
+            });
+          }}
+          data-testid="button-undo-bulk-delete"
+        >
+          Undo
+        </ToastAction>
+      ),
     });
   };
 
