@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Header } from "@/components/Header";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Trash2, Plus, Loader2, Bell, BellOff, ArrowUp, ArrowDown } from "lucide-react";
+import { Trash2, Plus, Loader2, Bell, BellOff, ArrowUp, ArrowDown, BellRing, CheckCircle } from "lucide-react";
 import { ItemIcon } from "@/components/ItemIcon";
 import {
   Select,
@@ -37,10 +37,81 @@ export default function Alerts() {
   const [isSearching, setIsSearching] = useState(false);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const [livePrices, setLivePrices] = useState<Map<number, number>>(new Map());
+  const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | "unsupported">("default");
+  const [notifiedAlerts, setNotifiedAlerts] = useState<Set<string>>(new Set());
+  const checkIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const { data: alerts = [], isLoading } = useQuery<PriceAlert[]>({
     queryKey: ["/api/alerts"],
   });
+
+  useEffect(() => {
+    if ("Notification" in window) {
+      setNotificationPermission(Notification.permission);
+    } else {
+      setNotificationPermission("unsupported");
+    }
+  }, []);
+
+  const requestNotificationPermission = async () => {
+    if (!("Notification" in window)) {
+      toast({
+        title: "Notifications not supported",
+        description: "Your browser doesn't support notifications",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      const permission = await Notification.requestPermission();
+      setNotificationPermission(permission);
+      
+      if (permission === "granted") {
+        toast({
+          title: "Notifications enabled",
+          description: "You'll receive alerts when prices hit your targets",
+        });
+        new Notification("RS3 Flip Tracker", {
+          body: "Price alerts are now enabled!",
+          icon: "/favicon.ico",
+        });
+      } else if (permission === "denied") {
+        toast({
+          title: "Notifications blocked",
+          description: "Please enable notifications in your browser settings",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Could not request notification permission",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const sendPriceNotification = useCallback((alert: PriceAlert, currentPrice: number) => {
+    if (notificationPermission !== "granted") return;
+    if (notifiedAlerts.has(alert.id)) return;
+
+    const direction = alert.alertType === "below" ? "dropped below" : "risen above";
+    const body = `${alert.itemName} has ${direction} your target of ${alert.targetPrice.toLocaleString()} gp! Current price: ${currentPrice.toLocaleString()} gp`;
+
+    try {
+      new Notification("Price Alert Triggered!", {
+        body,
+        icon: alert.itemIcon || "/favicon.ico",
+        tag: `price-alert-${alert.id}`,
+        requireInteraction: true,
+      });
+
+      setNotifiedAlerts(prev => new Set(prev).add(alert.id));
+    } catch (error) {
+      console.error("Failed to send notification:", error);
+    }
+  }, [notificationPermission, notifiedAlerts]);
 
   useEffect(() => {
     if (searchTimeoutRef.current) {
@@ -77,26 +148,45 @@ export default function Alerts() {
     };
   }, [itemName]);
 
-  useEffect(() => {
-    const fetchLivePrices = async () => {
-      const newPrices = new Map<number, number>();
-      for (const alert of alerts) {
-        try {
-          const response = await fetch(`/api/ge/price?name=${encodeURIComponent(alert.itemName)}`);
-          if (response.ok) {
-            const data = await response.json();
-            newPrices.set(alert.itemId, data.price);
-          }
-        } catch {
-        }
-      }
-      setLivePrices(newPrices);
-    };
+  const fetchLivePricesAndCheck = useCallback(async () => {
+    if (alerts.length === 0) return;
 
-    if (alerts.length > 0) {
-      fetchLivePrices();
+    const newPrices = new Map<number, number>();
+    for (const alert of alerts) {
+      try {
+        const response = await fetch(`/api/ge/price?name=${encodeURIComponent(alert.itemName)}`);
+        if (response.ok) {
+          const data = await response.json();
+          newPrices.set(alert.itemId, data.price);
+
+          const isTriggered = alert.alertType === "below" 
+            ? data.price <= alert.targetPrice
+            : data.price >= alert.targetPrice;
+
+          if (isTriggered && alert.isActive === 1) {
+            sendPriceNotification(alert, data.price);
+          }
+        }
+      } catch {
+      }
     }
-  }, [alerts]);
+    setLivePrices(newPrices);
+  }, [alerts, sendPriceNotification]);
+
+  useEffect(() => {
+    fetchLivePricesAndCheck();
+
+    if (checkIntervalRef.current) {
+      clearInterval(checkIntervalRef.current);
+    }
+    checkIntervalRef.current = setInterval(fetchLivePricesAndCheck, 60000);
+
+    return () => {
+      if (checkIntervalRef.current) {
+        clearInterval(checkIntervalRef.current);
+      }
+    };
+  }, [fetchLivePricesAndCheck]);
 
   const createMutation = useMutation({
     mutationFn: async (data: { itemId: number; itemName: string; itemIcon?: string; alertType: "above" | "below"; targetPrice: number }) => {
@@ -180,12 +270,54 @@ export default function Alerts() {
     <div className="min-h-screen bg-background">
       <Header />
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Bell className="h-6 w-6" />
-            Price Alerts
-          </h1>
-          <p className="text-muted-foreground">Get notified when item prices hit your targets</p>
+        <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-bold flex items-center gap-2">
+              <Bell className="h-6 w-6" />
+              Price Alerts
+            </h1>
+            <p className="text-muted-foreground">Get notified when item prices hit your targets</p>
+          </div>
+          
+          <div className="flex items-center gap-2">
+            {notificationPermission === "unsupported" ? (
+              <Badge variant="secondary" className="gap-1">
+                <BellOff className="h-3 w-3" />
+                Notifications not supported
+              </Badge>
+            ) : notificationPermission === "granted" ? (
+              <div className="flex items-center gap-2">
+                <Badge className="bg-success/10 text-success border-success/20 gap-1" data-testid="badge-notifications-enabled">
+                  <CheckCircle className="h-3 w-3" />
+                  Notifications enabled
+                </Badge>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={fetchLivePricesAndCheck}
+                  data-testid="button-check-prices"
+                  title="Check prices now"
+                >
+                  <Loader2 className={`h-4 w-4 ${livePrices.size === 0 && alerts.length > 0 ? 'animate-spin' : ''}`} />
+                </Button>
+              </div>
+            ) : notificationPermission === "denied" ? (
+              <Badge variant="destructive" className="gap-1">
+                <BellOff className="h-3 w-3" />
+                Notifications blocked
+              </Badge>
+            ) : (
+              <Button 
+                variant="outline" 
+                size="sm" 
+                onClick={requestNotificationPermission}
+                data-testid="button-enable-notifications"
+              >
+                <BellRing className="h-4 w-4 mr-2" />
+                Enable Notifications
+              </Button>
+            )}
+          </div>
         </div>
 
         <div className="grid gap-8 lg:grid-cols-3">
@@ -409,6 +541,11 @@ export default function Alerts() {
                       })}
                     </tbody>
                   </table>
+                </div>
+                <div className="px-4 py-2 text-xs text-muted-foreground border-t">
+                  Prices auto-refresh every 60 seconds. {notificationPermission === "granted" 
+                    ? "You'll receive browser notifications when alerts trigger."
+                    : "Enable notifications to receive browser alerts."}
                 </div>
               </div>
             )}
