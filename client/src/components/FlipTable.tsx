@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { ArrowDownIcon, ArrowUpIcon, Trash2, Pencil, ChevronUp, ChevronDown, Search, X, Filter } from "lucide-react";
+import { ArrowDownIcon, ArrowUpIcon, Trash2, Pencil, ChevronUp, ChevronDown, Search, X, Filter, MoreHorizontal } from "lucide-react";
 import { ItemIcon } from "./ItemIcon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 interface Flip {
   id: string;
@@ -340,7 +346,7 @@ export function FlipTable({ flips, onDelete, onEdit, onBulkDelete }: FlipTablePr
                     >
                       Dates <SortIcon field="date" />
                     </th>
-                    <th className="w-24 px-4 py-3"></th>
+                    <th className="w-12 px-4 py-3"></th>
                   </tr>
                 </thead>
                 <tbody>
@@ -430,24 +436,34 @@ export function FlipTable({ flips, onDelete, onEdit, onBulkDelete }: FlipTablePr
                           </div>
                         </td>
                         <td className="px-4 py-3">
-                          <div className="flex gap-1">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => setEditingFlip(flip)}
-                              data-testid={`button-edit-${flip.id}`}
-                            >
-                              <Pencil className="h-4 w-4 text-muted-foreground" />
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => onDelete(flip.id)}
-                              data-testid={`button-delete-${flip.id}`}
-                            >
-                              <Trash2 className="h-4 w-4 text-muted-foreground" />
-                            </Button>
-                          </div>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                data-testid={`button-actions-${flip.id}`}
+                              >
+                                <MoreHorizontal className="h-4 w-4 text-muted-foreground" />
+                              </Button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem
+                                onClick={() => setEditingFlip(flip)}
+                                data-testid={`button-edit-${flip.id}`}
+                              >
+                                <Pencil className="h-4 w-4 mr-2" />
+                                Edit
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => onDelete(flip.id)}
+                                className="text-destructive focus:text-destructive"
+                                data-testid={`button-delete-${flip.id}`}
+                              >
+                                <Trash2 className="h-4 w-4 mr-2" />
+                                Delete
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
                         </td>
                       </tr>
                     );
