@@ -70,7 +70,7 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
   const [buyDate, setBuyDate] = useState<Date>(new Date());
   const [sellDate, setSellDate] = useState<Date | undefined>(undefined);
   const [notes, setNotes] = useState("");
-  const [category, setCategory] = useState("");
+  const [category, setCategory] = useState("none");
   const [buyDateOpen, setBuyDateOpen] = useState(false);
   const [sellDateOpen, setSellDateOpen] = useState(false);
   
@@ -282,7 +282,7 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
       buyDate: buyDate,
       sellDate: sellDate,
       notes: notes || undefined,
-      category: category || undefined,
+      category: category && category !== "none" ? category : undefined,
     });
 
     setItemName("");
@@ -292,7 +292,7 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
     setBuyDate(new Date());
     setSellDate(undefined);
     setNotes("");
-    setCategory("");
+    setCategory("none");
     setGePrice(null);
     setPriceTrend(null);
     setLookupError("");
@@ -849,7 +849,7 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
                 <SelectValue placeholder="Select category (optional)" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">None</SelectItem>
+                <SelectItem value="none">None</SelectItem>
                 {CATEGORIES.map((cat) => (
                   <SelectItem key={cat} value={cat}>{cat}</SelectItem>
                 ))}

@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { ArrowDownIcon, ArrowUpIcon, Trash2, Pencil, ChevronUp, ChevronDown, Search, X, Filter, MoreHorizontal } from "lucide-react";
+import { ArrowDownIcon, ArrowUpIcon, Trash2, Pencil, ChevronUp, ChevronDown, Search, X, Filter, MoreHorizontal, Tag } from "lucide-react";
 import { ItemIcon } from "./ItemIcon";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,6 +21,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
+const CATEGORIES = ["High Value", "Consumables", "Weapons", "Armor", "Skilling", "Misc"];
+
 interface Flip {
   id: string;
   itemName: string;
@@ -30,6 +32,8 @@ interface Flip {
   sellPrice?: number;
   buyDate: Date;
   sellDate?: Date;
+  notes?: string;
+  category?: string;
 }
 
 type SortField = "date" | "profit" | "roi" | "item" | "quantity";
@@ -58,6 +62,7 @@ export function FlipTable({ flips, onDelete, onEdit, onBulkDelete }: FlipTablePr
   const [sortField, setSortField] = useState<SortField>("date");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const calculateGETax = (sellPrice: number, quantity: number) => {
@@ -108,6 +113,10 @@ export function FlipTable({ flips, onDelete, onEdit, onBulkDelete }: FlipTablePr
       result = result.filter(flip => flip.sellPrice === undefined || flip.sellPrice === null);
     }
 
+    if (categoryFilter !== "all") {
+      result = result.filter(flip => flip.category === categoryFilter);
+    }
+
     result.sort((a, b) => {
       let comparison = 0;
       
@@ -137,7 +146,7 @@ export function FlipTable({ flips, onDelete, onEdit, onBulkDelete }: FlipTablePr
     });
 
     return result;
-  }, [flips, searchQuery, sortField, sortDirection, statusFilter]);
+  }, [flips, searchQuery, sortField, sortDirection, statusFilter, categoryFilter]);
 
   const toggleSort = (field: SortField) => {
     if (sortField === field) {
@@ -196,11 +205,12 @@ export function FlipTable({ flips, onDelete, onEdit, onBulkDelete }: FlipTablePr
   const clearFilters = () => {
     setSearchQuery("");
     setStatusFilter("all");
+    setCategoryFilter("all");
     setSortField("date");
     setSortDirection("desc");
   };
 
-  const hasActiveFilters = searchQuery.trim() || statusFilter !== "all" || sortField !== "date" || sortDirection !== "desc";
+  const hasActiveFilters = searchQuery.trim() || statusFilter !== "all" || categoryFilter !== "all" || sortField !== "date" || sortDirection !== "desc";
 
   if (flips.length === 0) {
     return (
@@ -240,6 +250,19 @@ export function FlipTable({ flips, onDelete, onEdit, onBulkDelete }: FlipTablePr
               <SelectItem value="all">All Flips</SelectItem>
               <SelectItem value="completed">Completed</SelectItem>
               <SelectItem value="open">Open</SelectItem>
+            </SelectContent>
+          </Select>
+
+          <Select value={categoryFilter} onValueChange={setCategoryFilter}>
+            <SelectTrigger className="w-[140px]" data-testid="select-category-filter">
+              <Tag className="h-4 w-4 mr-2" />
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Categories</SelectItem>
+              {CATEGORIES.map((cat) => (
+                <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
 
@@ -376,7 +399,14 @@ export function FlipTable({ flips, onDelete, onEdit, onBulkDelete }: FlipTablePr
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-3">
                             <ItemIcon itemName={flip.itemName} itemIcon={flip.itemIcon} size="sm" />
-                            <span className="font-medium">{flip.itemName}</span>
+                            <div className="flex flex-col gap-1">
+                              <span className="font-medium">{flip.itemName}</span>
+                              {flip.category && (
+                                <Badge variant="secondary" className="text-xs w-fit" data-testid={`badge-category-${flip.id}`}>
+                                  {flip.category}
+                                </Badge>
+                              )}
+                            </div>
                           </div>
                         </td>
                         <td className="px-4 py-3 text-center font-mono text-sm">

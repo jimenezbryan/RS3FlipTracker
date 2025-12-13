@@ -67,7 +67,7 @@ export function EditFlipDialog({ flip, open, onOpenChange, onSubmit }: EditFlipD
       setBuyDate(new Date(flip.buyDate));
       setSellDate(flip.sellDate ? new Date(flip.sellDate) : undefined);
       setNotes(flip.notes ?? "");
-      setCategory(flip.category ?? "");
+      setCategory(flip.category ?? "none");
     }
   }, [flip]);
 
@@ -81,7 +81,7 @@ export function EditFlipDialog({ flip, open, onOpenChange, onSubmit }: EditFlipD
       buyDate,
       sellDate,
       notes: notes || undefined,
-      category: category || undefined,
+      category: category && category !== "none" ? category : undefined,
     });
   };
 
@@ -279,7 +279,7 @@ export function EditFlipDialog({ flip, open, onOpenChange, onSubmit }: EditFlipD
                 <SelectValue placeholder="Select category" />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="">None</SelectItem>
+                <SelectItem value="none">None</SelectItem>
                 {CATEGORIES.map((cat) => (
                   <SelectItem key={cat} value={cat}>{cat}</SelectItem>
                 ))}
