@@ -8,9 +8,12 @@ import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CalendarIcon, Search, Loader2, TrendingUp, TrendingDown, Minus, ThumbsUp, ThumbsDown, Clock, AlertTriangle } from "lucide-react";
+import { CalendarIcon, Search, Loader2, TrendingUp, TrendingDown, Minus, ThumbsUp, ThumbsDown, Clock, AlertTriangle, Star, X } from "lucide-react";
 import { format, subDays } from "date-fns";
 import { cn } from "@/lib/utils";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { queryClient, apiRequest } from "@/lib/queryClient";
+import type { Favorite } from "@shared/schema";
 
 interface GEItem {
   id: number;
@@ -81,6 +84,76 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
   const [showSuggestions, setShowSuggestions] = useState(false);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const { data: favorites = [] } = useQuery<Favorite[]>({
+    queryKey: ["/api/favorites"],
+  });
+
+  const addFavoriteMutation = useMutation({
+    mutationFn: async (item: { itemId: number; itemName: string; itemIcon?: string }) => {
+      return await apiRequest("POST", "/api/favorites", item);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/favorites"] });
+    },
+  });
+
+  const removeFavoriteMutation = useMutation({
+    mutationFn: async (id: string) => {
+      return await apiRequest("DELETE", `/api/favorites/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/favorites"] });
+    },
+  });
+
+  const isFavorited = (itemId: number) => {
+    return favorites.some(f => f.itemId === itemId);
+  };
+
+  const getFavoriteId = (itemId: number) => {
+    const fav = favorites.find(f => f.itemId === itemId);
+    return fav?.id;
+  };
+
+  const toggleFavorite = (item: GEItem) => {
+    if (isFavorited(item.id)) {
+      const favId = getFavoriteId(item.id);
+      if (favId) {
+        removeFavoriteMutation.mutate(favId);
+      }
+    } else {
+      addFavoriteMutation.mutate({
+        itemId: item.id,
+        itemName: item.name,
+        itemIcon: item.icon,
+      });
+    }
+  };
+
+  const selectFavoriteItem = async (favorite: Favorite) => {
+    setItemName(favorite.itemName);
+    const item: GEItem = {
+      id: favorite.itemId,
+      name: favorite.itemName,
+      price: 0,
+      icon: favorite.itemIcon ?? undefined,
+    };
+    
+    try {
+      const response = await fetch(`/api/ge/price?name=${encodeURIComponent(favorite.itemName)}`);
+      if (response.ok) {
+        const data: GEItem = await response.json();
+        item.price = data.price;
+        setGePrice(data);
+        if (data.id) {
+          fetchTrend(data.id);
+        }
+      }
+    } catch (error) {
+      console.error("Failed to fetch price for favorite:", error);
+    }
+  };
 
   const duplicatePosition = useMemo(() => {
     if (!itemName.trim()) return null;
@@ -308,6 +381,54 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
+          {favorites.length > 0 && (
+            <div className="space-y-2">
+              <Label className="flex items-center gap-1">
+                <Star className="h-3 w-3 fill-yellow-400 text-yellow-400" />
+                Quick Add from Favorites
+              </Label>
+              <div className="flex flex-wrap gap-1.5">
+                {favorites.map((fav) => (
+                  <Badge
+                    key={fav.id}
+                    variant="secondary"
+                    className="cursor-pointer gap-1.5 pr-1"
+                    data-testid={`badge-favorite-${fav.id}`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => selectFavoriteItem(fav)}
+                      className="flex items-center gap-1.5"
+                    >
+                      {fav.itemIcon && (
+                        <img 
+                          src={fav.itemIcon} 
+                          alt={fav.itemName}
+                          className="h-4 w-4 object-contain"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).style.display = 'none';
+                          }}
+                        />
+                      )}
+                      <span className="text-xs">{fav.itemName}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        removeFavoriteMutation.mutate(fav.id);
+                      }}
+                      className="p-0.5 rounded hover-elevate"
+                      data-testid={`button-remove-favorite-${fav.id}`}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="space-y-2">
             <Label htmlFor="itemName">Item Name</Label>
             <div className="relative">
@@ -361,30 +482,50 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
               {showSuggestions && suggestions.length > 0 && (
                 <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-64 overflow-auto" data-testid="suggestions-dropdown">
                   {suggestions.map((item) => (
-                    <button
+                    <div
                       key={item.id}
-                      type="button"
-                      className="w-full flex items-center gap-3 px-3 py-2 hover-elevate text-left"
-                      onClick={() => handleSelectItem(item)}
-                      data-testid={`suggestion-item-${item.id}`}
+                      className="flex items-center gap-2 px-3 py-2 hover-elevate"
                     >
-                      {item.icon && (
-                        <img 
-                          src={item.icon} 
-                          alt={item.name}
-                          className="h-6 w-6 object-contain"
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).style.display = 'none';
-                          }}
-                        />
-                      )}
-                      <div className="flex-1 min-w-0">
-                        <div className="font-medium truncate">{item.name}</div>
-                        <div className="text-xs text-muted-foreground font-mono">
-                          {item.price ? item.price.toLocaleString() : "N/A"} gp
+                      <button
+                        type="button"
+                        className="flex-1 flex items-center gap-3 text-left"
+                        onClick={() => handleSelectItem(item)}
+                        data-testid={`suggestion-item-${item.id}`}
+                      >
+                        {item.icon && (
+                          <img 
+                            src={item.icon} 
+                            alt={item.name}
+                            className="h-6 w-6 object-contain"
+                            onError={(e) => {
+                              (e.target as HTMLImageElement).style.display = 'none';
+                            }}
+                          />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium truncate">{item.name}</div>
+                          <div className="text-xs text-muted-foreground font-mono">
+                            {item.price ? item.price.toLocaleString() : "N/A"} gp
+                          </div>
                         </div>
-                      </div>
-                    </button>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleFavorite(item);
+                        }}
+                        className="p-1 rounded hover-elevate"
+                        data-testid={`button-favorite-${item.id}`}
+                      >
+                        <Star 
+                          className={cn(
+                            "h-4 w-4",
+                            isFavorited(item.id) ? "fill-yellow-400 text-yellow-400" : "text-muted-foreground"
+                          )} 
+                        />
+                      </button>
+                    </div>
                   ))}
                 </div>
               )}
@@ -436,6 +577,20 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
                         </div>
                       )}
                     </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => toggleFavorite(gePrice)}
+                      data-testid="button-toggle-favorite-selected"
+                    >
+                      <Star 
+                        className={cn(
+                          "h-5 w-5",
+                          isFavorited(gePrice.id) ? "fill-yellow-400 text-yellow-400" : "text-muted-foreground"
+                        )} 
+                      />
+                    </Button>
                   </div>
                 </div>
 
