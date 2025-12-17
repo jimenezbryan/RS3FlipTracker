@@ -52,6 +52,8 @@ Database tables:
 - `profitGoals` - Daily/weekly/monthly profit targets
 
 ### Recent Updates
+- **AI Price Suggestions**: Get smart buy/sell price recommendations based on 90-day price history with confidence levels, volatility analysis, and one-click auto-fill buttons
+- **Inline Price Charts**: View price history charts directly in the flip form when logging trades
 - **Price History Charts**: View 90-day price trends with area charts, averages, and buy/sell recommendations
 - **Browser Push Notifications**: Get notified when price alerts trigger (60-second check interval)
 - **Profit Goals**: Set and track daily, weekly, and monthly profit targets with progress bars

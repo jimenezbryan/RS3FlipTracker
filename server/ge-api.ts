@@ -332,6 +332,168 @@ export async function getItemPriceHistory(itemId: number): Promise<PriceHistoryP
   }
 }
 
+export interface PriceSuggestion {
+  suggestedBuyPrice: number;
+  suggestedSellPrice: number;
+  potentialProfit: number;
+  potentialROI: number;
+  confidence: "high" | "medium" | "low";
+  confidenceReason: string;
+  buyReason: string;
+  sellReason: string;
+  currentPrice: number;
+  avgPrice7d: number;
+  avgPrice30d: number;
+  lowPrice30d: number;
+  highPrice30d: number;
+  volatility: number;
+  trend: "rising" | "falling" | "stable";
+}
+
+export async function getItemSuggestions(itemId: number): Promise<PriceSuggestion | null> {
+  try {
+    const response = await fetch(
+      `${GE_API_BASE}/last90d?id=${itemId}`,
+      {
+        headers: {
+          "User-Agent": USER_AGENT,
+        },
+      }
+    );
+
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    const history = data[itemId.toString()];
+    
+    if (!history || history.length === 0) return null;
+
+    const sortedHistory = [...history].sort(
+      (a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+
+    const prices = sortedHistory.map((h: any) => h.price);
+    const currentPrice = prices[prices.length - 1];
+    
+    const last7d = prices.slice(-7);
+    const last30d = prices.slice(-30);
+    const last14d = prices.slice(-14);
+    
+    const avgPrice7d = last7d.reduce((a: number, b: number) => a + b, 0) / last7d.length;
+    const avgPrice30d = last30d.reduce((a: number, b: number) => a + b, 0) / last30d.length;
+    const avgPrice14d = last14d.reduce((a: number, b: number) => a + b, 0) / last14d.length;
+    const lowPrice30d = Math.min(...last30d);
+    const highPrice30d = Math.max(...last30d);
+    
+    // Calculate volatility (standard deviation / mean)
+    const mean30d = avgPrice30d;
+    const squaredDiffs = last30d.map((p: number) => Math.pow(p - mean30d, 2));
+    const avgSquaredDiff = squaredDiffs.reduce((a: number, b: number) => a + b, 0) / squaredDiffs.length;
+    const stdDev = Math.sqrt(avgSquaredDiff);
+    const volatility = (stdDev / mean30d) * 100;
+    
+    // Determine trend
+    let trend: "rising" | "falling" | "stable" = "stable";
+    const priceChange7d = ((currentPrice - avgPrice7d) / avgPrice7d) * 100;
+    if (priceChange7d > 3) trend = "rising";
+    else if (priceChange7d < -3) trend = "falling";
+    
+    // Calculate suggested buy price
+    // Strategy: Buy below 7-day average, closer to 30-day low for high-volatility items
+    let buyDiscount = 0.05; // Base 5% discount from current price
+    if (volatility > 10) buyDiscount = 0.08; // Higher discount for volatile items
+    if (volatility > 20) buyDiscount = 0.12;
+    if (trend === "falling") buyDiscount += 0.03; // Extra discount when falling
+    
+    // Target buy price between current and 30-day low
+    const targetBuyFromLow = lowPrice30d + (avgPrice30d - lowPrice30d) * 0.3; // 30% above 30-day low
+    const targetBuyFromCurrent = currentPrice * (1 - buyDiscount);
+    const suggestedBuyPrice = Math.round(Math.max(
+      lowPrice30d * 1.02, // At least 2% above 30-day low (realistic)
+      Math.min(targetBuyFromLow, targetBuyFromCurrent)
+    ));
+    
+    // Calculate suggested sell price
+    // Strategy: Sell above 7-day average, closer to 30-day high
+    let sellPremium = 0.05; // Base 5% premium
+    if (volatility > 10) sellPremium = 0.08;
+    if (volatility > 20) sellPremium = 0.12;
+    if (trend === "rising") sellPremium += 0.02;
+    
+    const targetSellFromHigh = highPrice30d - (highPrice30d - avgPrice30d) * 0.3; // 30% below 30-day high
+    const targetSellFromCurrent = currentPrice * (1 + sellPremium);
+    const suggestedSellPrice = Math.round(Math.min(
+      highPrice30d * 0.98, // At most 2% below 30-day high (realistic)
+      Math.max(targetSellFromHigh, targetSellFromCurrent)
+    ));
+    
+    // Calculate potential profit
+    const potentialProfit = suggestedSellPrice - suggestedBuyPrice;
+    const potentialROI = ((suggestedSellPrice - suggestedBuyPrice) / suggestedBuyPrice) * 100;
+    
+    // Determine confidence level
+    let confidence: "high" | "medium" | "low" = "medium";
+    let confidenceReason = "";
+    
+    // High confidence when volatility is moderate and we have good spread
+    if (volatility >= 5 && volatility <= 15 && potentialROI >= 8) {
+      confidence = "high";
+      confidenceReason = "Good price range with moderate volatility. Historical patterns suggest reliable flip opportunities.";
+    } else if (volatility > 20) {
+      confidence = "low";
+      confidenceReason = "High price volatility. Prices may swing unexpectedly. Consider smaller positions.";
+    } else if (potentialROI < 5) {
+      confidence = "low";
+      confidenceReason = "Narrow profit margin. Transaction costs and price movements may reduce actual profit.";
+    } else if (trend === "falling" && currentPrice > avgPrice30d) {
+      confidence = "medium";
+      confidenceReason = "Price declining but still above average. Wait for better entry point or use suggested buy price.";
+    } else if (trend === "rising" && currentPrice < avgPrice30d) {
+      confidence = "high";
+      confidenceReason = "Price rising from below average. Good momentum for flipping.";
+    } else {
+      confidenceReason = "Standard market conditions. Suggested prices based on 30-day trading range.";
+    }
+    
+    // Generate buy/sell reasons
+    const buyReason = suggestedBuyPrice < avgPrice7d
+      ? `${((avgPrice7d - suggestedBuyPrice) / avgPrice7d * 100).toFixed(1)}% below 7-day avg (${formatPriceSimple(avgPrice7d)} gp)`
+      : `Near recent low of ${formatPriceSimple(lowPrice30d)} gp`;
+    
+    const sellReason = suggestedSellPrice > avgPrice7d
+      ? `${((suggestedSellPrice - avgPrice7d) / avgPrice7d * 100).toFixed(1)}% above 7-day avg, targeting ${formatPriceSimple(highPrice30d)} gp high`
+      : `Based on ${formatPriceSimple(highPrice30d)} gp 30-day high`;
+
+    return {
+      suggestedBuyPrice,
+      suggestedSellPrice,
+      potentialProfit,
+      potentialROI: Math.round(potentialROI * 100) / 100,
+      confidence,
+      confidenceReason,
+      buyReason,
+      sellReason,
+      currentPrice,
+      avgPrice7d: Math.round(avgPrice7d),
+      avgPrice30d: Math.round(avgPrice30d),
+      lowPrice30d,
+      highPrice30d,
+      volatility: Math.round(volatility * 100) / 100,
+      trend,
+    };
+  } catch (error) {
+    console.error("Failed to calculate item suggestions:", error);
+    return null;
+  }
+}
+
+function formatPriceSimple(price: number): string {
+  if (price >= 1000000000) return `${(price / 1000000000).toFixed(1)}B`;
+  if (price >= 1000000) return `${(price / 1000000).toFixed(1)}M`;
+  if (price >= 1000) return `${(price / 1000).toFixed(1)}K`;
+  return price.toLocaleString();
+}
+
 export async function getItemById(itemId: number): Promise<GEItem | null> {
   try {
     const response = await fetch(

@@ -328,6 +328,8 @@ export default function Home() {
                 sellPrice: flip.sellPrice ?? undefined,
                 buyDate: new Date(flip.buyDate),
                 sellDate: flip.sellDate ? new Date(flip.sellDate) : undefined,
+                notes: flip.notes ?? undefined,
+                category: flip.category ?? undefined,
               }))} 
               onDelete={handleDeleteFlip}
               onEdit={handleEditFlip}

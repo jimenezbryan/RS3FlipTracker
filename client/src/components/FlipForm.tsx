@@ -8,12 +8,13 @@ import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { CalendarIcon, Search, Loader2, TrendingUp, TrendingDown, Minus, ThumbsUp, ThumbsDown, Clock, AlertTriangle, Star, X } from "lucide-react";
+import { CalendarIcon, Search, Loader2, TrendingUp, TrendingDown, Minus, ThumbsUp, ThumbsDown, Clock, AlertTriangle, Star, X, Sparkles, ChevronDown, ChevronUp, LineChart } from "lucide-react";
 import { format, subDays } from "date-fns";
 import { cn } from "@/lib/utils";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import type { Favorite } from "@shared/schema";
+import { PriceHistoryChart } from "./PriceHistoryChart";
 
 interface GEItem {
   id: number;
@@ -34,6 +35,24 @@ interface PriceTrend {
   highPrice30d: number;
   recommendation: "buy" | "sell" | "hold";
   recommendationReason: string;
+}
+
+interface PriceSuggestion {
+  suggestedBuyPrice: number;
+  suggestedSellPrice: number;
+  potentialProfit: number;
+  potentialROI: number;
+  confidence: "high" | "medium" | "low";
+  confidenceReason: string;
+  buyReason: string;
+  sellReason: string;
+  currentPrice: number;
+  avgPrice7d: number;
+  avgPrice30d: number;
+  lowPrice30d: number;
+  highPrice30d: number;
+  volatility: number;
+  trend: "rising" | "falling" | "stable";
 }
 
 interface OpenPosition {
@@ -76,6 +95,8 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
   
   const [gePrice, setGePrice] = useState<GEItem | null>(null);
   const [priceTrend, setPriceTrend] = useState<PriceTrend | null>(null);
+  const [aiSuggestions, setAiSuggestions] = useState<PriceSuggestion | null>(null);
+  const [showChart, setShowChart] = useState(false);
   const [isLookingUp, setIsLookingUp] = useState(false);
   const [lookupError, setLookupError] = useState("");
 
@@ -210,13 +231,28 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
 
   const fetchTrend = async (itemId: number) => {
     try {
-      const trendResponse = await fetch(`/api/ge/trend/${itemId}`);
+      const [trendResponse, suggestionsResponse] = await Promise.all([
+        fetch(`/api/ge/trend/${itemId}`),
+        fetch(`/api/ge/suggestions/${itemId}`)
+      ]);
+      
       if (trendResponse.ok) {
         const trendData: PriceTrend = await trendResponse.json();
         setPriceTrend(trendData);
+      } else {
+        setPriceTrend(null);
+      }
+      
+      if (suggestionsResponse.ok) {
+        const suggestionsData: PriceSuggestion = await suggestionsResponse.json();
+        setAiSuggestions(suggestionsData);
+      } else {
+        setAiSuggestions(null);
       }
     } catch (error) {
-      console.error("Failed to fetch trend:", error);
+      console.error("Failed to fetch trend/suggestions:", error);
+      setPriceTrend(null);
+      setAiSuggestions(null);
     }
   };
 
@@ -295,9 +331,54 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
     setCategory("none");
     setGePrice(null);
     setPriceTrend(null);
+    setAiSuggestions(null);
+    setShowChart(false);
     setLookupError("");
     setSuggestions([]);
     setShowSuggestions(false);
+  };
+
+  const handleUseSuggestedBuyPrice = () => {
+    if (aiSuggestions) {
+      setBuyPrice(aiSuggestions.suggestedBuyPrice.toString());
+    }
+  };
+
+  const handleUseSuggestedSellPrice = () => {
+    if (aiSuggestions) {
+      setSellPrice(aiSuggestions.suggestedSellPrice.toString());
+    }
+  };
+
+  const handleUseBothSuggestions = () => {
+    if (aiSuggestions) {
+      setBuyPrice(aiSuggestions.suggestedBuyPrice.toString());
+      setSellPrice(aiSuggestions.suggestedSellPrice.toString());
+    }
+  };
+
+  const getConfidenceBadge = () => {
+    if (!aiSuggestions) return null;
+    switch (aiSuggestions.confidence) {
+      case "high":
+        return (
+          <Badge variant="default" className="bg-success text-success-foreground">
+            High Confidence
+          </Badge>
+        );
+      case "medium":
+        return (
+          <Badge variant="secondary">
+            Medium Confidence
+          </Badge>
+        );
+      case "low":
+        return (
+          <Badge variant="outline" className="border-warning text-warning">
+            Low Confidence
+          </Badge>
+        );
+    }
   };
 
   const getTrendIcon = () => {
@@ -442,6 +523,8 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
                       setItemName(e.target.value);
                       setGePrice(null);
                       setPriceTrend(null);
+                      setAiSuggestions(null);
+                      setShowChart(false);
                       setLookupError("");
                     }}
                     onFocus={() => {
@@ -639,6 +722,115 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
                         {priceTrend.recommendationReason}
                       </p>
                     </div>
+                  </div>
+                )}
+
+                {aiSuggestions && (
+                  <div className="rounded-md border border-primary/30 bg-primary/5 p-3 space-y-3" data-testid="ai-suggestions-panel">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="h-4 w-4 text-primary" />
+                        <span className="font-medium text-sm">AI Price Suggestions</span>
+                      </div>
+                      {getConfidenceBadge()}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-muted-foreground">Suggested Buy</span>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-auto px-1.5 py-0.5 text-xs"
+                            onClick={handleUseSuggestedBuyPrice}
+                            data-testid="button-use-suggested-buy"
+                          >
+                            Use
+                          </Button>
+                        </div>
+                        <div className="font-mono text-lg font-semibold text-success">
+                          {aiSuggestions.suggestedBuyPrice.toLocaleString()} gp
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {aiSuggestions.buyReason}
+                        </p>
+                      </div>
+                      <div className="space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs text-muted-foreground">Suggested Sell</span>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-auto px-1.5 py-0.5 text-xs"
+                            onClick={handleUseSuggestedSellPrice}
+                            data-testid="button-use-suggested-sell"
+                          >
+                            Use
+                          </Button>
+                        </div>
+                        <div className="font-mono text-lg font-semibold text-destructive">
+                          {aiSuggestions.suggestedSellPrice.toLocaleString()} gp
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          {aiSuggestions.sellReason}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between border-t pt-3">
+                      <div className="space-y-0.5">
+                        <div className="flex items-center gap-2 text-sm">
+                          <span className="text-muted-foreground">Potential Profit:</span>
+                          <span className="font-mono font-medium text-success">
+                            +{aiSuggestions.potentialProfit.toLocaleString()} gp
+                          </span>
+                          <span className="font-mono text-xs text-muted-foreground">
+                            ({aiSuggestions.potentialROI.toFixed(1)}% ROI)
+                          </span>
+                        </div>
+                        <div className="text-xs text-muted-foreground flex items-center gap-1">
+                          Volatility: {aiSuggestions.volatility.toFixed(1)}%
+                        </div>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="default"
+                        size="sm"
+                        onClick={handleUseBothSuggestions}
+                        data-testid="button-use-both-suggestions"
+                      >
+                        Use Both
+                      </Button>
+                    </div>
+
+                    <p className="text-xs text-muted-foreground border-t pt-2">
+                      {aiSuggestions.confidenceReason}
+                    </p>
+                  </div>
+                )}
+
+                {gePrice?.id && (
+                  <div className="space-y-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                      onClick={() => setShowChart(!showChart)}
+                      data-testid="button-toggle-chart"
+                    >
+                      <LineChart className="mr-2 h-4 w-4" />
+                      {showChart ? "Hide" : "Show"} Price Chart
+                      {showChart ? <ChevronUp className="ml-2 h-4 w-4" /> : <ChevronDown className="ml-2 h-4 w-4" />}
+                    </Button>
+                    {showChart && (
+                      <div className="rounded-md border bg-card p-2" data-testid="inline-price-chart">
+                        <PriceHistoryChart itemId={gePrice.id} itemName={gePrice.name} />
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
