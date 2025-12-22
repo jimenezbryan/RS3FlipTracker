@@ -75,11 +75,14 @@ interface FlipFormProps {
     sellDate?: Date;
     notes?: string;
     category?: string;
+    strategyTag: "Fast Flip" | "Slow Flip" | "Bulk" | "High Margin" | "Speculative" | "Other";
   }) => void;
   openPositions?: OpenPosition[];
 }
 
 const CATEGORIES = ["High Value", "Consumables", "Weapons", "Armor", "Skilling", "Misc"];
+
+const STRATEGIES = ["Fast Flip", "Slow Flip", "Bulk", "High Margin", "Speculative", "Other"];
 
 export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
   const [itemName, setItemName] = useState("");
@@ -90,6 +93,7 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
   const [sellDate, setSellDate] = useState<Date | undefined>(undefined);
   const [notes, setNotes] = useState("");
   const [category, setCategory] = useState("none");
+  const [strategyTag, setStrategyTag] = useState<"Fast Flip" | "Slow Flip" | "Bulk" | "High Margin" | "Speculative" | "Other">("Other");
   const [buyDateOpen, setBuyDateOpen] = useState(false);
   const [sellDateOpen, setSellDateOpen] = useState(false);
   
@@ -319,6 +323,7 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
       sellDate: sellDate,
       notes: notes || undefined,
       category: category && category !== "none" ? category : undefined,
+      strategyTag,
     });
 
     setItemName("");
@@ -329,6 +334,7 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
     setSellDate(undefined);
     setNotes("");
     setCategory("none");
+    setStrategyTag("Other");
     setGePrice(null);
     setPriceTrend(null);
     setAiSuggestions(null);
@@ -617,6 +623,39 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
             {lookupError && (
               <p className="text-sm text-destructive">{lookupError}</p>
             )}
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="category">Category</Label>
+                <Select value={category} onValueChange={setCategory}>
+                  <SelectTrigger id="category" data-testid="select-category">
+                    <SelectValue placeholder="Select category..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">None</SelectItem>
+                    {CATEGORIES.map(cat => (
+                      <SelectItem key={cat} value={cat}>{cat}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="strategy" className="flex items-center gap-1">
+                  Strategy <span className="text-destructive">*</span>
+                </Label>
+                <Select value={strategyTag} onValueChange={(v) => setStrategyTag(v as typeof strategyTag)}>
+                  <SelectTrigger id="strategy" data-testid="select-strategy">
+                    <SelectValue placeholder="Select strategy..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {STRATEGIES.map(strat => (
+                      <SelectItem key={strat} value={strat}>{strat}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
 
             {duplicatePosition && (
               <div className="rounded-md border border-warning bg-warning/10 p-3" data-testid="warning-duplicate-position">

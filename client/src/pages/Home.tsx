@@ -30,6 +30,7 @@ export default function Home() {
       sellDate?: Date;
       notes?: string;
       category?: string;
+      strategyTag: "Fast Flip" | "Slow Flip" | "Bulk" | "High Margin" | "Speculative" | "Other";
     }) => {
       return await apiRequest("POST", "/api/flips", flipData);
     },
@@ -166,6 +167,7 @@ export default function Home() {
     sellDate?: Date;
     notes?: string;
     category?: string;
+    strategyTag: "Fast Flip" | "Slow Flip" | "Bulk" | "High Margin" | "Speculative" | "Other";
   }) => {
     createFlipMutation.mutate(flipData);
   };

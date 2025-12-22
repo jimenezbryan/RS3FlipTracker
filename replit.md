@@ -56,6 +56,10 @@ Database tables:
 - `portfolioSnapshotItems` - Individual item data within each snapshot
 
 ### Recent Updates
+- **Strategy Tags for Flips**: Each flip is now tagged with a trading strategy (Fast Flip, Slow Flip, Bulk, High Margin, Speculative, Other) for better analysis
+  - Required dropdown on Log Flip form
+  - New "Performance by Strategy" table in Stats page showing Total Profit, Avg ROI, Win Rate, and Avg Hold Time
+  - Enables detailed trading strategy performance analysis
 - **Portfolio Management**: Full portfolio tracking with category organization, value tracking, and investment growth charts
   - Add holdings manually with item search, quantity, and buy price
   - Organize holdings into custom categories with color coding

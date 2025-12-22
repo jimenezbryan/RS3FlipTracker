@@ -38,6 +38,7 @@ export const flips = pgTable("flips", {
   sellDate: timestamp("sell_date"),
   notes: text("notes"),
   category: varchar("category", { length: 50 }),
+  strategyTag: varchar("strategy_tag", { length: 50 }).default("Other"),
   deletedAt: timestamp("deleted_at"),
 });
 
@@ -57,6 +58,7 @@ export const insertFlipSchema = createInsertSchema(flips).omit({
   sellDate: z.coerce.date().optional(),
   notes: z.string().optional(),
   category: z.string().max(50).optional(),
+  strategyTag: z.enum(["Fast Flip", "Slow Flip", "Bulk", "High Margin", "Speculative", "Other"]).default("Other"),
 });
 
 export type InsertFlip = z.infer<typeof insertFlipSchema>;

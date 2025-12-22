@@ -153,6 +153,47 @@ export default function Stats() {
     return price.toLocaleString();
   };
 
+  const performanceByStrategy = useMemo(() => {
+    const strategies: Record<string, {
+      profit: number;
+      roiTotal: number;
+      wins: number;
+      total: number;
+      holdTimes: number[];
+    }> = {};
+
+    stats.completedFlips.forEach(f => {
+      const strategy = f.strategyTag || "Other";
+      if (!strategies[strategy]) {
+        strategies[strategy] = { profit: 0, roiTotal: 0, wins: 0, total: 0, holdTimes: [] };
+      }
+
+      const profit = calculateProfit(f);
+      const roi = calculateROI(f);
+      
+      if (profit !== null && roi !== null) {
+        strategies[strategy].profit += profit;
+        strategies[strategy].roiTotal += roi;
+        if (profit > 0) strategies[strategy].wins++;
+        strategies[strategy].total++;
+
+        if (f.sellDate && f.buyDate) {
+          const holdDays = Math.floor((new Date(f.sellDate).getTime() - new Date(f.buyDate).getTime()) / (1000 * 60 * 60 * 24));
+          strategies[strategy].holdTimes.push(holdDays);
+        }
+      }
+    });
+
+    return Object.entries(strategies).map(([name, data]) => ({
+      strategy: name,
+      totalProfit: data.profit,
+      avgROI: data.total > 0 ? data.roiTotal / data.total : 0,
+      winRate: data.total > 0 ? (data.wins / data.total) * 100 : 0,
+      avgHoldTime: data.holdTimes.length > 0 ? Math.round(data.holdTimes.reduce((a, b) => a + b, 0) / data.holdTimes.length) : 0,
+      flipsCount: data.total,
+    })).sort((a, b) => b.totalProfit - a.totalProfit);
+  }, [stats.completedFlips]);
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background">
@@ -379,6 +420,48 @@ export default function Stats() {
             </CardContent>
           </Card>
         </div>
+
+        <Card data-testid="chart-performance-by-strategy">
+          <CardHeader className="pb-4">
+            <CardTitle>Performance by Strategy</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {performanceByStrategy.length === 0 ? (
+              <div className="text-center py-8 text-muted-foreground">
+                No completed flips yet
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b">
+                      <th className="text-left py-2 px-2 font-medium">Strategy</th>
+                      <th className="text-right py-2 px-2 font-medium">Total Profit</th>
+                      <th className="text-right py-2 px-2 font-medium">Avg ROI</th>
+                      <th className="text-right py-2 px-2 font-medium">Win Rate</th>
+                      <th className="text-right py-2 px-2 font-medium">Avg Hold Time</th>
+                      <th className="text-right py-2 px-2 font-medium">Flips</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {performanceByStrategy.map((row) => (
+                      <tr key={row.strategy} className="border-b hover-elevate">
+                        <td className="py-2 px-2">{row.strategy}</td>
+                        <td className={`text-right py-2 px-2 font-mono ${row.totalProfit >= 0 ? "text-green-500" : "text-red-500"}`}>
+                          {row.totalProfit >= 0 ? "+" : ""}{formatPrice(row.totalProfit)} gp
+                        </td>
+                        <td className="text-right py-2 px-2 font-mono">{row.avgROI.toFixed(2)}%</td>
+                        <td className="text-right py-2 px-2 font-mono">{row.winRate.toFixed(1)}%</td>
+                        <td className="text-right py-2 px-2 font-mono">{row.avgHoldTime} days</td>
+                        <td className="text-right py-2 px-2">{row.flipsCount}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         <Card data-testid="chart-top-items">
           <CardHeader className="pb-4">
