@@ -50,8 +50,18 @@ Database tables:
 - `watchlist` - Items being tracked without active flips
 - `priceAlerts` - Price alert configurations for notification triggers
 - `profitGoals` - Daily/weekly/monthly profit targets
+- `portfolioCategories` - Categories for organizing portfolio holdings
+- `portfolioHoldings` - Individual item holdings with quantity, buy price, and current value
+- `portfolioSnapshots` - Historical snapshots of total portfolio value
+- `portfolioSnapshotItems` - Individual item data within each snapshot
 
 ### Recent Updates
+- **Portfolio Management**: Full portfolio tracking with screenshot import (OCR), category organization, value tracking, and investment growth charts
+  - Import bank screenshots using Tesseract.js OCR with fuzzy item matching to GE database
+  - Organize holdings into custom categories with color coding
+  - Create value snapshots to track portfolio growth over time
+  - Interactive area charts showing value vs cost with profit indicators
+  - Filter holdings by category with expandable/collapsible sections
 - **AI Price Suggestions**: Get smart buy/sell price recommendations based on 90-day price history with confidence levels, volatility analysis, and one-click auto-fill buttons
 - **Inline Price Charts**: View price history charts directly in the flip form when logging trades
 - **Price History Charts**: View 90-day price trends with area charts, averages, and buy/sell recommendations
