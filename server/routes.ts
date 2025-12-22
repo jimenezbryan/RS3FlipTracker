@@ -6,6 +6,7 @@ import { insertFlipSchema, insertWatchlistSchema, insertPriceAlertSchema, insert
 import { getItemPrice, searchItems, getItemTrend, getItemPriceHistory, getItemSuggestions } from "./ge-api";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { processScreenshot, matchItemsToGE } from "./ocr";
+import { analyzeRS3Screenshot } from "./ai-vision";
 
 const upload = multer({ 
   storage: multer.memoryStorage(),
@@ -505,24 +506,72 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Screenshot upload and OCR processing
+  // Screenshot upload with AI vision analysis
   app.post("/api/portfolio/import/screenshot", isAuthenticated, upload.single("screenshot"), async (req: any, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ error: "No screenshot uploaded" });
       }
 
-      const ocrResult = await processScreenshot(req.file.buffer);
+      // Use AI vision to analyze the screenshot
+      const aiResult = await analyzeRS3Screenshot(req.file.buffer);
       
-      const matchedItems = await matchItemsToGE(ocrResult.items, async (query) => {
-        const items = await searchItems(query);
-        return items.slice(0, 5);
-      });
+      if (!aiResult.success) {
+        // Fallback to basic OCR if AI fails
+        console.warn("[Import] AI vision failed, falling back to OCR:", aiResult.error);
+        const ocrResult = await processScreenshot(req.file.buffer);
+        const matchedItems = await matchItemsToGE(ocrResult.items, async (query) => {
+          const items = await searchItems(query);
+          return items.slice(0, 5);
+        });
+
+        return res.json({
+          items: matchedItems,
+          rawText: ocrResult.rawText,
+          overallConfidence: ocrResult.overallConfidence,
+          method: "ocr",
+        });
+      }
+
+      // Match AI-identified items to GE database
+      const matchedItems = await Promise.all(
+        aiResult.items.map(async (item) => {
+          try {
+            const searchResults = await searchItems(item.name);
+            const bestMatch = searchResults.length > 0 ? searchResults[0] : null;
+            
+            return {
+              original: {
+                name: item.name,
+                quantity: item.quantity,
+                confidence: item.confidence,
+              },
+              match: bestMatch,
+              matchConfidence: bestMatch ? item.confidence * 0.9 : 0,
+              notes: item.notes,
+            };
+          } catch (e) {
+            return {
+              original: {
+                name: item.name,
+                quantity: item.quantity,
+                confidence: item.confidence,
+              },
+              match: null,
+              matchConfidence: 0,
+              notes: item.notes,
+            };
+          }
+        })
+      );
 
       res.json({
         items: matchedItems,
-        rawText: ocrResult.rawText,
-        overallConfidence: ocrResult.overallConfidence,
+        rawText: aiResult.rawResponse,
+        overallConfidence: matchedItems.length > 0 
+          ? matchedItems.reduce((sum, i) => sum + i.original.confidence, 0) / matchedItems.length 
+          : 0,
+        method: "ai",
       });
     } catch (error) {
       console.error("Screenshot processing error:", error);

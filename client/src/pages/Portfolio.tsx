@@ -50,12 +50,20 @@ interface ImportItem {
   selected: boolean;
   avgBuyPrice: number;
   categoryId: string | null;
+  notes?: string;
+}
+
+interface ImportResult {
+  items: ImportItem[];
+  method: "ai" | "ocr";
+  overallConfidence: number;
 }
 
 export default function Portfolio() {
   const { toast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importItems, setImportItems] = useState<ImportItem[]>([]);
+  const [importMethod, setImportMethod] = useState<"ai" | "ocr" | null>(null);
   const [isImporting, setIsImporting] = useState(false);
   const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [isCategoryDialogOpen, setIsCategoryDialogOpen] = useState(false);
@@ -179,13 +187,22 @@ export default function Portfolio() {
       
       const items: ImportItem[] = result.items.map((item: any) => ({
         ...item,
-        selected: item.match !== null && item.matchConfidence > 0.5,
+        selected: item.match !== null && (item.matchConfidence > 0.5 || item.original.confidence > 0.7),
         avgBuyPrice: item.match?.price || 0,
         categoryId: null,
+        notes: item.notes,
       }));
 
       setImportItems(items);
+      setImportMethod(result.method || "ocr");
       setIsImportDialogOpen(true);
+      
+      if (result.method === "ai") {
+        toast({ 
+          title: "AI Analysis Complete", 
+          description: `Identified ${items.length} items from your screenshot` 
+        });
+      }
     } catch (error) {
       toast({ title: "Error", description: "Failed to process screenshot", variant: "destructive" });
     } finally {
@@ -372,67 +389,95 @@ export default function Portfolio() {
         <Dialog open={isImportDialogOpen} onOpenChange={setIsImportDialogOpen}>
           <DialogContent className="max-h-[80vh] max-w-3xl overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Review Imported Items</DialogTitle>
+              <DialogTitle className="flex items-center gap-2">
+                Review Imported Items
+                {importMethod === "ai" && (
+                  <Badge variant="secondary" className="text-xs">
+                    AI Powered
+                  </Badge>
+                )}
+              </DialogTitle>
               <DialogDescription>
-                Select items to add to your portfolio and set their buy prices
+                {importMethod === "ai" 
+                  ? "AI has identified these items from your screenshot. Review and adjust as needed."
+                  : "Select items to add to your portfolio and set their buy prices"
+                }
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-3 py-4">
               {importItems.map((item, index) => (
                 <div 
                   key={index}
-                  className={`flex items-center gap-3 rounded-lg border p-3 ${
+                  className={`flex flex-col gap-2 rounded-lg border p-3 ${
                     item.selected ? "border-primary bg-primary/5" : "border-muted opacity-60"
                   }`}
                 >
-                  <button
-                    type="button"
-                    onClick={() => toggleItemSelection(index)}
-                    className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border ${
-                      item.selected ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground"
-                    }`}
-                    data-testid={`checkbox-import-item-${index}`}
-                  >
-                    {item.selected && <Check className="h-3 w-3" />}
-                  </button>
-                  {item.match?.icon && (
-                    <img src={item.match.icon} alt="" className="h-10 w-10 rounded" />
-                  )}
-                  <div className="flex-1 min-w-0">
-                    <div className="font-medium truncate">
-                      {item.match?.name || item.original.name}
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => toggleItemSelection(index)}
+                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border ${
+                        item.selected ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground"
+                      }`}
+                      data-testid={`checkbox-import-item-${index}`}
+                    >
+                      {item.selected && <Check className="h-3 w-3" />}
+                    </button>
+                    {item.match?.icon && (
+                      <img src={item.match.icon} alt="" className="h-10 w-10 rounded" />
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="font-medium truncate">
+                        {item.match?.name || item.original.name}
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <span>Qty: {item.original.quantity.toLocaleString()}</span>
+                        {item.match && (
+                          <Badge 
+                            variant="outline" 
+                            className={`text-xs ${
+                              item.original.confidence >= 0.8 ? "border-green-500 text-green-500" :
+                              item.original.confidence >= 0.6 ? "border-yellow-500 text-yellow-500" :
+                              "border-orange-500 text-orange-500"
+                            }`}
+                          >
+                            {Math.round(item.original.confidence * 100)}% confident
+                          </Badge>
+                        )}
+                      </div>
                     </div>
-                    <div className="text-xs text-muted-foreground">
-                      Qty: {item.original.quantity.toLocaleString()} 
-                      {item.match && ` • Match: ${Math.round(item.matchConfidence * 100)}%`}
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="number"
+                        value={item.avgBuyPrice}
+                        onChange={(e) => updateItemPrice(index, parseInt(e.target.value) || 0)}
+                        className="w-28 font-mono text-right"
+                        disabled={!item.selected}
+                        data-testid={`input-import-price-${index}`}
+                      />
+                      <span className="text-sm text-muted-foreground">gp</span>
                     </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Input
-                      type="number"
-                      value={item.avgBuyPrice}
-                      onChange={(e) => updateItemPrice(index, parseInt(e.target.value) || 0)}
-                      className="w-28 font-mono text-right"
+                    <Select
+                      value={item.categoryId || "none"}
+                      onValueChange={(v) => updateItemCategory(index, v === "none" ? null : v)}
                       disabled={!item.selected}
-                      data-testid={`input-import-price-${index}`}
-                    />
-                    <span className="text-sm text-muted-foreground">gp</span>
+                    >
+                      <SelectTrigger className="w-32" data-testid={`select-import-category-${index}`}>
+                        <SelectValue placeholder="Category" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">No Category</SelectItem>
+                        {categories.map(cat => (
+                          <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
-                  <Select
-                    value={item.categoryId || "none"}
-                    onValueChange={(v) => updateItemCategory(index, v === "none" ? null : v)}
-                    disabled={!item.selected}
-                  >
-                    <SelectTrigger className="w-32" data-testid={`select-import-category-${index}`}>
-                      <SelectValue placeholder="Category" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">No Category</SelectItem>
-                      {categories.map(cat => (
-                        <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  {item.notes && (
+                    <div className="ml-8 text-xs text-muted-foreground italic">
+                      Note: {item.notes}
+                    </div>
+                  )}
                 </div>
               ))}
               {importItems.length === 0 && (
