@@ -430,9 +430,9 @@ export default function Portfolio() {
                       <div className="font-medium truncate">
                         {item.match?.name || item.original.name}
                       </div>
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
                         <span>Qty: {item.original.quantity.toLocaleString()}</span>
-                        {item.match && (
+                        {item.original.confidence > 0 && (
                           <Badge 
                             variant="outline" 
                             className={`text-xs ${
@@ -441,7 +441,19 @@ export default function Portfolio() {
                               "border-orange-500 text-orange-500"
                             }`}
                           >
-                            {Math.round(item.original.confidence * 100)}% confident
+                            {importMethod === "ai" ? "AI" : "OCR"}: {Math.round(item.original.confidence * 100)}%
+                          </Badge>
+                        )}
+                        {item.match && item.matchConfidence > 0 && (
+                          <Badge 
+                            variant="outline" 
+                            className={`text-xs ${
+                              item.matchConfidence >= 0.8 ? "border-blue-500 text-blue-500" :
+                              item.matchConfidence >= 0.5 ? "border-cyan-500 text-cyan-500" :
+                              "border-slate-500 text-slate-500"
+                            }`}
+                          >
+                            Match: {Math.round(item.matchConfidence * 100)}%
                           </Badge>
                         )}
                       </div>
