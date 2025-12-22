@@ -56,8 +56,8 @@ Database tables:
 - `portfolioSnapshotItems` - Individual item data within each snapshot
 
 ### Recent Updates
-- **Portfolio Management**: Full portfolio tracking with AI-powered screenshot import, category organization, value tracking, and investment growth charts
-  - Import bank screenshots using GPT-5 Vision AI to identify RS3 items with high accuracy (falls back to Tesseract.js OCR if AI unavailable)
+- **Portfolio Management**: Full portfolio tracking with category organization, value tracking, and investment growth charts
+  - Add holdings manually with item search, quantity, and buy price
   - Organize holdings into custom categories with color coding
   - Create value snapshots to track portfolio growth over time
   - Interactive area charts showing value vs cost with profit indicators

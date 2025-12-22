@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState } from "react";
 import { Header } from "@/components/Header";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import type { PortfolioHolding, PortfolioCategory, PortfolioSnapshot } from "@shared/schema";
@@ -15,8 +15,8 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatDistanceToNow, format } from "date-fns";
 import { 
-  Upload, Briefcase, TrendingUp, Package, Coins, Plus, Camera, 
-  Trash2, FolderPlus, Loader2, Check, X, RefreshCw, ChevronDown,
+  Briefcase, TrendingUp, Package, Coins, Plus, 
+  Trash2, FolderPlus, Loader2, X, RefreshCw, ChevronDown,
   BarChart3, PieChart, TrendingDown, Edit2
 } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -43,29 +43,8 @@ interface PortfolioSummary {
   }>;
 }
 
-interface ImportItem {
-  original: { name: string; quantity: number; confidence: number };
-  match: { id: number; name: string; price?: number; icon?: string } | null;
-  matchConfidence: number;
-  selected: boolean;
-  avgBuyPrice: number;
-  categoryId: string | null;
-  notes?: string;
-}
-
-interface ImportResult {
-  items: ImportItem[];
-  method: "ai" | "ocr";
-  overallConfidence: number;
-}
-
 export default function Portfolio() {
   const { toast } = useToast();
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const [importItems, setImportItems] = useState<ImportItem[]>([]);
-  const [importMethod, setImportMethod] = useState<"ai" | "ocr" | null>(null);
-  const [isImporting, setIsImporting] = useState(false);
-  const [isImportDialogOpen, setIsImportDialogOpen] = useState(false);
   const [isCategoryDialogOpen, setIsCategoryDialogOpen] = useState(false);
   const [isAddHoldingDialogOpen, setIsAddHoldingDialogOpen] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
@@ -143,112 +122,6 @@ export default function Portfolio() {
     },
   });
 
-  const confirmImportMutation = useMutation({
-    mutationFn: async (items: Array<{
-      itemId: number;
-      itemName: string;
-      itemIcon?: string;
-      quantity: number;
-      avgBuyPrice: number;
-      categoryId?: string;
-    }>) => {
-      return await apiRequest("POST", "/api/portfolio/import/confirm", { items });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/portfolio/holdings"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/portfolio/summary"] });
-      setIsImportDialogOpen(false);
-      setImportItems([]);
-      toast({ title: "Import complete", description: "Items have been added to your portfolio" });
-    },
-    onError: () => {
-      toast({ title: "Error", description: "Failed to import items", variant: "destructive" });
-    },
-  });
-
-  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setIsImporting(true);
-    const formData = new FormData();
-    formData.append("screenshot", file);
-
-    try {
-      const response = await fetch("/api/portfolio/import/screenshot", {
-        method: "POST",
-        body: formData,
-        credentials: "include",
-      });
-
-      if (!response.ok) throw new Error("Upload failed");
-
-      const result = await response.json();
-      
-      const items: ImportItem[] = result.items.map((item: any) => ({
-        ...item,
-        selected: item.match !== null && (item.matchConfidence > 0.5 || item.original.confidence > 0.7),
-        avgBuyPrice: item.match?.price || 0,
-        categoryId: null,
-        notes: item.notes,
-      }));
-
-      setImportItems(items);
-      setImportMethod(result.method || "ocr");
-      setIsImportDialogOpen(true);
-      
-      if (result.method === "ai") {
-        toast({ 
-          title: "AI Analysis Complete", 
-          description: `Identified ${items.length} items from your screenshot` 
-        });
-      }
-    } catch (error) {
-      toast({ title: "Error", description: "Failed to process screenshot", variant: "destructive" });
-    } finally {
-      setIsImporting(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
-  };
-
-  const toggleItemSelection = (index: number) => {
-    setImportItems(prev => prev.map((item, i) => 
-      i === index ? { ...item, selected: !item.selected } : item
-    ));
-  };
-
-  const updateItemPrice = (index: number, price: number) => {
-    setImportItems(prev => prev.map((item, i) => 
-      i === index ? { ...item, avgBuyPrice: price } : item
-    ));
-  };
-
-  const updateItemCategory = (index: number, categoryId: string | null) => {
-    setImportItems(prev => prev.map((item, i) => 
-      i === index ? { ...item, categoryId } : item
-    ));
-  };
-
-  const handleConfirmImport = () => {
-    const selectedItems = importItems
-      .filter(item => item.selected && item.match)
-      .map(item => ({
-        itemId: item.match!.id,
-        itemName: item.match!.name,
-        itemIcon: item.match?.icon,
-        quantity: item.original.quantity,
-        avgBuyPrice: item.avgBuyPrice,
-        categoryId: item.categoryId || undefined,
-      }));
-
-    if (selectedItems.length === 0) {
-      toast({ title: "No items selected", description: "Please select at least one item to import", variant: "destructive" });
-      return;
-    }
-
-    confirmImportMutation.mutate(selectedItems);
-  };
-
   const formatPrice = (price: number) => price.toLocaleString();
 
   const filteredHoldings = summary?.holdings.filter(h => 
@@ -301,23 +174,6 @@ export default function Portfolio() {
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              onChange={handleFileChange}
-              className="hidden"
-              data-testid="input-screenshot-file"
-            />
-            <Button 
-              variant="outline" 
-              onClick={() => fileInputRef.current?.click()}
-              disabled={isImporting}
-              data-testid="button-import-screenshot"
-            >
-              {isImporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Camera className="mr-2 h-4 w-4" />}
-              Import Screenshot
-            </Button>
             <Dialog open={isCategoryDialogOpen} onOpenChange={setIsCategoryDialogOpen}>
               <DialogTrigger asChild>
                 <Button variant="outline" data-testid="button-add-category">
@@ -384,133 +240,6 @@ export default function Portfolio() {
             </Button>
           </div>
         </div>
-
-        {/* Import Dialog */}
-        <Dialog open={isImportDialogOpen} onOpenChange={setIsImportDialogOpen}>
-          <DialogContent className="max-h-[80vh] max-w-3xl overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                Review Imported Items
-                {importMethod === "ai" && (
-                  <Badge variant="secondary" className="text-xs">
-                    AI Powered
-                  </Badge>
-                )}
-              </DialogTitle>
-              <DialogDescription>
-                {importMethod === "ai" 
-                  ? "AI has identified these items from your screenshot. Review and adjust as needed."
-                  : "Select items to add to your portfolio and set their buy prices"
-                }
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-3 py-4">
-              {importItems.map((item, index) => (
-                <div 
-                  key={index}
-                  className={`flex flex-col gap-2 rounded-lg border p-3 ${
-                    item.selected ? "border-primary bg-primary/5" : "border-muted opacity-60"
-                  }`}
-                >
-                  <div className="flex items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => toggleItemSelection(index)}
-                      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border ${
-                        item.selected ? "border-primary bg-primary text-primary-foreground" : "border-muted-foreground"
-                      }`}
-                      data-testid={`checkbox-import-item-${index}`}
-                    >
-                      {item.selected && <Check className="h-3 w-3" />}
-                    </button>
-                    {item.match?.icon && (
-                      <img src={item.match.icon} alt="" className="h-10 w-10 rounded" />
-                    )}
-                    <div className="flex-1 min-w-0">
-                      <div className="font-medium truncate">
-                        {item.match?.name || item.original.name}
-                      </div>
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground flex-wrap">
-                        <span>Qty: {item.original.quantity.toLocaleString()}</span>
-                        {item.original.confidence > 0 && (
-                          <Badge 
-                            variant="outline" 
-                            className={`text-xs ${
-                              item.original.confidence >= 0.8 ? "border-green-500 text-green-500" :
-                              item.original.confidence >= 0.6 ? "border-yellow-500 text-yellow-500" :
-                              "border-orange-500 text-orange-500"
-                            }`}
-                          >
-                            {importMethod === "ai" ? "AI" : "OCR"}: {Math.round(item.original.confidence * 100)}%
-                          </Badge>
-                        )}
-                        {item.match && item.matchConfidence > 0 && (
-                          <Badge 
-                            variant="outline" 
-                            className={`text-xs ${
-                              item.matchConfidence >= 0.8 ? "border-blue-500 text-blue-500" :
-                              item.matchConfidence >= 0.5 ? "border-cyan-500 text-cyan-500" :
-                              "border-slate-500 text-slate-500"
-                            }`}
-                          >
-                            Match: {Math.round(item.matchConfidence * 100)}%
-                          </Badge>
-                        )}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        type="number"
-                        value={item.avgBuyPrice}
-                        onChange={(e) => updateItemPrice(index, parseInt(e.target.value) || 0)}
-                        className="w-28 font-mono text-right"
-                        disabled={!item.selected}
-                        data-testid={`input-import-price-${index}`}
-                      />
-                      <span className="text-sm text-muted-foreground">gp</span>
-                    </div>
-                    <Select
-                      value={item.categoryId || "none"}
-                      onValueChange={(v) => updateItemCategory(index, v === "none" ? null : v)}
-                      disabled={!item.selected}
-                    >
-                      <SelectTrigger className="w-32" data-testid={`select-import-category-${index}`}>
-                        <SelectValue placeholder="Category" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="none">No Category</SelectItem>
-                        {categories.map(cat => (
-                          <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                  {item.notes && (
-                    <div className="ml-8 text-xs text-muted-foreground italic">
-                      Note: {item.notes}
-                    </div>
-                  )}
-                </div>
-              ))}
-              {importItems.length === 0 && (
-                <div className="text-center py-8 text-muted-foreground">
-                  No items detected in screenshot
-                </div>
-              )}
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setIsImportDialogOpen(false)}>Cancel</Button>
-              <Button 
-                onClick={handleConfirmImport}
-                disabled={confirmImportMutation.isPending || importItems.filter(i => i.selected).length === 0}
-                data-testid="button-confirm-import"
-              >
-                {confirmImportMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Import {importItems.filter(i => i.selected).length} Items
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
 
         {/* Summary Cards */}
         <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -636,11 +365,11 @@ export default function Portfolio() {
               </div>
               <h3 className="mb-2 text-lg font-semibold">No holdings yet</h3>
               <p className="mb-4 text-sm text-muted-foreground">
-                Import a screenshot of your bank or add items manually to start tracking.
+                Add items manually to start tracking your portfolio.
               </p>
-              <Button onClick={() => fileInputRef.current?.click()} data-testid="button-import-first">
-                <Upload className="mr-2 h-4 w-4" />
-                Import Screenshot
+              <Button onClick={() => setIsAddHoldingDialogOpen(true)} data-testid="button-add-first">
+                <Plus className="mr-2 h-4 w-4" />
+                Add Holding
               </Button>
             </CardContent>
           </Card>
