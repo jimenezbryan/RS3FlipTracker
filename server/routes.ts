@@ -1,9 +1,16 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
+import multer from "multer";
 import { storage } from "./storage";
-import { insertFlipSchema, insertWatchlistSchema, insertPriceAlertSchema, insertFavoriteSchema, insertProfitGoalSchema } from "@shared/schema";
+import { insertFlipSchema, insertWatchlistSchema, insertPriceAlertSchema, insertFavoriteSchema, insertProfitGoalSchema, insertPortfolioCategorySchema, insertPortfolioHoldingSchema } from "@shared/schema";
 import { getItemPrice, searchItems, getItemTrend, getItemPriceHistory, getItemSuggestions } from "./ge-api";
 import { setupAuth, isAuthenticated } from "./replitAuth";
+import { processScreenshot, matchItemsToGE } from "./ocr";
+
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024 } // 10MB max
+});
 
 export async function registerRoutes(app: Express): Promise<Server> {
   await setupAuth(app);
@@ -385,6 +392,336 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(204).send();
     } catch (error) {
       res.status(500).json({ error: "Failed to delete profit goal" });
+    }
+  });
+
+  // Portfolio Categories
+  app.get("/api/portfolio/categories", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const categories = await storage.getPortfolioCategories(userId);
+      res.json(categories);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch categories" });
+    }
+  });
+
+  app.post("/api/portfolio/categories", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const validatedCategory = insertPortfolioCategorySchema.parse(req.body);
+      const newCategory = await storage.createPortfolioCategory(userId, validatedCategory);
+      res.status(201).json(newCategory);
+    } catch (error) {
+      res.status(400).json({ error: "Invalid category data" });
+    }
+  });
+
+  app.patch("/api/portfolio/categories/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.claims.sub;
+      const validatedCategory = insertPortfolioCategorySchema.partial().parse(req.body);
+      const updatedCategory = await storage.updatePortfolioCategory(id, userId, validatedCategory);
+      
+      if (!updatedCategory) {
+        return res.status(404).json({ error: "Category not found" });
+      }
+      
+      res.json(updatedCategory);
+    } catch (error) {
+      res.status(400).json({ error: "Invalid category data" });
+    }
+  });
+
+  app.delete("/api/portfolio/categories/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.claims.sub;
+      const success = await storage.deletePortfolioCategory(id, userId);
+      
+      if (!success) {
+        return res.status(404).json({ error: "Category not found" });
+      }
+      
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete category" });
+    }
+  });
+
+  // Portfolio Holdings
+  app.get("/api/portfolio/holdings", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const holdings = await storage.getPortfolioHoldings(userId);
+      res.json(holdings);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch holdings" });
+    }
+  });
+
+  app.post("/api/portfolio/holdings", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const validatedHolding = insertPortfolioHoldingSchema.parse(req.body);
+      const newHolding = await storage.createPortfolioHolding(userId, validatedHolding);
+      res.status(201).json(newHolding);
+    } catch (error) {
+      res.status(400).json({ error: "Invalid holding data" });
+    }
+  });
+
+  app.patch("/api/portfolio/holdings/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.claims.sub;
+      const validatedHolding = insertPortfolioHoldingSchema.partial().parse(req.body);
+      const updatedHolding = await storage.updatePortfolioHolding(id, userId, validatedHolding);
+      
+      if (!updatedHolding) {
+        return res.status(404).json({ error: "Holding not found" });
+      }
+      
+      res.json(updatedHolding);
+    } catch (error) {
+      res.status(400).json({ error: "Invalid holding data" });
+    }
+  });
+
+  app.delete("/api/portfolio/holdings/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.claims.sub;
+      const success = await storage.deletePortfolioHolding(id, userId);
+      
+      if (!success) {
+        return res.status(404).json({ error: "Holding not found" });
+      }
+      
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete holding" });
+    }
+  });
+
+  // Screenshot upload and OCR processing
+  app.post("/api/portfolio/import/screenshot", isAuthenticated, upload.single("screenshot"), async (req: any, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "No screenshot uploaded" });
+      }
+
+      const ocrResult = await processScreenshot(req.file.buffer);
+      
+      const matchedItems = await matchItemsToGE(ocrResult.items, async (query) => {
+        const items = await searchItems(query);
+        return items.slice(0, 5);
+      });
+
+      res.json({
+        items: matchedItems,
+        rawText: ocrResult.rawText,
+        overallConfidence: ocrResult.overallConfidence,
+      });
+    } catch (error) {
+      console.error("Screenshot processing error:", error);
+      res.status(500).json({ error: "Failed to process screenshot" });
+    }
+  });
+
+  // Bulk import holdings from screenshot results
+  app.post("/api/portfolio/import/confirm", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const { items } = req.body;
+      
+      if (!Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ error: "No items to import" });
+      }
+
+      const createdHoldings = [];
+      for (const item of items) {
+        const validatedHolding = insertPortfolioHoldingSchema.parse({
+          itemId: item.itemId,
+          itemName: item.itemName,
+          itemIcon: item.itemIcon,
+          quantity: item.quantity,
+          avgBuyPrice: item.avgBuyPrice,
+          categoryId: item.categoryId,
+          source: "screenshot",
+        });
+        const holding = await storage.createPortfolioHolding(userId, validatedHolding);
+        createdHoldings.push(holding);
+      }
+
+      res.status(201).json(createdHoldings);
+    } catch (error) {
+      res.status(400).json({ error: "Invalid import data" });
+    }
+  });
+
+  // Portfolio Snapshots and Value Tracking
+  app.get("/api/portfolio/snapshots", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : undefined;
+      const snapshots = await storage.getPortfolioSnapshots(userId, limit);
+      res.json(snapshots);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch snapshots" });
+    }
+  });
+
+  app.post("/api/portfolio/snapshots", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const holdings = await storage.getPortfolioHoldings(userId);
+      
+      if (holdings.length === 0) {
+        return res.status(400).json({ error: "No holdings to snapshot" });
+      }
+
+      let totalValue = 0;
+      let totalCost = 0;
+      const snapshotItems: any[] = [];
+
+      for (const holding of holdings) {
+        let currentPrice = holding.lastValuedPrice || holding.avgBuyPrice;
+        
+        try {
+          const priceData = await getItemPrice(holding.itemName);
+          if (priceData) {
+            currentPrice = priceData.price;
+            await storage.updatePortfolioHolding(holding.id, userId, {
+              lastValuedPrice: currentPrice,
+              lastValuedAt: new Date(),
+            });
+          }
+        } catch (e) {
+          console.warn(`Failed to get price for ${holding.itemName}`);
+        }
+
+        const value = currentPrice * holding.quantity;
+        const cost = holding.avgBuyPrice * holding.quantity;
+        totalValue += value;
+        totalCost += cost;
+
+        snapshotItems.push({
+          holdingId: holding.id,
+          itemId: holding.itemId,
+          itemName: holding.itemName,
+          quantity: holding.quantity,
+          avgBuyPrice: holding.avgBuyPrice,
+          currentPrice,
+          value,
+          profit: value - cost,
+          categoryId: holding.categoryId,
+        });
+      }
+
+      const snapshot = await storage.createPortfolioSnapshot(userId, {
+        totalValue,
+        totalCost,
+        totalProfit: totalValue - totalCost,
+        itemCount: holdings.length,
+        snapshotDate: new Date(),
+      });
+
+      await storage.createSnapshotItems(snapshot.id, snapshotItems.map(item => ({
+        snapshotId: snapshot.id,
+        ...item,
+      })));
+
+      res.status(201).json({
+        ...snapshot,
+        items: snapshotItems,
+      });
+    } catch (error) {
+      console.error("Snapshot creation error:", error);
+      res.status(500).json({ error: "Failed to create snapshot" });
+    }
+  });
+
+  app.get("/api/portfolio/snapshots/:id/items", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const items = await storage.getSnapshotItems(id);
+      res.json(items);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch snapshot items" });
+    }
+  });
+
+  // Portfolio summary with current values
+  app.get("/api/portfolio/summary", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const holdings = await storage.getPortfolioHoldings(userId);
+      const categories = await storage.getPortfolioCategories(userId);
+
+      let totalValue = 0;
+      let totalCost = 0;
+      const holdingsWithValues: Array<typeof holdings[0] & { currentPrice: number; value: number; profit: number; profitPercent: number }> = [];
+
+      for (const holding of holdings) {
+        let currentPrice = holding.lastValuedPrice || holding.avgBuyPrice;
+        
+        const value = currentPrice * holding.quantity;
+        const cost = holding.avgBuyPrice * holding.quantity;
+        totalValue += value;
+        totalCost += cost;
+
+        holdingsWithValues.push({
+          ...holding,
+          currentPrice,
+          value,
+          profit: value - cost,
+          profitPercent: cost > 0 ? ((value - cost) / cost) * 100 : 0,
+        });
+      }
+
+      const categoryBreakdown = categories.map(cat => {
+        const catHoldings = holdingsWithValues.filter(h => h.categoryId === cat.id);
+        const catValue = catHoldings.reduce((sum, h) => sum + h.value, 0);
+        const catCost = catHoldings.reduce((sum, h) => sum + (h.avgBuyPrice * h.quantity), 0);
+        return {
+          ...cat,
+          holdingCount: catHoldings.length,
+          totalValue: catValue,
+          totalCost: catCost,
+          totalProfit: catValue - catCost,
+          profitPercent: catCost > 0 ? ((catValue - catCost) / catCost) * 100 : 0,
+        };
+      });
+
+      const uncategorized = holdingsWithValues.filter(h => !h.categoryId);
+      if (uncategorized.length > 0) {
+        const uncatValue = uncategorized.reduce((sum, h) => sum + h.value, 0);
+        const uncatCost = uncategorized.reduce((sum, h) => sum + (h.avgBuyPrice * h.quantity), 0);
+        categoryBreakdown.push({
+          id: null,
+          name: "Uncategorized",
+          color: "#6b7280",
+          holdingCount: uncategorized.length,
+          totalValue: uncatValue,
+          totalCost: uncatCost,
+          totalProfit: uncatValue - uncatCost,
+          profitPercent: uncatCost > 0 ? ((uncatValue - uncatCost) / uncatCost) * 100 : 0,
+        } as any);
+      }
+
+      res.json({
+        totalValue,
+        totalCost,
+        totalProfit: totalValue - totalCost,
+        profitPercent: totalCost > 0 ? ((totalValue - totalCost) / totalCost) * 100 : 0,
+        holdingCount: holdings.length,
+        holdings: holdingsWithValues,
+        categories: categoryBreakdown,
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch portfolio summary" });
     }
   });
 
