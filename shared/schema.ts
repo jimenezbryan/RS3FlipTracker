@@ -160,3 +160,92 @@ export const insertProfitGoalSchema = createInsertSchema(profitGoals).omit({
 
 export type InsertProfitGoal = z.infer<typeof insertProfitGoalSchema>;
 export type ProfitGoal = typeof profitGoals.$inferSelect;
+
+// Portfolio categories for organizing holdings
+export const portfolioCategories = pgTable("portfolio_categories", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  name: varchar("name", { length: 50 }).notNull(),
+  color: varchar("color", { length: 7 }).default("#6366f1"), // hex color
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertPortfolioCategorySchema = createInsertSchema(portfolioCategories).omit({
+  id: true,
+  userId: true,
+  createdAt: true,
+}).extend({
+  name: z.string().min(1).max(50),
+  color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
+});
+
+export type InsertPortfolioCategory = z.infer<typeof insertPortfolioCategorySchema>;
+export type PortfolioCategory = typeof portfolioCategories.$inferSelect;
+
+// Portfolio holdings - items you own as investments
+export const portfolioHoldings = pgTable("portfolio_holdings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  itemId: integer("item_id").notNull(),
+  itemName: text("item_name").notNull(),
+  itemIcon: text("item_icon"),
+  quantity: integer("quantity").notNull().default(1),
+  avgBuyPrice: integer("avg_buy_price").notNull(), // weighted average buy price
+  categoryId: varchar("category_id").references(() => portfolioCategories.id),
+  source: varchar("source", { length: 20 }).default("manual"), // 'manual', 'screenshot', 'flip'
+  notes: text("notes"),
+  lastValuedPrice: integer("last_valued_price"),
+  lastValuedAt: timestamp("last_valued_at"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertPortfolioHoldingSchema = createInsertSchema(portfolioHoldings).omit({
+  id: true,
+  userId: true,
+  lastValuedPrice: true,
+  lastValuedAt: true,
+  createdAt: true,
+  updatedAt: true,
+}).extend({
+  itemId: z.coerce.number().int().positive(),
+  quantity: z.coerce.number().int().positive().default(1),
+  avgBuyPrice: z.coerce.number().int().positive(),
+  categoryId: z.string().optional(),
+  source: z.enum(["manual", "screenshot", "flip"]).optional(),
+  notes: z.string().optional(),
+});
+
+export type InsertPortfolioHolding = z.infer<typeof insertPortfolioHoldingSchema>;
+export type PortfolioHolding = typeof portfolioHoldings.$inferSelect;
+
+// Portfolio snapshots for tracking value over time
+export const portfolioSnapshots = pgTable("portfolio_snapshots", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  totalValue: integer("total_value").notNull(),
+  totalCost: integer("total_cost").notNull(),
+  totalProfit: integer("total_profit").notNull(),
+  itemCount: integer("item_count").notNull(),
+  snapshotDate: timestamp("snapshot_date").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type PortfolioSnapshot = typeof portfolioSnapshots.$inferSelect;
+
+// Individual item values in each snapshot
+export const portfolioSnapshotItems = pgTable("portfolio_snapshot_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  snapshotId: varchar("snapshot_id").notNull().references(() => portfolioSnapshots.id),
+  holdingId: varchar("holding_id").notNull(),
+  itemId: integer("item_id").notNull(),
+  itemName: text("item_name").notNull(),
+  quantity: integer("quantity").notNull(),
+  avgBuyPrice: integer("avg_buy_price").notNull(),
+  currentPrice: integer("current_price").notNull(),
+  value: integer("value").notNull(),
+  profit: integer("profit").notNull(),
+  categoryId: varchar("category_id"),
+});
+
+export type PortfolioSnapshotItem = typeof portfolioSnapshotItems.$inferSelect;

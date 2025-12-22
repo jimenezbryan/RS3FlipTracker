@@ -1,4 +1,4 @@
-import { users, flips, watchlist, priceAlerts, favorites, profitGoals, type User, type UpsertUser, type Flip, type InsertFlip, type WatchlistItem, type InsertWatchlistItem, type PriceAlert, type InsertPriceAlert, type Favorite, type InsertFavorite, type ProfitGoal, type InsertProfitGoal } from "@shared/schema";
+import { users, flips, watchlist, priceAlerts, favorites, profitGoals, portfolioCategories, portfolioHoldings, portfolioSnapshots, portfolioSnapshotItems, type User, type UpsertUser, type Flip, type InsertFlip, type WatchlistItem, type InsertWatchlistItem, type PriceAlert, type InsertPriceAlert, type Favorite, type InsertFavorite, type ProfitGoal, type InsertProfitGoal, type PortfolioCategory, type InsertPortfolioCategory, type PortfolioHolding, type InsertPortfolioHolding, type PortfolioSnapshot, type PortfolioSnapshotItem } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, isNull } from "drizzle-orm";
 import { randomUUID } from "crypto";
@@ -35,6 +35,25 @@ export interface IStorage {
   getProfitGoals(userId: string): Promise<ProfitGoal[]>;
   updateProfitGoal(id: string, userId: string, goal: Partial<InsertProfitGoal>): Promise<ProfitGoal | undefined>;
   deleteProfitGoal(id: string, userId: string): Promise<boolean>;
+  
+  // Portfolio Categories
+  createPortfolioCategory(userId: string, category: InsertPortfolioCategory): Promise<PortfolioCategory>;
+  getPortfolioCategories(userId: string): Promise<PortfolioCategory[]>;
+  updatePortfolioCategory(id: string, userId: string, category: Partial<InsertPortfolioCategory>): Promise<PortfolioCategory | undefined>;
+  deletePortfolioCategory(id: string, userId: string): Promise<boolean>;
+  
+  // Portfolio Holdings
+  createPortfolioHolding(userId: string, holding: InsertPortfolioHolding): Promise<PortfolioHolding>;
+  getPortfolioHoldings(userId: string): Promise<PortfolioHolding[]>;
+  getPortfolioHolding(id: string): Promise<PortfolioHolding | undefined>;
+  updatePortfolioHolding(id: string, userId: string, holding: Partial<InsertPortfolioHolding & { lastValuedPrice?: number, lastValuedAt?: Date }>): Promise<PortfolioHolding | undefined>;
+  deletePortfolioHolding(id: string, userId: string): Promise<boolean>;
+  
+  // Portfolio Snapshots
+  createPortfolioSnapshot(userId: string, snapshot: { totalValue: number; totalCost: number; totalProfit: number; itemCount: number; snapshotDate: Date }): Promise<PortfolioSnapshot>;
+  getPortfolioSnapshots(userId: string, limit?: number): Promise<PortfolioSnapshot[]>;
+  createSnapshotItems(snapshotId: string, items: Omit<PortfolioSnapshotItem, 'id'>[]): Promise<void>;
+  getSnapshotItems(snapshotId: string): Promise<PortfolioSnapshotItem[]>;
 }
 
 export class MemStorage implements IStorage {
@@ -44,6 +63,10 @@ export class MemStorage implements IStorage {
   private alerts: Map<string, PriceAlert> = new Map();
   private favoriteItems: Map<string, Favorite> = new Map();
   private goals: Map<string, ProfitGoal> = new Map();
+  private portfolioCats: Map<string, PortfolioCategory> = new Map();
+  private portfolioHolds: Map<string, PortfolioHolding> = new Map();
+  private portfolioSnaps: Map<string, PortfolioSnapshot> = new Map();
+  private portfolioSnapItems: Map<string, PortfolioSnapshotItem> = new Map();
 
   async getUser(id: string): Promise<User | undefined> {
     return this.users.get(id);
@@ -283,6 +306,123 @@ export class MemStorage implements IStorage {
     if (!existing || existing.userId !== userId) return false;
     return this.goals.delete(id);
   }
+
+  // Portfolio Categories
+  async createPortfolioCategory(userId: string, category: InsertPortfolioCategory): Promise<PortfolioCategory> {
+    const id = randomUUID();
+    const newCat: PortfolioCategory = {
+      id,
+      userId,
+      name: category.name,
+      color: category.color ?? "#6366f1",
+      createdAt: new Date(),
+    };
+    this.portfolioCats.set(id, newCat);
+    return newCat;
+  }
+
+  async getPortfolioCategories(userId: string): Promise<PortfolioCategory[]> {
+    return Array.from(this.portfolioCats.values())
+      .filter(c => c.userId === userId)
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  }
+
+  async updatePortfolioCategory(id: string, userId: string, category: Partial<InsertPortfolioCategory>): Promise<PortfolioCategory | undefined> {
+    const existing = this.portfolioCats.get(id);
+    if (!existing || existing.userId !== userId) return undefined;
+    const updated: PortfolioCategory = { ...existing, ...category };
+    this.portfolioCats.set(id, updated);
+    return updated;
+  }
+
+  async deletePortfolioCategory(id: string, userId: string): Promise<boolean> {
+    const existing = this.portfolioCats.get(id);
+    if (!existing || existing.userId !== userId) return false;
+    return this.portfolioCats.delete(id);
+  }
+
+  // Portfolio Holdings
+  async createPortfolioHolding(userId: string, holding: InsertPortfolioHolding): Promise<PortfolioHolding> {
+    const id = randomUUID();
+    const newHolding: PortfolioHolding = {
+      id,
+      userId,
+      itemId: holding.itemId,
+      itemName: holding.itemName,
+      itemIcon: holding.itemIcon ?? null,
+      quantity: holding.quantity ?? 1,
+      avgBuyPrice: holding.avgBuyPrice,
+      categoryId: holding.categoryId ?? null,
+      source: holding.source ?? "manual",
+      notes: holding.notes ?? null,
+      lastValuedPrice: null,
+      lastValuedAt: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.portfolioHolds.set(id, newHolding);
+    return newHolding;
+  }
+
+  async getPortfolioHoldings(userId: string): Promise<PortfolioHolding[]> {
+    return Array.from(this.portfolioHolds.values())
+      .filter(h => h.userId === userId)
+      .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime());
+  }
+
+  async getPortfolioHolding(id: string): Promise<PortfolioHolding | undefined> {
+    return this.portfolioHolds.get(id);
+  }
+
+  async updatePortfolioHolding(id: string, userId: string, holding: Partial<InsertPortfolioHolding & { lastValuedPrice?: number, lastValuedAt?: Date }>): Promise<PortfolioHolding | undefined> {
+    const existing = this.portfolioHolds.get(id);
+    if (!existing || existing.userId !== userId) return undefined;
+    const updated: PortfolioHolding = { ...existing, ...holding, updatedAt: new Date() };
+    this.portfolioHolds.set(id, updated);
+    return updated;
+  }
+
+  async deletePortfolioHolding(id: string, userId: string): Promise<boolean> {
+    const existing = this.portfolioHolds.get(id);
+    if (!existing || existing.userId !== userId) return false;
+    return this.portfolioHolds.delete(id);
+  }
+
+  // Portfolio Snapshots
+  async createPortfolioSnapshot(userId: string, snapshot: { totalValue: number; totalCost: number; totalProfit: number; itemCount: number; snapshotDate: Date }): Promise<PortfolioSnapshot> {
+    const id = randomUUID();
+    const newSnap: PortfolioSnapshot = {
+      id,
+      userId,
+      totalValue: snapshot.totalValue,
+      totalCost: snapshot.totalCost,
+      totalProfit: snapshot.totalProfit,
+      itemCount: snapshot.itemCount,
+      snapshotDate: snapshot.snapshotDate,
+      createdAt: new Date(),
+    };
+    this.portfolioSnaps.set(id, newSnap);
+    return newSnap;
+  }
+
+  async getPortfolioSnapshots(userId: string, limit?: number): Promise<PortfolioSnapshot[]> {
+    const snaps = Array.from(this.portfolioSnaps.values())
+      .filter(s => s.userId === userId)
+      .sort((a, b) => new Date(b.snapshotDate).getTime() - new Date(a.snapshotDate).getTime());
+    return limit ? snaps.slice(0, limit) : snaps;
+  }
+
+  async createSnapshotItems(snapshotId: string, items: Omit<PortfolioSnapshotItem, 'id'>[]): Promise<void> {
+    for (const item of items) {
+      const id = randomUUID();
+      this.portfolioSnapItems.set(id, { id, ...item });
+    }
+  }
+
+  async getSnapshotItems(snapshotId: string): Promise<PortfolioSnapshotItem[]> {
+    return Array.from(this.portfolioSnapItems.values())
+      .filter(i => i.snapshotId === snapshotId);
+  }
 }
 
 export class DatabaseStorage implements IStorage {
@@ -460,6 +600,93 @@ export class DatabaseStorage implements IStorage {
   async deleteProfitGoal(id: string, userId: string): Promise<boolean> {
     const result = await db.delete(profitGoals).where(and(eq(profitGoals.id, id), eq(profitGoals.userId, userId))).returning();
     return result.length > 0;
+  }
+
+  // Portfolio Categories
+  async createPortfolioCategory(userId: string, category: InsertPortfolioCategory): Promise<PortfolioCategory> {
+    const [newCat] = await db
+      .insert(portfolioCategories)
+      .values({ ...category, userId })
+      .returning();
+    return newCat;
+  }
+
+  async getPortfolioCategories(userId: string): Promise<PortfolioCategory[]> {
+    return await db.select().from(portfolioCategories).where(eq(portfolioCategories.userId, userId)).orderBy(portfolioCategories.name);
+  }
+
+  async updatePortfolioCategory(id: string, userId: string, category: Partial<InsertPortfolioCategory>): Promise<PortfolioCategory | undefined> {
+    const [updatedCat] = await db
+      .update(portfolioCategories)
+      .set(category)
+      .where(and(eq(portfolioCategories.id, id), eq(portfolioCategories.userId, userId)))
+      .returning();
+    return updatedCat || undefined;
+  }
+
+  async deletePortfolioCategory(id: string, userId: string): Promise<boolean> {
+    const result = await db.delete(portfolioCategories).where(and(eq(portfolioCategories.id, id), eq(portfolioCategories.userId, userId))).returning();
+    return result.length > 0;
+  }
+
+  // Portfolio Holdings
+  async createPortfolioHolding(userId: string, holding: InsertPortfolioHolding): Promise<PortfolioHolding> {
+    const [newHolding] = await db
+      .insert(portfolioHoldings)
+      .values({ ...holding, userId })
+      .returning();
+    return newHolding;
+  }
+
+  async getPortfolioHoldings(userId: string): Promise<PortfolioHolding[]> {
+    return await db.select().from(portfolioHoldings).where(eq(portfolioHoldings.userId, userId)).orderBy(desc(portfolioHoldings.createdAt));
+  }
+
+  async getPortfolioHolding(id: string): Promise<PortfolioHolding | undefined> {
+    const [holding] = await db.select().from(portfolioHoldings).where(eq(portfolioHoldings.id, id));
+    return holding || undefined;
+  }
+
+  async updatePortfolioHolding(id: string, userId: string, holding: Partial<InsertPortfolioHolding & { lastValuedPrice?: number, lastValuedAt?: Date }>): Promise<PortfolioHolding | undefined> {
+    const [updatedHolding] = await db
+      .update(portfolioHoldings)
+      .set({ ...holding, updatedAt: new Date() })
+      .where(and(eq(portfolioHoldings.id, id), eq(portfolioHoldings.userId, userId)))
+      .returning();
+    return updatedHolding || undefined;
+  }
+
+  async deletePortfolioHolding(id: string, userId: string): Promise<boolean> {
+    const result = await db.delete(portfolioHoldings).where(and(eq(portfolioHoldings.id, id), eq(portfolioHoldings.userId, userId))).returning();
+    return result.length > 0;
+  }
+
+  // Portfolio Snapshots
+  async createPortfolioSnapshot(userId: string, snapshot: { totalValue: number; totalCost: number; totalProfit: number; itemCount: number; snapshotDate: Date }): Promise<PortfolioSnapshot> {
+    const [newSnap] = await db
+      .insert(portfolioSnapshots)
+      .values({ ...snapshot, userId })
+      .returning();
+    return newSnap;
+  }
+
+  async getPortfolioSnapshots(userId: string, limit?: number): Promise<PortfolioSnapshot[]> {
+    const query = db.select().from(portfolioSnapshots)
+      .where(eq(portfolioSnapshots.userId, userId))
+      .orderBy(desc(portfolioSnapshots.snapshotDate));
+    if (limit) {
+      return await query.limit(limit);
+    }
+    return await query;
+  }
+
+  async createSnapshotItems(snapshotId: string, items: Omit<PortfolioSnapshotItem, 'id'>[]): Promise<void> {
+    if (items.length === 0) return;
+    await db.insert(portfolioSnapshotItems).values(items);
+  }
+
+  async getSnapshotItems(snapshotId: string): Promise<PortfolioSnapshotItem[]> {
+    return await db.select().from(portfolioSnapshotItems).where(eq(portfolioSnapshotItems.snapshotId, snapshotId));
   }
 }
 
