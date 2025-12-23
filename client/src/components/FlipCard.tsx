@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { formatDistanceToNow, format } from "date-fns";
 import { cn } from "@/lib/utils";
+import { calculateFlipTax, formatGp } from "@shared/taxCalculator";
 
 interface Flip {
   id: string;
@@ -34,30 +35,9 @@ interface FlipCardProps {
   onViewChart?: (itemId: number, itemName: string) => void;
 }
 
-const GE_TAX_RATE = 0.02;
-const GE_TAX_CAP = 5_000_000;
-
-function calculateGETax(sellPrice: number, quantity: number) {
-  const grossRevenue = sellPrice * quantity;
-  const rawTax = grossRevenue * GE_TAX_RATE;
-  return Math.min(rawTax, GE_TAX_CAP);
-}
-
-function calculateProfit(flip: Flip) {
+function getFlipTaxDetails(flip: Flip) {
   if (!flip.sellPrice) return null;
-  const grossRevenue = flip.sellPrice * flip.quantity;
-  const tax = calculateGETax(flip.sellPrice, flip.quantity);
-  const netRevenue = grossRevenue - tax;
-  const totalCost = flip.buyPrice * flip.quantity;
-  return netRevenue - totalCost;
-}
-
-function calculateROI(flip: Flip) {
-  if (!flip.sellPrice) return null;
-  const profit = calculateProfit(flip);
-  if (profit === null) return null;
-  const totalCost = flip.buyPrice * flip.quantity;
-  return (profit / totalCost) * 100;
+  return calculateFlipTax(flip.sellPrice, flip.buyPrice, flip.quantity, flip.itemId, flip.itemName);
 }
 
 function formatPrice(price: number) {
@@ -81,11 +61,12 @@ export function FlipCard({ flip, onDelete, onEdit, onQuickSell, onViewChart }: F
   const [isExpanded, setIsExpanded] = useState(false);
   const [isQuickSelling, setIsQuickSelling] = useState(false);
 
-  const profit = calculateProfit(flip);
-  const roi = calculateROI(flip);
+  const taxDetails = getFlipTaxDetails(flip);
+  const profit = taxDetails?.profit ?? null;
+  const roi = taxDetails?.roi ?? null;
   const isCompleted = flip.sellPrice !== undefined && flip.sellPrice !== null;
   const isProfitable = profit !== null && profit > 0;
-  const tax = isCompleted ? calculateGETax(flip.sellPrice!, flip.quantity) : null;
+  const tax = taxDetails?.totalTax ?? null;
 
   const handleQuickSell = async () => {
     if (!onQuickSell || isCompleted) return;

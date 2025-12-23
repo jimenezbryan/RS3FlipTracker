@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { Header } from "@/components/Header";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import type { PortfolioHolding, PortfolioCategory, PortfolioSnapshot } from "@shared/schema";
@@ -17,10 +17,17 @@ import { formatDistanceToNow, format } from "date-fns";
 import { 
   Briefcase, TrendingUp, Package, Coins, Plus, 
   Trash2, FolderPlus, Loader2, X, RefreshCw, ChevronDown,
-  BarChart3, PieChart, TrendingDown, Edit2
+  BarChart3, PieChart, TrendingDown, Edit2, Search
 } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { PortfolioValueChart } from "@/components/PortfolioValueChart";
+
+interface GEItem {
+  id: number;
+  name: string;
+  price: number;
+  icon?: string;
+}
 
 interface PortfolioSummary {
   totalValue: number;
@@ -51,6 +58,17 @@ export default function Portfolio() {
   const [newCategoryColor, setNewCategoryColor] = useState("#3b82f6");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(["all"]));
+  
+  const [holdingItemName, setHoldingItemName] = useState("");
+  const [holdingQuantity, setHoldingQuantity] = useState("1");
+  const [holdingBuyPrice, setHoldingBuyPrice] = useState("");
+  const [holdingCategoryId, setHoldingCategoryId] = useState<string>("");
+  const [holdingNotes, setHoldingNotes] = useState("");
+  const [selectedGEItem, setSelectedGEItem] = useState<GEItem | null>(null);
+  const [itemSuggestions, setItemSuggestions] = useState<GEItem[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const { data: summary, isLoading: isSummaryLoading } = useQuery<PortfolioSummary>({
     queryKey: ["/api/portfolio/summary"],
@@ -121,6 +139,93 @@ export default function Portfolio() {
       toast({ title: "Error", description: "Failed to create snapshot", variant: "destructive" });
     },
   });
+
+  const createHoldingMutation = useMutation({
+    mutationFn: async (data: { itemId: number; itemName: string; itemIcon?: string; quantity: number; avgBuyPrice: number; categoryId?: string; notes?: string }) => {
+      return await apiRequest("POST", "/api/portfolio/holdings", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/portfolio/holdings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/portfolio/summary"] });
+      setIsAddHoldingDialogOpen(false);
+      resetHoldingForm();
+      toast({ title: "Holding added", description: "Item added to your portfolio" });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to add holding", variant: "destructive" });
+    },
+  });
+
+  const resetHoldingForm = () => {
+    setHoldingItemName("");
+    setHoldingQuantity("1");
+    setHoldingBuyPrice("");
+    setHoldingCategoryId("");
+    setHoldingNotes("");
+    setSelectedGEItem(null);
+    setItemSuggestions([]);
+    setShowSuggestions(false);
+  };
+
+  useEffect(() => {
+    if (searchTimeoutRef.current) {
+      clearTimeout(searchTimeoutRef.current);
+    }
+
+    if (holdingItemName.trim().length < 2) {
+      setItemSuggestions([]);
+      setShowSuggestions(false);
+      return;
+    }
+
+    searchTimeoutRef.current = setTimeout(async () => {
+      setIsSearching(true);
+      try {
+        const response = await fetch(`/api/ge/search?q=${encodeURIComponent(holdingItemName)}`);
+        if (response.ok) {
+          const items: GEItem[] = await response.json();
+          const validItems = items.filter(item => item.price && item.price > 0).slice(0, 10);
+          setItemSuggestions(validItems);
+          setShowSuggestions(validItems.length > 0);
+        }
+      } catch (error) {
+        console.error("Search failed:", error);
+      } finally {
+        setIsSearching(false);
+      }
+    }, 300);
+
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
+  }, [holdingItemName]);
+
+  const handleSelectItem = (item: GEItem) => {
+    setHoldingItemName(item.name);
+    setSelectedGEItem(item);
+    setHoldingBuyPrice(item.price.toString());
+    setItemSuggestions([]);
+    setShowSuggestions(false);
+  };
+
+  const handleAddHolding = () => {
+    if (!selectedGEItem || !holdingQuantity || !holdingBuyPrice) {
+      toast({ title: "Error", description: "Please select an item and fill in all required fields", variant: "destructive" });
+      return;
+    }
+
+    createHoldingMutation.mutate({
+      itemId: selectedGEItem.id,
+      itemName: selectedGEItem.name,
+      itemIcon: selectedGEItem.icon,
+      quantity: parseInt(holdingQuantity),
+      avgBuyPrice: parseInt(holdingBuyPrice),
+      categoryId: holdingCategoryId || undefined,
+      notes: holdingNotes || undefined,
+    });
+  };
 
   const formatPrice = (price: number) => price.toLocaleString();
 
@@ -225,6 +330,151 @@ export default function Portfolio() {
                   >
                     {createCategoryMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                     Create
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
+            <Dialog open={isAddHoldingDialogOpen} onOpenChange={(open) => { setIsAddHoldingDialogOpen(open); if (!open) resetHoldingForm(); }}>
+              <DialogTrigger asChild>
+                <Button data-testid="button-add-holding">
+                  <Plus className="mr-2 h-4 w-4" />
+                  Add Holding
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-md">
+                <DialogHeader>
+                  <DialogTitle>Add Holding</DialogTitle>
+                  <DialogDescription>Add an item to your portfolio</DialogDescription>
+                </DialogHeader>
+                <div className="space-y-4 py-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="holding-item">Item</Label>
+                    <div className="relative">
+                      <div className="flex gap-2">
+                        <div className="relative flex-1">
+                          <Input
+                            id="holding-item"
+                            value={holdingItemName}
+                            onChange={(e) => {
+                              setHoldingItemName(e.target.value);
+                              setSelectedGEItem(null);
+                            }}
+                            onFocus={() => {
+                              if (itemSuggestions.length > 0) {
+                                setShowSuggestions(true);
+                              }
+                            }}
+                            onBlur={() => {
+                              setTimeout(() => setShowSuggestions(false), 200);
+                            }}
+                            placeholder="Search for item..."
+                            data-testid="input-holding-item"
+                            autoComplete="off"
+                          />
+                          {isSearching && (
+                            <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                      {showSuggestions && itemSuggestions.length > 0 && (
+                        <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-48 overflow-auto">
+                          {itemSuggestions.map((item) => (
+                            <button
+                              key={item.id}
+                              type="button"
+                              className="flex items-center gap-3 px-3 py-2 w-full text-left hover-elevate"
+                              onClick={() => handleSelectItem(item)}
+                              data-testid={`holding-suggestion-${item.id}`}
+                            >
+                              {item.icon && (
+                                <img 
+                                  src={item.icon} 
+                                  alt={item.name}
+                                  className="h-6 w-6 object-contain"
+                                  onError={(e) => {
+                                    (e.target as HTMLImageElement).style.display = 'none';
+                                  }}
+                                />
+                              )}
+                              <div className="flex-1 min-w-0">
+                                <div className="font-medium truncate">{item.name}</div>
+                                <div className="text-xs text-muted-foreground font-mono">
+                                  {item.price.toLocaleString()} gp
+                                </div>
+                              </div>
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {selectedGEItem && (
+                      <div className="flex items-center gap-2 p-2 rounded-md bg-muted/50 text-sm">
+                        {selectedGEItem.icon && (
+                          <img src={selectedGEItem.icon} alt={selectedGEItem.name} className="h-5 w-5" />
+                        )}
+                        <span className="font-medium">{selectedGEItem.name}</span>
+                        <span className="text-muted-foreground">@ {selectedGEItem.price.toLocaleString()} gp</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="holding-quantity">Quantity</Label>
+                      <Input
+                        id="holding-quantity"
+                        type="number"
+                        value={holdingQuantity}
+                        onChange={(e) => setHoldingQuantity(e.target.value)}
+                        placeholder="1"
+                        min="1"
+                        data-testid="input-holding-quantity"
+                        className="font-mono"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="holding-price">Buy Price (each)</Label>
+                      <Input
+                        id="holding-price"
+                        type="number"
+                        value={holdingBuyPrice}
+                        onChange={(e) => setHoldingBuyPrice(e.target.value)}
+                        placeholder="0"
+                        data-testid="input-holding-price"
+                        className="font-mono"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="holding-category">Category (optional)</Label>
+                    <Select value={holdingCategoryId} onValueChange={setHoldingCategoryId}>
+                      <SelectTrigger id="holding-category" data-testid="select-holding-category">
+                        <SelectValue placeholder="Select category..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="">None</SelectItem>
+                        {categories.map(cat => (
+                          <SelectItem key={cat.id} value={cat.id}>
+                            <div className="flex items-center gap-2">
+                              <span className="h-2 w-2 rounded-full" style={{ backgroundColor: cat.color || "#6b7280" }} />
+                              {cat.name}
+                            </div>
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <DialogFooter>
+                  <Button variant="outline" onClick={() => { setIsAddHoldingDialogOpen(false); resetHoldingForm(); }}>Cancel</Button>
+                  <Button 
+                    onClick={handleAddHolding}
+                    disabled={!selectedGEItem || !holdingQuantity || !holdingBuyPrice || createHoldingMutation.isPending}
+                    data-testid="button-save-holding"
+                  >
+                    {createHoldingMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                    Add
                   </Button>
                 </DialogFooter>
               </DialogContent>

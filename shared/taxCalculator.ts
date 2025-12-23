@@ -3,8 +3,12 @@
 // - Tax rate = 2% of sell price per item
 // - Tax is applied to seller, calculated per item
 // - Tax amount is rounded down (floor)
-// - Items sold below 50 gp per item are exempt (tax = 0)
+// - Maximum tax per transaction is capped at 5,000,000 gp
+// - Items sold for 49 gp or less per item are exempt (tax = 0)
 // - Bonds are exempt (tax = 0)
+
+const GE_TAX_RATE = 0.02;
+const GE_TAX_CAP = 5_000_000;
 
 export interface TaxCalculation {
   taxPerItem: number;
@@ -45,9 +49,9 @@ export function isTaxExempt(
     return { exempt: true, reason: "Bonds are tax exempt" };
   }
   
-  // Items below 50 gp are exempt
-  if (sellPrice < 50) {
-    return { exempt: true, reason: "Items below 50 gp are tax exempt" };
+  // Items sold for 49 gp or less are exempt
+  if (sellPrice <= 49) {
+    return { exempt: true, reason: "Items sold for 49 gp or less are tax exempt" };
   }
   
   return { exempt: false };
@@ -64,7 +68,7 @@ export function calculateTaxPerItem(
   }
   
   // 2% tax, floored per item
-  return Math.floor(sellPrice * 0.02);
+  return Math.floor(sellPrice * GE_TAX_RATE);
 }
 
 export function calculateFlipTax(
@@ -76,18 +80,25 @@ export function calculateFlipTax(
 ): TaxCalculation {
   const exemption = isTaxExempt(sellPrice, itemId, itemName);
   
-  const taxPerItem = exemption.exempt ? 0 : Math.floor(sellPrice * 0.02);
-  const totalTax = taxPerItem * quantity;
-  const netSellPerItem = sellPrice - taxPerItem;
-  const netSellTotal = netSellPerItem * quantity;
+  // Calculate per-item tax (floored)
+  const taxPerItem = exemption.exempt ? 0 : Math.floor(sellPrice * GE_TAX_RATE);
+  
+  // Calculate total tax with 5M cap
+  const rawTotalTax = taxPerItem * quantity;
+  const totalTax = Math.min(rawTotalTax, GE_TAX_CAP);
+  
+  // If cap is applied, recalculate effective per-item values
+  const effectiveTaxPerItem = quantity > 0 ? totalTax / quantity : 0;
+  const netSellPerItem = sellPrice - effectiveTaxPerItem;
+  const netSellTotal = (sellPrice * quantity) - totalTax;
   const grossSellTotal = sellPrice * quantity;
   const totalBuyCost = buyPrice * quantity;
   const profit = netSellTotal - totalBuyCost;
-  const profitPerItem = profit / quantity;
+  const profitPerItem = quantity > 0 ? profit / quantity : 0;
   const roi = totalBuyCost > 0 ? ((profit / totalBuyCost) * 100) : 0;
   
   return {
-    taxPerItem,
+    taxPerItem: effectiveTaxPerItem,
     totalTax,
     netSellPerItem,
     netSellTotal,

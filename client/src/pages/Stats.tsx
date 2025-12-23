@@ -19,23 +19,24 @@ import {
   Cell
 } from "recharts";
 import { format, subDays, startOfDay, addDays } from "date-fns";
-
-function calculateTax(sellPrice: number, quantity: number): number {
-  const grossRevenue = sellPrice * quantity;
-  return Math.min(grossRevenue * 0.02, 5_000_000);
-}
+import { calculateFlipTax } from "@shared/taxCalculator";
 
 function calculateProfit(flip: Flip): number | null {
   if (flip.sellPrice === null || flip.sellPrice === undefined) return null;
-  const tax = calculateTax(flip.sellPrice, flip.quantity);
-  return (flip.sellPrice * flip.quantity - tax) - (flip.buyPrice * flip.quantity);
+  const taxDetails = calculateFlipTax(flip.sellPrice, flip.buyPrice, flip.quantity, flip.itemId ?? undefined, flip.itemName);
+  return taxDetails.profit;
 }
 
 function calculateROI(flip: Flip): number | null {
-  const profit = calculateProfit(flip);
-  if (profit === null) return null;
-  const investment = flip.buyPrice * flip.quantity;
-  return investment > 0 ? (profit / investment) * 100 : 0;
+  if (flip.sellPrice === null || flip.sellPrice === undefined) return null;
+  const taxDetails = calculateFlipTax(flip.sellPrice, flip.buyPrice, flip.quantity, flip.itemId ?? undefined, flip.itemName);
+  return taxDetails.roi;
+}
+
+function calculateTax(flip: Flip): number {
+  if (flip.sellPrice === null || flip.sellPrice === undefined) return 0;
+  const taxDetails = calculateFlipTax(flip.sellPrice, flip.buyPrice, flip.quantity, flip.itemId ?? undefined, flip.itemName);
+  return taxDetails.totalTax;
 }
 
 export default function Stats() {
@@ -71,10 +72,7 @@ export default function Stats() {
       : null;
 
     const totalTaxPaid = completedFlips.reduce((sum, f) => {
-      if (f.sellPrice !== null && f.sellPrice !== undefined) {
-        return sum + calculateTax(f.sellPrice, f.quantity);
-      }
-      return sum;
+      return sum + calculateTax(f);
     }, 0);
 
     const totalGrossRevenue = completedFlips.reduce((sum, f) => {
@@ -279,7 +277,7 @@ export default function Stats() {
 
           <Card data-testid="card-total-volume">
             <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Trade Volume</CardTitle>
+              <CardTitle className="text-sm font-medium text-muted-foreground">Total GP Traded</CardTitle>
               <Calendar className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
