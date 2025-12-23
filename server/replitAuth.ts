@@ -52,14 +52,15 @@ function updateUserSession(
 
 async function upsertUser(
   claims: any,
-) {
-  await storage.upsertUser({
+): Promise<{ id: string }> {
+  const user = await storage.upsertUser({
     id: claims["sub"],
     email: claims["email"],
     firstName: claims["first_name"],
     lastName: claims["last_name"],
     profileImageUrl: claims["profile_image_url"],
   });
+  return { id: user.id };
 }
 
 export async function setupAuth(app: Express) {
@@ -74,9 +75,13 @@ export async function setupAuth(app: Express) {
     tokens: client.TokenEndpointResponse & client.TokenEndpointResponseHelpers,
     verified: passport.AuthenticateCallback
   ) => {
-    const user = {};
+    const user: any = {};
     updateUserSession(user, tokens);
-    await upsertUser(tokens.claims());
+    // upsertUser may return an existing user with a different ID (if email matches)
+    // so we need to use the actual database user ID for lookups
+    const dbUser = await upsertUser(tokens.claims());
+    // Override claims.sub with the actual database user ID
+    user.claims.sub = dbUser.id;
     verified(null, user);
   };
 
