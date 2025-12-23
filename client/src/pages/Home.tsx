@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Header } from "@/components/Header";
 import { FlipForm } from "@/components/FlipForm";
-import { FlipTable } from "@/components/FlipTable";
+import { FlipCardGrid } from "@/components/FlipCardGrid";
 import { GoalsProgress } from "@/components/GoalsProgress";
 import { PriceHistoryChart } from "@/components/PriceHistoryChart";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -321,29 +321,29 @@ export default function Home() {
           </div>
         )}
 
-        <div className="grid gap-8 lg:grid-cols-3">
-          <div className="lg:col-span-1">
-            <FlipForm onSubmit={handleAddFlip} openPositions={openPositions} />
-          </div>
-          <div className="lg:col-span-2">
-            <FlipTable 
-              flips={flips.map(flip => ({
-                ...flip,
-                itemIcon: flip.itemIcon ?? undefined,
-                itemId: flip.itemId ?? undefined,
-                sellPrice: flip.sellPrice ?? undefined,
-                buyDate: new Date(flip.buyDate),
-                sellDate: flip.sellDate ? new Date(flip.sellDate) : undefined,
-                notes: flip.notes ?? undefined,
-                category: flip.category ?? undefined,
-              }))} 
-              onDelete={handleDeleteFlip}
-              onEdit={handleEditFlip}
-              onBulkDelete={handleBulkDelete}
-              onQuickSell={handleQuickSell}
-              onViewChart={handleViewChart}
-            />
-          </div>
+        <div className="space-y-8">
+          <FlipForm onSubmit={handleAddFlip} openPositions={openPositions} />
+          
+          <FlipCardGrid 
+            flips={flips.map(flip => ({
+              ...flip,
+              itemIcon: flip.itemIcon ?? undefined,
+              itemId: flip.itemId ?? undefined,
+              sellPrice: flip.sellPrice ?? undefined,
+              buyDate: new Date(flip.buyDate),
+              sellDate: flip.sellDate ? new Date(flip.sellDate) : undefined,
+              notes: flip.notes ?? undefined,
+              category: flip.category ?? undefined,
+              strategyTag: flip.strategyTag ?? undefined,
+              membershipStatus: flip.membershipStatus ?? undefined,
+              isMembers: flip.isMembers ?? undefined,
+              geLimit: flip.geLimit ?? undefined,
+            }))} 
+            onDelete={handleDeleteFlip}
+            onEdit={handleEditFlip}
+            onQuickSell={handleQuickSell}
+            onViewChart={handleViewChart}
+          />
         </div>
       </main>
     </div>
