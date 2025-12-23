@@ -317,6 +317,7 @@ export default function Home() {
               itemId={selectedChart.itemId}
               itemName={selectedChart.itemName}
               onClose={() => setSelectedChart(null)}
+              userFlips={flips}
             />
           </div>
         )}

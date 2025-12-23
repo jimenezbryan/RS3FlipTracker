@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   ChartContainer,
@@ -8,20 +9,31 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Area, AreaChart } from "recharts";
-import { TrendingUp, TrendingDown, Minus, X } from "lucide-react";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Area, AreaChart, ReferenceDot, Scatter, ScatterChart, ComposedChart, ReferenceLine } from "recharts";
+import { TrendingUp, TrendingDown, Minus, X, CircleDot } from "lucide-react";
 import { format, parseISO } from "date-fns";
+import type { Flip } from "@shared/schema";
 
 interface PriceHistoryPoint {
   date: string;
   price: number;
   volume?: number;
+  userBuy?: number;
+  userSell?: number;
+}
+
+interface UserTrade {
+  date: string;
+  price: number;
+  type: "buy" | "sell";
+  quantity: number;
 }
 
 interface PriceHistoryChartProps {
   itemId: number;
   itemName: string;
   onClose?: () => void;
+  userFlips?: Flip[];
 }
 
 const chartConfig = {
@@ -31,7 +43,7 @@ const chartConfig = {
   },
 } satisfies ChartConfig;
 
-export function PriceHistoryChart({ itemId, itemName, onClose }: PriceHistoryChartProps) {
+export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }: PriceHistoryChartProps) {
   const { data: history, isLoading, error } = useQuery<PriceHistoryPoint[]>({
     queryKey: ["/api/ge/history", itemId],
     enabled: !!itemId,
@@ -51,6 +63,29 @@ export function PriceHistoryChart({ itemId, itemName, onClose }: PriceHistoryCha
     queryKey: ["/api/ge/trend", itemId],
     enabled: !!itemId,
   });
+
+  const userTrades: UserTrade[] = userFlips
+    .filter(f => f.itemName.toLowerCase() === itemName.toLowerCase())
+    .flatMap(flip => {
+      const trades: UserTrade[] = [];
+      if (flip.buyDate) {
+        trades.push({
+          date: format(new Date(flip.buyDate), "yyyy-MM-dd"),
+          price: flip.buyPrice,
+          type: "buy",
+          quantity: flip.quantity,
+        });
+      }
+      if (flip.sellDate && flip.sellPrice) {
+        trades.push({
+          date: format(new Date(flip.sellDate), "yyyy-MM-dd"),
+          price: flip.sellPrice,
+          type: "sell",
+          quantity: flip.quantity,
+        });
+      }
+      return trades;
+    });
 
   const formatPrice = (price: number) => {
     if (price >= 1000000000) {
@@ -141,9 +176,23 @@ export function PriceHistoryChart({ itemId, itemName, onClose }: PriceHistoryCha
     );
   }
 
-  const minPrice = Math.min(...history.map(h => h.price));
-  const maxPrice = Math.max(...history.map(h => h.price));
-  const padding = (maxPrice - minPrice) * 0.1;
+  const allPrices = [
+    ...history.map(h => h.price),
+    ...userTrades.map(t => t.price)
+  ];
+  const minPrice = Math.min(...allPrices);
+  const maxPrice = Math.max(...allPrices);
+  const padding = (maxPrice - minPrice) * 0.1 || maxPrice * 0.05;
+
+  const chartDataWithTrades = history.map(h => {
+    const buyTrade = userTrades.find(t => t.date === h.date && t.type === "buy");
+    const sellTrade = userTrades.find(t => t.date === h.date && t.type === "sell");
+    return {
+      ...h,
+      userBuy: buyTrade?.price,
+      userSell: sellTrade?.price,
+    };
+  });
 
   return (
     <Card data-testid={`chart-price-history-${itemId}`}>
@@ -167,7 +216,7 @@ export function PriceHistoryChart({ itemId, itemName, onClose }: PriceHistoryCha
       </CardHeader>
       <CardContent className="space-y-4">
         <ChartContainer config={chartConfig} className="h-[200px] w-full">
-          <AreaChart data={history} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+          <ComposedChart data={chartDataWithTrades} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
             <defs>
               <linearGradient id={`gradient-${itemId}`} x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor="hsl(var(--chart-1))" stopOpacity={0.3} />
@@ -195,7 +244,11 @@ export function PriceHistoryChart({ itemId, itemName, onClose }: PriceHistoryCha
               content={
                 <ChartTooltipContent
                   labelFormatter={(label) => format(parseISO(label), "MMM d, yyyy")}
-                  formatter={(value) => [formatFullPrice(value as number) + " gp", "Price"]}
+                  formatter={(value, name) => {
+                    if (name === "userBuy") return [formatFullPrice(value as number) + " gp", "Your Buy"];
+                    if (name === "userSell") return [formatFullPrice(value as number) + " gp", "Your Sell"];
+                    return [formatFullPrice(value as number) + " gp", "Price"];
+                  }}
                 />
               }
             />
@@ -206,8 +259,43 @@ export function PriceHistoryChart({ itemId, itemName, onClose }: PriceHistoryCha
               strokeWidth={2}
               fill={`url(#gradient-${itemId})`}
             />
-          </AreaChart>
+            <Line
+              type="monotone"
+              dataKey="userBuy"
+              stroke="#22c55e"
+              strokeWidth={0}
+              dot={{ fill: "#22c55e", stroke: "#22c55e", strokeWidth: 2, r: 6 }}
+              activeDot={{ fill: "#22c55e", stroke: "#fff", strokeWidth: 2, r: 8 }}
+              connectNulls={false}
+              isAnimationActive={false}
+            />
+            <Line
+              type="monotone"
+              dataKey="userSell"
+              stroke="#ef4444"
+              strokeWidth={0}
+              dot={{ fill: "#ef4444", stroke: "#ef4444", strokeWidth: 2, r: 6 }}
+              activeDot={{ fill: "#ef4444", stroke: "#fff", strokeWidth: 2, r: 8 }}
+              connectNulls={false}
+              isAnimationActive={false}
+            />
+          </ComposedChart>
         </ChartContainer>
+
+        {userTrades.length > 0 && (
+          <div className="flex items-center gap-4 text-xs text-muted-foreground">
+            <div className="flex items-center gap-1">
+              <div className="h-3 w-3 rounded-full bg-green-500" />
+              <span>Your Buys</span>
+            </div>
+            <div className="flex items-center gap-1">
+              <div className="h-3 w-3 rounded-full bg-red-500" />
+              <span>Your Sells</span>
+            </div>
+            <span className="text-muted-foreground/70">|</span>
+            <span>{userTrades.length} trade{userTrades.length !== 1 ? "s" : ""} shown</span>
+          </div>
+        )}
 
         {trend && (
           <div className="grid grid-cols-2 gap-4 text-sm sm:grid-cols-4">
