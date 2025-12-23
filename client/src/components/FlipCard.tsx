@@ -40,7 +40,7 @@ interface FlipCardProps {
   onDelete?: (id: string) => void;
   onEdit?: (flip: Flip) => void;
   onQuickSell?: (id: string, itemName: string) => Promise<void>;
-  onViewChart?: (itemId: number, itemName: string) => void;
+  onViewChart?: (itemId: number | undefined, itemName: string) => void;
 }
 
 function getFlipTaxDetails(flip: Flip) {
@@ -278,13 +278,13 @@ export function FlipCard({ flip, onDelete, onEdit, onQuickSell, onViewChart }: F
                   </Button>
                 )}
                 
-                {flip.itemId && onViewChart && (
+                {onViewChart && (
                   <Button
                     size="sm"
                     variant="outline"
                     onClick={(e) => {
                       e.stopPropagation();
-                      onViewChart(flip.itemId!, flip.itemName);
+                      onViewChart(flip.itemId ?? undefined, flip.itemName);
                     }}
                     className="h-8"
                     data-testid={`button-view-chart-${flip.id}`}

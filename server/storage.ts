@@ -871,9 +871,19 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateFlip(id: string, userId: string, flipUpdate: Partial<InsertFlip>): Promise<Flip | undefined> {
+    // Strip undefined values to prevent overwriting existing data
+    const cleanedUpdate = Object.fromEntries(
+      Object.entries(flipUpdate).filter(([_, value]) => value !== undefined)
+    );
+    
+    if (Object.keys(cleanedUpdate).length === 0) {
+      // No fields to update, return existing flip
+      return this.getFlip(id);
+    }
+    
     const [updatedFlip] = await db
       .update(flips)
-      .set(flipUpdate)
+      .set(cleanedUpdate)
       .where(and(eq(flips.id, id), eq(flips.userId, userId)))
       .returning();
     return updatedFlip || undefined;

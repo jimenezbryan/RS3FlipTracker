@@ -53,7 +53,7 @@ interface FlipTableProps {
   }>) => void;
   onBulkDelete?: (ids: string[]) => void;
   onQuickSell?: (id: string, itemName: string) => Promise<void>;
-  onViewChart?: (itemId: number, itemName: string) => void;
+  onViewChart?: (itemId: number | undefined, itemName: string) => void;
 }
 
 const GE_TAX_RATE = 0.02;
@@ -551,9 +551,9 @@ export function FlipTable({ flips, onDelete, onEdit, onBulkDelete, onQuickSell, 
                                   Quick Sell
                                 </DropdownMenuItem>
                               )}
-                              {flip.itemId && onViewChart && (
+                              {onViewChart && (
                                 <DropdownMenuItem
-                                  onClick={() => onViewChart(flip.itemId!, flip.itemName)}
+                                  onClick={() => onViewChart(flip.itemId ?? undefined, flip.itemName)}
                                   data-testid={`button-view-chart-${flip.id}`}
                                 >
                                   <LineChart className="h-4 w-4 mr-2" />

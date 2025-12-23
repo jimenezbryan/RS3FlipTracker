@@ -15,7 +15,7 @@ import { Users } from "lucide-react";
 
 export default function Home() {
   const { toast } = useToast();
-  const [selectedChart, setSelectedChart] = useState<{ itemId: number; itemName: string } | null>(null);
+  const [selectedChart, setSelectedChart] = useState<{ itemId?: number; itemName: string } | null>(null);
   const [viewScope, setViewScope] = useState<'mine' | 'all'>('mine');
   const [filterUserId, setFilterUserId] = useState<string | null>(null);
   
@@ -256,7 +256,7 @@ export default function Home() {
     }
   };
 
-  const handleViewChart = (itemId: number, itemName: string) => {
+  const handleViewChart = (itemId: number | undefined, itemName: string) => {
     setSelectedChart({ itemId, itemName });
   };
 

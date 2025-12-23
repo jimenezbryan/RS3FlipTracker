@@ -57,7 +57,7 @@ interface FlipCardGridProps {
     sellDate?: Date;
   }>) => void;
   onQuickSell?: (id: string, itemName: string) => Promise<void>;
-  onViewChart?: (itemId: number, itemName: string) => void;
+  onViewChart?: (itemId: number | undefined, itemName: string) => void;
 }
 
 const GE_TAX_RATE = 0.02;

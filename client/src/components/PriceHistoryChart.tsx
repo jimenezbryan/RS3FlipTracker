@@ -30,7 +30,7 @@ interface UserTrade {
 }
 
 interface PriceHistoryChartProps {
-  itemId: number;
+  itemId?: number;
   itemName: string;
   onClose?: () => void;
   userFlips?: Flip[];
@@ -44,10 +44,29 @@ const chartConfig = {
 } satisfies ChartConfig;
 
 export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }: PriceHistoryChartProps) {
-  const { data: history, isLoading, error } = useQuery<PriceHistoryPoint[]>({
-    queryKey: ["/api/ge/history", itemId],
-    enabled: !!itemId,
+  // If itemId is missing, resolve it from itemName
+  const { data: resolvedItem, isLoading: isResolvingId } = useQuery<{ id: number; name: string }>({
+    queryKey: ["/api/ge/resolve-id", itemName],
+    queryFn: async () => {
+      const response = await fetch(`/api/ge/resolve-id?name=${encodeURIComponent(itemName)}`, {
+        credentials: 'include',
+      });
+      if (!response.ok) throw new Error("Failed to resolve item ID");
+      return response.json();
+    },
+    enabled: !itemId && !!itemName,
+    staleTime: 1000 * 60 * 60, // Cache for 1 hour
   });
+
+  // Use provided itemId or resolved one
+  const effectiveItemId = itemId || resolvedItem?.id;
+
+  const { data: history, isLoading: isLoadingHistory, error } = useQuery<PriceHistoryPoint[]>({
+    queryKey: ["/api/ge/history", effectiveItemId],
+    enabled: !!effectiveItemId,
+  });
+
+  const isLoading = isResolvingId || isLoadingHistory;
 
   const { data: trend } = useQuery<{
     direction: "rising" | "falling" | "stable";
@@ -60,8 +79,8 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
     recommendation: "buy" | "sell" | "hold";
     recommendationReason: string;
   }>({
-    queryKey: ["/api/ge/trend", itemId],
-    enabled: !!itemId,
+    queryKey: ["/api/ge/trend", effectiveItemId],
+    enabled: !!effectiveItemId,
   });
 
   const userTrades: UserTrade[] = userFlips
@@ -225,7 +244,7 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
   const maxTimestamp = Math.max(...allTimestamps);
 
   return (
-    <Card data-testid={`chart-price-history-${itemId}`}>
+    <Card data-testid={`chart-price-history-${effectiveItemId || 'pending'}`}>
       <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
         <div className="flex items-center gap-2">
           <CardTitle className="text-base">{itemName}</CardTitle>
@@ -248,7 +267,7 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
         <ChartContainer config={chartConfig} className="h-[200px] w-full">
           <ComposedChart data={chartDataWithTimestamps} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
             <defs>
-              <linearGradient id={`gradient-${itemId}`} x1="0" y1="0" x2="0" y2="1">
+              <linearGradient id={`gradient-${effectiveItemId || 'pending'}`} x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor="hsl(var(--chart-1))" stopOpacity={0.3} />
                 <stop offset="95%" stopColor="hsl(var(--chart-1))" stopOpacity={0} />
               </linearGradient>
@@ -297,7 +316,7 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
               dataKey="price"
               stroke="hsl(var(--chart-1))"
               strokeWidth={2}
-              fill={`url(#gradient-${itemId})`}
+              fill={`url(#gradient-${effectiveItemId || 'pending'})`}
             />
             {buyScatterData.length > 0 && (
               <Scatter

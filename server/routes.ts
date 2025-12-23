@@ -1350,6 +1350,95 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Backfill missing item IDs for flips
+  app.post("/api/flips/backfill-item-ids", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const flips = await storage.getFlips(userId);
+      
+      // Filter flips that have no itemId
+      const flipsWithoutId = flips.filter(f => !f.itemId && f.itemName);
+      
+      let updated = 0;
+      let failed = 0;
+      const errors: string[] = [];
+      
+      // Process in batches with delay to avoid rate limiting
+      const BATCH_SIZE = 5;
+      const DELAY_MS = 500;
+      
+      for (let i = 0; i < flipsWithoutId.length; i += BATCH_SIZE) {
+        const batch = flipsWithoutId.slice(i, i + BATCH_SIZE);
+        
+        await Promise.all(batch.map(async (flip) => {
+          try {
+            const item = await getItemPrice(flip.itemName);
+            if (item && item.id) {
+              // Only update item metadata fields with defined values
+              // Build update object with only the fields that have values
+              const updateData: Record<string, unknown> = { itemId: item.id };
+              
+              if (item.icon !== undefined && item.icon !== null) {
+                updateData.itemIcon = item.icon;
+              }
+              if (item.isMembers !== undefined && item.isMembers !== null) {
+                updateData.isMembers = item.isMembers;
+              }
+              if (item.geLimit !== undefined && item.geLimit !== null) {
+                updateData.geLimit = item.geLimit;
+              }
+              
+              await storage.updateFlip(flip.id, userId, updateData as any);
+              updated++;
+            } else {
+              failed++;
+              errors.push(`Item not found: ${flip.itemName}`);
+            }
+          } catch (error) {
+            console.error(`[backfill] Failed to lookup item: ${flip.itemName}`, error);
+            failed++;
+            errors.push(`Error for ${flip.itemName}: ${error instanceof Error ? error.message : 'Unknown error'}`);
+          }
+        }));
+        
+        // Add delay between batches to avoid rate limiting
+        if (i + BATCH_SIZE < flipsWithoutId.length) {
+          await new Promise(resolve => setTimeout(resolve, DELAY_MS));
+        }
+      }
+      
+      res.json({ 
+        message: `Backfill complete`,
+        total: flipsWithoutId.length,
+        updated,
+        failed,
+        errors: errors.slice(0, 10) // Only return first 10 errors
+      });
+    } catch (error) {
+      console.error("[backfill] Error:", error);
+      res.status(500).json({ error: "Failed to backfill item IDs" });
+    }
+  });
+
+  // Resolve item ID by name (for frontend fallback)
+  app.get("/api/ge/resolve-id", async (req, res) => {
+    try {
+      const { name } = req.query;
+      if (!name || typeof name !== "string") {
+        return res.status(400).json({ error: "Item name required" });
+      }
+      
+      const item = await getItemPrice(name);
+      if (!item) {
+        return res.status(404).json({ error: "Item not found" });
+      }
+      
+      res.json({ id: item.id, name: item.name });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to resolve item ID" });
+    }
+  });
+
   // RS Accounts (Alt management) API
   app.get("/api/rs-accounts", isAuthenticated, async (req: any, res) => {
     try {
