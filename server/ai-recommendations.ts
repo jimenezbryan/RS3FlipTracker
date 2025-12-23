@@ -41,7 +41,7 @@ export function analyzeUserTradingProfile(flips: Flip[]): UserTradingProfile {
   
   const strategyStats = new Map<string, { count: number; totalROI: number; wins: number }>();
   const itemCounts = new Map<string, number>();
-  const itemProfits = new Map<string, { profit: number; roi: number }>();
+  const itemProfits = new Map<string, { profit: number; totalRoi: number; count: number }>();
   
   let totalProfit = 0;
   let totalROI = 0;
@@ -88,9 +88,10 @@ export function analyzeUserTradingProfile(flips: Flip[]): UserTradingProfile {
     const itemName = flip.itemName;
     itemCounts.set(itemName, (itemCounts.get(itemName) || 0) + 1);
     
-    const existing = itemProfits.get(itemName) || { profit: 0, roi: 0 };
+    const existing = itemProfits.get(itemName) || { profit: 0, totalRoi: 0, count: 0 };
     existing.profit += profit;
-    existing.roi = (existing.roi + roi) / 2;
+    existing.totalRoi += roi;
+    existing.count += 1;
     itemProfits.set(itemName, existing);
     
     const buyDate = new Date(flip.buyDate).getTime();
@@ -103,8 +104,8 @@ export function analyzeUserTradingProfile(flips: Flip[]): UserTradingProfile {
     .map(([strategy, stats]) => ({
       strategy,
       frequency: stats.count,
-      avgROI: stats.totalROI / stats.count,
-      winRate: (stats.wins / stats.count) * 100,
+      avgROI: stats.count > 0 ? stats.totalROI / stats.count : 0,
+      winRate: stats.count > 0 ? (stats.wins / stats.count) * 100 : 0,
     }))
     .sort((a, b) => b.frequency - a.frequency);
   
@@ -131,7 +132,7 @@ export function analyzeUserTradingProfile(flips: Flip[]): UserTradingProfile {
   else if (f2pCount > membersCount * 2) membershipPreference = "f2p";
   
   const topPerformingItems = Array.from(itemProfits.entries())
-    .map(([name, data]) => ({ name, profit: data.profit, roiPercent: data.roi }))
+    .map(([name, data]) => ({ name, profit: data.profit, roiPercent: data.count > 0 ? data.totalRoi / data.count : 0 }))
     .sort((a, b) => b.profit - a.profit)
     .slice(0, 5);
   
@@ -224,10 +225,14 @@ Respond with a valid JSON array:
     
     for (const suggestion of suggestions.slice(0, 5)) {
       try {
+        if (!suggestion || !suggestion.itemName) continue;
+        
         const searchResults = await searchItems(suggestion.itemName);
         if (!searchResults || searchResults.length === 0) continue;
         
         const item = searchResults[0];
+        if (!item || typeof item.price !== 'number' || item.price <= 0 || !item.id) continue;
+        
         const history = await getItemPriceHistory(item.id);
         
         let suggestedBuyPrice = item.price;
@@ -251,12 +256,15 @@ Respond with a valid JSON array:
           }
         }
         
+        if (isNaN(suggestedBuyPrice) || isNaN(suggestedSellPrice) || suggestedBuyPrice <= 0) continue;
+        
         const potentialProfit = suggestedSellPrice - suggestedBuyPrice - Math.min(Math.floor(suggestedSellPrice * 0.02), 5000000);
-        const potentialROI = (potentialProfit / suggestedBuyPrice) * 100;
+        const potentialROI = suggestedBuyPrice > 0 ? (potentialProfit / suggestedBuyPrice) * 100 : 0;
         
         let confidence: "high" | "medium" | "low" = "medium";
-        if (suggestion.matchScore >= 80) confidence = "high";
-        else if (suggestion.matchScore < 50) confidence = "low";
+        const matchScore = typeof suggestion.matchScore === 'number' ? suggestion.matchScore : 70;
+        if (matchScore >= 80) confidence = "high";
+        else if (matchScore < 50) confidence = "low";
         
         recommendations.push({
           itemName: item.name,
@@ -268,12 +276,12 @@ Respond with a valid JSON array:
           potentialProfit,
           potentialROI,
           confidence,
-          reasoning: suggestion.reasoning,
-          matchScore: suggestion.matchScore || 70,
-          matchReasons: suggestion.matchReasons || [],
-          strategy: suggestion.strategy,
-          riskLevel: suggestion.riskLevel,
-          estimatedHoldTime: suggestion.estimatedHoldTime,
+          reasoning: suggestion.reasoning || "Matches your trading profile",
+          matchScore,
+          matchReasons: Array.isArray(suggestion.matchReasons) ? suggestion.matchReasons : [],
+          strategy: suggestion.strategy || "Other",
+          riskLevel: suggestion.riskLevel || "medium",
+          estimatedHoldTime: suggestion.estimatedHoldTime || "1-3 days",
         });
       } catch (err) {
         console.error(`Failed to look up item: ${suggestion.itemName}`, err);

@@ -9,7 +9,7 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart";
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Area, AreaChart, ReferenceDot, Scatter, ScatterChart, ComposedChart, ReferenceLine } from "recharts";
+import { XAxis, YAxis, CartesianGrid, Area, Scatter, ComposedChart, Cell, ZAxis } from "recharts";
 import { TrendingUp, TrendingDown, Minus, X, CircleDot } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import type { Flip } from "@shared/schema";
@@ -184,15 +184,45 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
   const maxPrice = Math.max(...allPrices);
   const padding = (maxPrice - minPrice) * 0.1 || maxPrice * 0.05;
 
-  const chartDataWithTrades = history.map(h => {
-    const buyTrade = userTrades.find(t => t.date === h.date && t.type === "buy");
-    const sellTrade = userTrades.find(t => t.date === h.date && t.type === "sell");
-    return {
-      ...h,
-      userBuy: buyTrade?.price,
-      userSell: sellTrade?.price,
-    };
-  });
+  const sortedTrades = [...userTrades].sort((a, b) => 
+    new Date(a.date).getTime() - new Date(b.date).getTime()
+  );
+  
+  const tradesWithUniqueTimestamps = sortedTrades.map((t, globalIndex) => ({
+    ...t,
+    uniqueTimestamp: new Date(t.date).getTime() + globalIndex * 1000,
+  }));
+
+  const buyScatterData = tradesWithUniqueTimestamps
+    .filter(t => t.type === "buy")
+    .map(t => ({ 
+      timestamp: t.uniqueTimestamp,
+      price: t.price, 
+      quantity: t.quantity,
+      label: `Buy: ${t.quantity.toLocaleString()} @ ${formatFullPrice(t.price)} gp`
+    }));
+  
+  const sellScatterData = tradesWithUniqueTimestamps
+    .filter(t => t.type === "sell")
+    .map(t => ({ 
+      timestamp: t.uniqueTimestamp,
+      price: t.price, 
+      quantity: t.quantity,
+      label: `Sell: ${t.quantity.toLocaleString()} @ ${formatFullPrice(t.price)} gp`
+    }));
+
+  const chartDataWithTimestamps = history.map(h => ({
+    ...h,
+    timestamp: new Date(h.date).getTime(),
+  }));
+
+  const allTimestamps = [
+    ...chartDataWithTimestamps.map(d => d.timestamp),
+    ...buyScatterData.map(d => d.timestamp),
+    ...sellScatterData.map(d => d.timestamp),
+  ];
+  const minTimestamp = Math.min(...allTimestamps);
+  const maxTimestamp = Math.max(...allTimestamps);
 
   return (
     <Card data-testid={`chart-price-history-${itemId}`}>
@@ -216,7 +246,7 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
       </CardHeader>
       <CardContent className="space-y-4">
         <ChartContainer config={chartConfig} className="h-[200px] w-full">
-          <ComposedChart data={chartDataWithTrades} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+          <ComposedChart data={chartDataWithTimestamps} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
             <defs>
               <linearGradient id={`gradient-${itemId}`} x1="0" y1="0" x2="0" y2="1">
                 <stop offset="5%" stopColor="hsl(var(--chart-1))" stopOpacity={0.3} />
@@ -225,14 +255,17 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
             </defs>
             <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
             <XAxis
-              dataKey="date"
-              tickFormatter={(date) => format(parseISO(date), "MMM d")}
+              dataKey="timestamp"
+              tickFormatter={(ts) => format(new Date(ts), "MMM d")}
               tick={{ fontSize: 10 }}
               tickLine={false}
               axisLine={false}
-              interval="preserveStartEnd"
+              type="number"
+              domain={[minTimestamp, maxTimestamp]}
+              scale="time"
             />
             <YAxis
+              dataKey="price"
               domain={[minPrice - padding, maxPrice + padding]}
               tickFormatter={formatPrice}
               tick={{ fontSize: 10 }}
@@ -240,14 +273,21 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
               axisLine={false}
               width={50}
             />
+            <ZAxis dataKey="quantity" range={[80, 200]} />
             <ChartTooltip
               content={
                 <ChartTooltipContent
-                  labelFormatter={(label) => format(parseISO(label), "MMM d, yyyy")}
-                  formatter={(value, name) => {
-                    if (name === "userBuy") return [formatFullPrice(value as number) + " gp", "Your Buy"];
-                    if (name === "userSell") return [formatFullPrice(value as number) + " gp", "Your Sell"];
-                    return [formatFullPrice(value as number) + " gp", "Price"];
+                  labelFormatter={(ts) => format(new Date(Number(ts)), "MMM d, yyyy")}
+                  formatter={(value, name, props) => {
+                    if (name === "Your Buys") {
+                      const label = props?.payload?.label || "";
+                      return [label, "Buy Trade"];
+                    }
+                    if (name === "Your Sells") {
+                      const label = props?.payload?.label || "";
+                      return [label, "Sell Trade"];
+                    }
+                    return [formatFullPrice(value as number) + " gp", "GE Price"];
                   }}
                 />
               }
@@ -259,26 +299,24 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
               strokeWidth={2}
               fill={`url(#gradient-${itemId})`}
             />
-            <Line
-              type="monotone"
-              dataKey="userBuy"
-              stroke="#22c55e"
-              strokeWidth={0}
-              dot={{ fill: "#22c55e", stroke: "#22c55e", strokeWidth: 2, r: 6 }}
-              activeDot={{ fill: "#22c55e", stroke: "#fff", strokeWidth: 2, r: 8 }}
-              connectNulls={false}
-              isAnimationActive={false}
-            />
-            <Line
-              type="monotone"
-              dataKey="userSell"
-              stroke="#ef4444"
-              strokeWidth={0}
-              dot={{ fill: "#ef4444", stroke: "#ef4444", strokeWidth: 2, r: 6 }}
-              activeDot={{ fill: "#ef4444", stroke: "#fff", strokeWidth: 2, r: 8 }}
-              connectNulls={false}
-              isAnimationActive={false}
-            />
+            {buyScatterData.length > 0 && (
+              <Scatter
+                name="Your Buys"
+                data={buyScatterData}
+                dataKey="price"
+                fill="#22c55e"
+                shape="circle"
+              />
+            )}
+            {sellScatterData.length > 0 && (
+              <Scatter
+                name="Your Sells"
+                data={sellScatterData}
+                dataKey="price"
+                fill="#ef4444"
+                shape="circle"
+              />
+            )}
           </ComposedChart>
         </ChartContainer>
 

@@ -77,6 +77,12 @@ Database tables:
   - Interactive area charts showing value vs cost with profit indicators
   - Filter holdings by category with expandable/collapsible sections
 - **AI Price Suggestions**: Get smart buy/sell price recommendations based on 90-day price history with confidence levels, volatility analysis, and one-click auto-fill buttons
+- **AI-Powered Personalized Recommendations**: New "AI Tips" page that analyzes user's trading patterns (strategies, price ranges, ROI, hold times) and provides personalized item suggestions
+  - Backend: `server/ai-recommendations.ts` - analyzeUserTradingProfile() and getPersonalizedRecommendations() using OpenAI
+  - API routes: `/api/ai/trading-profile` and `/api/ai/recommendations`
+  - Frontend: `AIRecommendations.tsx` component with trading profile display and recommendation cards
+- **Trade History on Charts**: PriceHistoryChart now overlays user's actual trades on GE price data (green dots for buys, red dots for sells)
+- **GP Stack Logo**: Custom SVG logo component (`GPStackLogo.tsx`) showing stacked gold coins with "GP" text
 - **Inline Price Charts**: View price history charts directly in the flip form when logging trades
 - **Price History Charts**: View 90-day price trends with area charts, averages, and buy/sell recommendations
 - **Browser Push Notifications**: Get notified when price alerts trigger (60-second check interval)

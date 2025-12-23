@@ -1,10 +1,11 @@
-import { TrendingUp, LogOut, Eye, Bell, Home, BarChart3, Briefcase, Target, Shield, User, Sparkles } from "lucide-react";
+import { LogOut, Eye, Bell, Home, BarChart3, Briefcase, Target, Shield, User, Sparkles } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
+import { GPStackLogo } from "./GPStackLogo";
 
 export function Header() {
   const { user } = useAuth();
@@ -30,9 +31,7 @@ export function Header() {
       <div className="flex h-16 items-center justify-between px-6 gap-4">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary">
-              <TrendingUp className="h-6 w-6 text-primary-foreground" />
-            </div>
+            <GPStackLogo size={40} />
             <div className="hidden sm:block">
               <h1 className="text-xl font-semibold text-foreground">RS3 Flip Tracker</h1>
               <p className="text-xs text-muted-foreground">Grand Exchange Profit Tracker</p>
