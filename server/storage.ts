@@ -1,6 +1,6 @@
 import { users, flips, watchlist, priceAlerts, favorites, profitGoals, portfolioCategories, portfolioHoldings, portfolioHoldingTransactions, portfolioSnapshots, portfolioSnapshotItems, flipTransactions, itemVolumeDaily, userSessions, rsAccounts, type User, type UpsertUser, type Flip, type InsertFlip, type WatchlistItem, type InsertWatchlistItem, type PriceAlert, type InsertPriceAlert, type Favorite, type InsertFavorite, type ProfitGoal, type InsertProfitGoal, type PortfolioCategory, type InsertPortfolioCategory, type PortfolioHolding, type InsertPortfolioHolding, type UpdatePortfolioHolding, type PortfolioSnapshot, type PortfolioSnapshotItem, type FlipTransaction, type ItemVolumeDaily, type UserSession, type RsAccount, type InsertRsAccount, type HoldingTransaction, type InsertHoldingTransaction } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, isNull, sql, gte, lte } from "drizzle-orm";
+import { eq, desc, and, isNull, sql, gte, lte, inArray } from "drizzle-orm";
 import { randomUUID } from "crypto";
 
 export interface IStorage {
@@ -1263,7 +1263,7 @@ export class DatabaseStorage implements IStorage {
     
     const userIds = sessions.map(s => s.userId);
     const onlineUsers = await db.select().from(users)
-      .where(sql`${users.id} = ANY(${userIds})`);
+      .where(inArray(users.id, userIds));
     return onlineUsers;
   }
 

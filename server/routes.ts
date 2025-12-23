@@ -632,7 +632,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id } = req.params;
       const userId = req.user.claims.sub;
       const validatedHolding = updatePortfolioHoldingSchema.parse(req.body);
-      const updatedHolding = await storage.updatePortfolioHolding(id, userId, validatedHolding);
+      const holdingData = {
+        ...validatedHolding,
+        notes: validatedHolding.notes === null ? undefined : validatedHolding.notes,
+        categoryId: validatedHolding.categoryId === null ? undefined : validatedHolding.categoryId,
+      };
+      const updatedHolding = await storage.updatePortfolioHolding(id, userId, holdingData);
       
       if (!updatedHolding) {
         return res.status(404).json({ error: "Holding not found" });
@@ -1162,6 +1167,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ status: "ok" });
     } catch (error) {
       res.status(500).json({ error: "Failed to update heartbeat" });
+    }
+  });
+
+  // Get online user count (public for authenticated users)
+  app.get("/api/presence/online-count", isAuthenticated, async (req: any, res) => {
+    try {
+      const onlineUsers = await storage.getOnlineUsers(60000); // 1 minute threshold
+      res.json({ onlineCount: onlineUsers.length });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch online count" });
     }
   });
 

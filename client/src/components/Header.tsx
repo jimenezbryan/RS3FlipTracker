@@ -1,4 +1,4 @@
-import { LogOut, Eye, Bell, Home, BarChart3, Briefcase, Target, Shield, User, Sparkles } from "lucide-react";
+import { LogOut, Eye, Bell, Home, BarChart3, Briefcase, Target, Shield, Sparkles, Users } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -13,6 +13,11 @@ export function Header() {
 
   const { data: adminCheck } = useQuery<{ isAdmin: boolean }>({
     queryKey: ["/api/admin/check"],
+  });
+
+  const { data: onlineData } = useQuery<{ onlineCount: number }>({
+    queryKey: ["/api/presence/online-count"],
+    refetchInterval: 30000,
   });
 
   const navItems = [
@@ -36,6 +41,11 @@ export function Header() {
               <h1 className="text-xl font-semibold text-foreground">RS3 Flip Tracker</h1>
               <p className="text-xs text-muted-foreground">Grand Exchange Profit Tracker</p>
             </div>
+          </div>
+          <div className="flex items-center gap-1.5 text-sm text-muted-foreground" data-testid="online-users-indicator">
+            <Users className="h-4 w-4 text-green-500" />
+            <span className="font-mono">{onlineData?.onlineCount ?? 0}</span>
+            <span className="hidden sm:inline">online</span>
           </div>
           <nav className="flex items-center gap-1">
             {navItems.map((item) => (
