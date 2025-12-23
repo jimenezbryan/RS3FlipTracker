@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
 import { storage } from "./storage";
-import { insertFlipSchema, insertWatchlistSchema, insertPriceAlertSchema, insertFavoriteSchema, insertProfitGoalSchema, insertPortfolioCategorySchema, insertPortfolioHoldingSchema, insertHoldingTransactionSchema, insertRsAccountSchema } from "@shared/schema";
+import { insertFlipSchema, insertWatchlistSchema, insertPriceAlertSchema, insertFavoriteSchema, insertProfitGoalSchema, insertPortfolioCategorySchema, insertPortfolioHoldingSchema, updatePortfolioHoldingSchema, insertHoldingTransactionSchema, insertRsAccountSchema } from "@shared/schema";
 import { getItemPrice, searchItems, getItemTrend, getItemPriceHistory, getItemSuggestions } from "./ge-api";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { processScreenshot, matchItemsToGE } from "./ocr";
@@ -631,7 +631,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { id } = req.params;
       const userId = req.user.claims.sub;
-      const validatedHolding = insertPortfolioHoldingSchema.partial().parse(req.body);
+      const validatedHolding = updatePortfolioHoldingSchema.parse(req.body);
       const updatedHolding = await storage.updatePortfolioHolding(id, userId, validatedHolding);
       
       if (!updatedHolding) {
@@ -688,6 +688,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         holdingId,
       });
       
+      // Validate sell quantity doesn't exceed current holdings
+      if (validatedTx.transactionType === 'sell') {
+        if (validatedTx.quantity > holding.quantity) {
+          return res.status(400).json({ 
+            error: `Cannot sell ${validatedTx.quantity} units - only ${holding.quantity} held` 
+          });
+        }
+      }
+      
       // Create the transaction
       const newTx = await storage.createHoldingTransaction(userId, validatedTx);
       
@@ -721,13 +730,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
             realizedLoss += Math.abs(pnl);
           }
           
-          // Reduce cost and quantity
-          totalCost -= costBasis;
-          totalQuantity -= tx.quantity;
+          // Reduce cost and quantity (clamp to prevent negative values)
+          totalCost = Math.max(0, totalCost - costBasis);
+          totalQuantity = Math.max(0, totalQuantity - tx.quantity);
         }
       }
       
-      // Calculate new avgBuyPrice
+      // Calculate new avgBuyPrice (guard against division by zero)
       const avgBuyPrice = totalQuantity > 0 ? totalCost / totalQuantity : 0;
       
       // Update holding with new aggregates

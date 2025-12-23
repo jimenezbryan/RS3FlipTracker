@@ -200,9 +200,10 @@ export default function Portfolio() {
     mutationFn: async ({ holdingId, data }: { holdingId: string; data: { transactionType: string; quantity: number; pricePerUnit: number; fees?: number; notes?: string; transactionDate: string } }) => {
       return await apiRequest("POST", `/api/portfolio/holdings/${holdingId}/transactions`, data);
     },
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/portfolio/holdings"] });
       queryClient.invalidateQueries({ queryKey: ["/api/portfolio/summary"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/portfolio/holdings", variables.holdingId, "transactions"] });
       setTransactionHolding(null);
       resetTransactionForm();
       toast({ title: "Transaction recorded", description: "Your transaction has been logged" });

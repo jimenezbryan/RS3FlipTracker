@@ -275,7 +275,7 @@ export const updatePortfolioHoldingSchema = z.object({
   quantity: z.coerce.number().int().positive().optional(),
   avgBuyPrice: z.coerce.number().int().positive().optional(),
   categoryId: z.string().nullable().optional(),
-  notes: z.string().optional(),
+  notes: z.string().nullable().optional(),
 });
 
 export type InsertPortfolioHolding = z.infer<typeof insertPortfolioHoldingSchema>;

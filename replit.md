@@ -51,7 +51,8 @@ Database tables:
 - `priceAlerts` - Price alert configurations for notification triggers
 - `profitGoals` - Daily/weekly/monthly profit targets
 - `portfolioCategories` - Categories for organizing portfolio holdings
-- `portfolioHoldings` - Individual item holdings with quantity, buy price, and current value
+- `portfolioHoldings` - Individual item holdings with quantity, avgBuyPrice, totalCost, realizedProfit, realizedLoss
+- `portfolioHoldingTransactions` - Buy/sell transaction history per holding with P&L tracking
 - `portfolioSnapshots` - Historical snapshots of total portfolio value
 - `portfolioSnapshotItems` - Individual item data within each snapshot
 
@@ -76,6 +77,14 @@ Database tables:
   - Create value snapshots to track portfolio growth over time
   - Interactive area charts showing value vs cost with profit indicators
   - Filter holdings by category with expandable/collapsible sections
+- **Portfolio Transaction Tracking**: Complete buy/sell transaction history for each holding
+  - Record buy and sell transactions with quantity, price, fees, and notes
+  - Weighted average cost basis calculation for accurate P&L
+  - Real-time P&L preview when selling (shows profit/loss before confirming)
+  - Transaction history dialog with running realized P&L
+  - Edit holdings directly (quantity, avg buy price, category, notes)
+  - Backend validation prevents selling more than held
+  - Allocation percentage shown on each holding card
 - **AI Price Suggestions**: Get smart buy/sell price recommendations based on 90-day price history with confidence levels, volatility analysis, and one-click auto-fill buttons
 - **AI-Powered Personalized Recommendations**: New "AI Tips" page that analyzes user's trading patterns (strategies, price ranges, ROI, hold times) and provides personalized item suggestions
   - Backend: `server/ai-recommendations.ts` - analyzeUserTradingProfile() and getPersonalizedRecommendations() using OpenAI
