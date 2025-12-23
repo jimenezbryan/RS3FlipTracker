@@ -448,12 +448,12 @@ export default function Portfolio() {
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="holding-category">Category (optional)</Label>
-                    <Select value={holdingCategoryId} onValueChange={setHoldingCategoryId}>
+                    <Select value={holdingCategoryId || "none"} onValueChange={(v) => setHoldingCategoryId(v === "none" ? "" : v)}>
                       <SelectTrigger id="holding-category" data-testid="select-holding-category">
                         <SelectValue placeholder="Select category..." />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="">None</SelectItem>
+                        <SelectItem value="none">None</SelectItem>
                         {categories.map(cat => (
                           <SelectItem key={cat.id} value={cat.id}>
                             <div className="flex items-center gap-2">

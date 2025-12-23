@@ -727,12 +727,12 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
               {rsAccounts.length > 0 && (
                 <div className="space-y-2">
                   <Label htmlFor="rsAccount">RS Account</Label>
-                  <Select value={selectedRsAccountId} onValueChange={setSelectedRsAccountId}>
+                  <Select value={selectedRsAccountId || "any"} onValueChange={(v) => setSelectedRsAccountId(v === "any" ? "" : v)}>
                     <SelectTrigger id="rsAccount" data-testid="select-rs-account">
                       <SelectValue placeholder="Select account..." />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">Any Account</SelectItem>
+                      <SelectItem value="any">Any Account</SelectItem>
                       {rsAccounts.map(acc => (
                         <SelectItem key={acc.id} value={acc.id}>
                           {acc.displayName} ({acc.accountType})
