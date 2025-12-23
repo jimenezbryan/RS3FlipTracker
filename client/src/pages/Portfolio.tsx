@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { Header } from "@/components/Header";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import type { PortfolioHolding, PortfolioCategory, PortfolioSnapshot } from "@shared/schema";
+import type { PortfolioHolding, PortfolioCategory, PortfolioSnapshot, HoldingTransaction } from "@shared/schema";
 import { ItemIcon } from "@/components/ItemIcon";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -11,13 +11,14 @@ import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { formatDistanceToNow, format } from "date-fns";
 import { 
   Briefcase, TrendingUp, Package, Coins, Plus, 
   Trash2, FolderPlus, Loader2, X, RefreshCw, ChevronDown,
-  BarChart3, PieChart, TrendingDown, Edit2, Search
+  BarChart3, PieChart, TrendingDown, Edit2, Search, History, ArrowDownCircle, ArrowUpCircle
 } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { PortfolioValueChart } from "@/components/PortfolioValueChart";
@@ -34,12 +35,16 @@ interface PortfolioSummary {
   totalCost: number;
   totalProfit: number;
   profitPercent: number;
+  totalRealizedProfit: number;
+  totalRealizedLoss: number;
+  netRealizedProfit: number;
   holdingCount: number;
   holdings: Array<PortfolioHolding & { 
     currentPrice: number; 
     value: number; 
     profit: number; 
     profitPercent: number;
+    allocation: number;
   }>;
   categories: Array<PortfolioCategory & {
     holdingCount: number;
@@ -49,6 +54,8 @@ interface PortfolioSummary {
     profitPercent: number;
   }>;
 }
+
+type ExtendedHolding = PortfolioSummary["holdings"][0];
 
 export default function Portfolio() {
   const { toast } = useToast();
@@ -69,6 +76,24 @@ export default function Portfolio() {
   const [isSearching, setIsSearching] = useState(false);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Edit Holding Dialog
+  const [editHolding, setEditHolding] = useState<ExtendedHolding | null>(null);
+  const [editQuantity, setEditQuantity] = useState("");
+  const [editBuyPrice, setEditBuyPrice] = useState("");
+  const [editCategoryId, setEditCategoryId] = useState("");
+  const [editNotes, setEditNotes] = useState("");
+
+  // Transaction Dialog
+  const [transactionHolding, setTransactionHolding] = useState<ExtendedHolding | null>(null);
+  const [txType, setTxType] = useState<"buy" | "sell">("buy");
+  const [txQuantity, setTxQuantity] = useState("");
+  const [txPrice, setTxPrice] = useState("");
+  const [txFees, setTxFees] = useState("");
+  const [txNotes, setTxNotes] = useState("");
+
+  // Transaction History Dialog
+  const [historyHolding, setHistoryHolding] = useState<ExtendedHolding | null>(null);
 
   const { data: summary, isLoading: isSummaryLoading } = useQuery<PortfolioSummary>({
     queryKey: ["/api/portfolio/summary"],
@@ -155,6 +180,45 @@ export default function Portfolio() {
       toast({ title: "Error", description: "Failed to add holding", variant: "destructive" });
     },
   });
+
+  const updateHoldingMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: Partial<PortfolioHolding> }) => {
+      return await apiRequest("PATCH", `/api/portfolio/holdings/${id}`, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/portfolio/holdings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/portfolio/summary"] });
+      setEditHolding(null);
+      toast({ title: "Holding updated", description: "Changes saved successfully" });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to update holding", variant: "destructive" });
+    },
+  });
+
+  const createTransactionMutation = useMutation({
+    mutationFn: async ({ holdingId, data }: { holdingId: string; data: { transactionType: string; quantity: number; pricePerUnit: number; fees?: number; notes?: string; transactionDate: string } }) => {
+      return await apiRequest("POST", `/api/portfolio/holdings/${holdingId}/transactions`, data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/portfolio/holdings"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/portfolio/summary"] });
+      setTransactionHolding(null);
+      resetTransactionForm();
+      toast({ title: "Transaction recorded", description: "Your transaction has been logged" });
+    },
+    onError: () => {
+      toast({ title: "Error", description: "Failed to record transaction", variant: "destructive" });
+    },
+  });
+
+  const resetTransactionForm = () => {
+    setTxType("buy");
+    setTxQuantity("");
+    setTxPrice("");
+    setTxFees("");
+    setTxNotes("");
+  };
 
   const resetHoldingForm = () => {
     setHoldingItemName("");
@@ -246,6 +310,57 @@ export default function Portfolio() {
       return next;
     });
   };
+
+  const openEditDialog = (holding: ExtendedHolding) => {
+    setEditHolding(holding);
+    setEditQuantity(holding.quantity.toString());
+    setEditBuyPrice(holding.avgBuyPrice.toString());
+    setEditCategoryId(holding.categoryId || "none");
+    setEditNotes(holding.notes || "");
+  };
+
+  const handleUpdateHolding = () => {
+    if (!editHolding) return;
+    updateHoldingMutation.mutate({
+      id: editHolding.id,
+      data: {
+        quantity: parseInt(editQuantity) || editHolding.quantity,
+        avgBuyPrice: parseInt(editBuyPrice) || editHolding.avgBuyPrice,
+        categoryId: editCategoryId === "none" ? null : editCategoryId,
+        notes: editNotes || null,
+      },
+    });
+  };
+
+  const openTransactionDialog = (holding: ExtendedHolding, type: "buy" | "sell") => {
+    setTransactionHolding(holding);
+    setTxType(type);
+    setTxQuantity("");
+    setTxPrice(holding.currentPrice.toString());
+    setTxFees("");
+    setTxNotes("");
+  };
+
+  const handleCreateTransaction = () => {
+    if (!transactionHolding || !txQuantity || !txPrice) return;
+    createTransactionMutation.mutate({
+      holdingId: transactionHolding.id,
+      data: {
+        transactionType: txType,
+        quantity: parseInt(txQuantity),
+        pricePerUnit: parseInt(txPrice),
+        fees: txFees ? parseInt(txFees) : undefined,
+        notes: txNotes || undefined,
+        transactionDate: new Date().toISOString(),
+      },
+    });
+  };
+
+  // Fetch transactions for history dialog
+  const { data: holdingTransactions = [] } = useQuery<HoldingTransaction[]>({
+    queryKey: ["/api/portfolio/holdings", historyHolding?.id, "transactions"],
+    enabled: !!historyHolding,
+  });
 
   if (isSummaryLoading) {
     return (
@@ -664,38 +779,91 @@ export default function Portfolio() {
                             .map((holding) => (
                               <div
                                 key={holding.id}
-                                className="group relative flex items-center gap-3 rounded-lg border bg-card/50 p-3 hover-elevate"
+                                className="group relative flex flex-col gap-2 rounded-lg border bg-card/50 p-3 hover-elevate"
                                 data-testid={`holding-${holding.id}`}
                               >
-                                <ItemIcon
-                                  itemName={holding.itemName}
-                                  itemIcon={holding.itemIcon ?? undefined}
-                                  size="md"
-                                />
-                                <div className="flex-1 min-w-0">
-                                  <div className="font-medium truncate" title={holding.itemName}>
-                                    {holding.itemName}
+                                {/* Top row: Item info and value */}
+                                <div className="flex items-center gap-3">
+                                  <ItemIcon
+                                    itemName={holding.itemName}
+                                    itemIcon={holding.itemIcon ?? undefined}
+                                    size="md"
+                                  />
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-medium truncate" title={holding.itemName}>
+                                        {holding.itemName}
+                                      </span>
+                                      <Badge variant="outline" className="text-xs shrink-0">
+                                        {holding.allocation.toFixed(1)}%
+                                      </Badge>
+                                    </div>
+                                    <div className="text-xs text-muted-foreground">
+                                      {holding.quantity.toLocaleString()}x @ {formatPrice(holding.avgBuyPrice)} gp
+                                    </div>
+                                    <div className={`text-xs ${holding.profit >= 0 ? "text-green-500" : "text-red-500"}`}>
+                                      {holding.profit >= 0 ? "+" : ""}{formatPrice(holding.profit)} ({holding.profitPercent.toFixed(1)}%)
+                                    </div>
                                   </div>
-                                  <div className="text-xs text-muted-foreground">
-                                    {holding.quantity.toLocaleString()}x @ {formatPrice(holding.avgBuyPrice)} gp
-                                  </div>
-                                  <div className={`text-xs ${holding.profit >= 0 ? "text-green-500" : "text-red-500"}`}>
-                                    {holding.profit >= 0 ? "+" : ""}{formatPrice(holding.profit)} ({holding.profitPercent.toFixed(1)}%)
+                                  <div className="text-right">
+                                    <div className="font-mono font-semibold">{formatPrice(holding.value)}</div>
+                                    <div className="text-xs text-muted-foreground">gp</div>
                                   </div>
                                 </div>
-                                <div className="text-right">
-                                  <div className="font-mono font-semibold">{formatPrice(holding.value)}</div>
-                                  <div className="text-xs text-muted-foreground">gp</div>
+                                
+                                {/* Action buttons - visible on hover */}
+                                <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 px-2 text-xs"
+                                    onClick={() => openEditDialog(holding)}
+                                    data-testid={`button-edit-holding-${holding.id}`}
+                                  >
+                                    <Edit2 className="mr-1 h-3 w-3" />
+                                    Edit
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 px-2 text-xs text-green-600"
+                                    onClick={() => openTransactionDialog(holding, "buy")}
+                                    data-testid={`button-buy-more-${holding.id}`}
+                                  >
+                                    <ArrowDownCircle className="mr-1 h-3 w-3" />
+                                    Buy
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 px-2 text-xs text-red-600"
+                                    onClick={() => openTransactionDialog(holding, "sell")}
+                                    data-testid={`button-sell-${holding.id}`}
+                                  >
+                                    <ArrowUpCircle className="mr-1 h-3 w-3" />
+                                    Sell
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 px-2 text-xs"
+                                    onClick={() => setHistoryHolding(holding)}
+                                    data-testid={`button-history-${holding.id}`}
+                                  >
+                                    <History className="mr-1 h-3 w-3" />
+                                    History
+                                  </Button>
+                                  <div className="flex-1" />
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6"
+                                    onClick={() => deleteHoldingMutation.mutate(holding.id)}
+                                    data-testid={`button-delete-holding-${holding.id}`}
+                                  >
+                                    <X className="h-3 w-3" />
+                                  </Button>
                                 </div>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="absolute right-1 top-1 h-6 w-6 opacity-0 transition-opacity group-hover:opacity-100"
-                                  onClick={() => deleteHoldingMutation.mutate(holding.id)}
-                                  data-testid={`button-delete-holding-${holding.id}`}
-                                >
-                                  <X className="h-3 w-3" />
-                                </Button>
                               </div>
                             ))}
                         </div>
@@ -740,6 +908,336 @@ export default function Portfolio() {
             </CardContent>
           </Card>
         )}
+
+        {/* Edit Holding Dialog */}
+        <Dialog open={!!editHolding} onOpenChange={(open) => !open && setEditHolding(null)}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Edit Holding</DialogTitle>
+              <DialogDescription>
+                Update details for {editHolding?.itemName}
+              </DialogDescription>
+            </DialogHeader>
+            {editHolding && (
+              <div className="grid gap-4 py-4">
+                <div className="flex items-center gap-3">
+                  <ItemIcon
+                    itemName={editHolding.itemName}
+                    itemIcon={editHolding.itemIcon ?? undefined}
+                    size="lg"
+                  />
+                  <div>
+                    <div className="font-medium">{editHolding.itemName}</div>
+                    <div className="text-xs text-muted-foreground">
+                      Current value: {formatPrice(editHolding.value)} gp
+                    </div>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-quantity">Quantity</Label>
+                    <Input
+                      id="edit-quantity"
+                      type="number"
+                      value={editQuantity}
+                      onChange={(e) => setEditQuantity(e.target.value)}
+                      min="1"
+                      data-testid="input-edit-quantity"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-buy-price">Avg Buy Price</Label>
+                    <Input
+                      id="edit-buy-price"
+                      type="number"
+                      value={editBuyPrice}
+                      onChange={(e) => setEditBuyPrice(e.target.value)}
+                      min="1"
+                      data-testid="input-edit-buy-price"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-category">Category</Label>
+                  <Select value={editCategoryId} onValueChange={setEditCategoryId}>
+                    <SelectTrigger data-testid="select-edit-category">
+                      <SelectValue placeholder="Select category" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">None</SelectItem>
+                      {categories.map(cat => (
+                        <SelectItem key={cat.id} value={cat.id}>
+                          <div className="flex items-center gap-2">
+                            <span className="h-2 w-2 rounded-full" style={{ backgroundColor: cat.color || "#6b7280" }} />
+                            {cat.name}
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-notes">Notes</Label>
+                  <Textarea
+                    id="edit-notes"
+                    value={editNotes}
+                    onChange={(e) => setEditNotes(e.target.value)}
+                    placeholder="Add notes..."
+                    data-testid="input-edit-notes"
+                  />
+                </div>
+              </div>
+            )}
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setEditHolding(null)}>Cancel</Button>
+              <Button
+                onClick={handleUpdateHolding}
+                disabled={updateHoldingMutation.isPending}
+                data-testid="button-save-edit"
+              >
+                {updateHoldingMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Save Changes
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Add Transaction Dialog */}
+        <Dialog open={!!transactionHolding} onOpenChange={(open) => !open && setTransactionHolding(null)}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>
+                {txType === "buy" ? "Buy More" : "Sell"} {transactionHolding?.itemName}
+              </DialogTitle>
+              <DialogDescription>
+                Record a {txType === "buy" ? "purchase" : "sale"} transaction
+              </DialogDescription>
+            </DialogHeader>
+            {transactionHolding && (
+              <div className="grid gap-4 py-4">
+                <div className="flex items-center gap-3">
+                  <ItemIcon
+                    itemName={transactionHolding.itemName}
+                    itemIcon={transactionHolding.itemIcon ?? undefined}
+                    size="lg"
+                  />
+                  <div>
+                    <div className="font-medium">{transactionHolding.itemName}</div>
+                    <div className="text-xs text-muted-foreground">
+                      Current qty: {transactionHolding.quantity.toLocaleString()} @ {formatPrice(transactionHolding.avgBuyPrice)} gp avg
+                    </div>
+                  </div>
+                </div>
+                <Tabs value={txType} onValueChange={(v) => setTxType(v as "buy" | "sell")}>
+                  <TabsList className="grid w-full grid-cols-2">
+                    <TabsTrigger value="buy" className="text-green-600" data-testid="tab-buy">
+                      <ArrowDownCircle className="mr-2 h-4 w-4" />
+                      Buy
+                    </TabsTrigger>
+                    <TabsTrigger value="sell" className="text-red-600" data-testid="tab-sell">
+                      <ArrowUpCircle className="mr-2 h-4 w-4" />
+                      Sell
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="tx-quantity">Quantity</Label>
+                    <Input
+                      id="tx-quantity"
+                      type="number"
+                      value={txQuantity}
+                      onChange={(e) => setTxQuantity(e.target.value)}
+                      min="1"
+                      max={txType === "sell" ? transactionHolding.quantity : undefined}
+                      placeholder={txType === "sell" ? `Max: ${transactionHolding.quantity}` : "Quantity"}
+                      data-testid="input-tx-quantity"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="tx-price">Price per Unit</Label>
+                    <Input
+                      id="tx-price"
+                      type="number"
+                      value={txPrice}
+                      onChange={(e) => setTxPrice(e.target.value)}
+                      min="1"
+                      data-testid="input-tx-price"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="tx-fees">Fees (optional)</Label>
+                  <Input
+                    id="tx-fees"
+                    type="number"
+                    value={txFees}
+                    onChange={(e) => setTxFees(e.target.value)}
+                    min="0"
+                    placeholder="GE tax, etc."
+                    data-testid="input-tx-fees"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="tx-notes">Notes (optional)</Label>
+                  <Input
+                    id="tx-notes"
+                    value={txNotes}
+                    onChange={(e) => setTxNotes(e.target.value)}
+                    placeholder="Transaction notes..."
+                    data-testid="input-tx-notes"
+                  />
+                </div>
+                {/* P&L Preview for sells */}
+                {txType === "sell" && txQuantity && txPrice && (
+                  <div className="rounded-lg border bg-muted/50 p-3">
+                    <div className="text-sm font-medium mb-1">Estimated P&L</div>
+                    {(() => {
+                      const qty = parseInt(txQuantity) || 0;
+                      const price = parseInt(txPrice) || 0;
+                      const fees = parseInt(txFees) || 0;
+                      const costBasis = transactionHolding.avgBuyPrice * qty;
+                      const proceeds = price * qty - fees;
+                      const pnl = proceeds - costBasis;
+                      return (
+                        <div className="space-y-1 text-xs">
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Cost Basis:</span>
+                            <span className="font-mono">{formatPrice(costBasis)} gp</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-muted-foreground">Proceeds:</span>
+                            <span className="font-mono">{formatPrice(proceeds)} gp</span>
+                          </div>
+                          <div className="flex justify-between border-t pt-1">
+                            <span className="font-medium">P&L:</span>
+                            <span className={`font-mono font-medium ${pnl >= 0 ? "text-green-500" : "text-red-500"}`}>
+                              {pnl >= 0 ? "+" : ""}{formatPrice(pnl)} gp
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+              </div>
+            )}
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setTransactionHolding(null)}>Cancel</Button>
+              <Button
+                onClick={handleCreateTransaction}
+                disabled={!txQuantity || !txPrice || createTransactionMutation.isPending}
+                className={txType === "buy" ? "bg-green-600 hover:bg-green-700" : "bg-red-600 hover:bg-red-700"}
+                data-testid="button-confirm-transaction"
+              >
+                {createTransactionMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                {txType === "buy" ? "Record Buy" : "Record Sell"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Transaction History Dialog */}
+        <Dialog open={!!historyHolding} onOpenChange={(open) => !open && setHistoryHolding(null)}>
+          <DialogContent className="sm:max-w-lg">
+            <DialogHeader>
+              <DialogTitle>Transaction History</DialogTitle>
+              <DialogDescription>
+                {historyHolding?.itemName}
+              </DialogDescription>
+            </DialogHeader>
+            {historyHolding && (
+              <div className="py-4">
+                <div className="flex items-center gap-3 mb-4">
+                  <ItemIcon
+                    itemName={historyHolding.itemName}
+                    itemIcon={historyHolding.itemIcon ?? undefined}
+                    size="lg"
+                  />
+                  <div>
+                    <div className="font-medium">{historyHolding.itemName}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {historyHolding.quantity.toLocaleString()}x @ {formatPrice(historyHolding.avgBuyPrice)} gp avg
+                    </div>
+                    {(historyHolding.realizedProfit || historyHolding.realizedLoss) ? (
+                      <div className="flex gap-3 text-xs mt-1">
+                        {historyHolding.realizedProfit ? (
+                          <span className="text-green-500">Realized: +{formatPrice(historyHolding.realizedProfit)} gp</span>
+                        ) : null}
+                        {historyHolding.realizedLoss ? (
+                          <span className="text-red-500">Loss: -{formatPrice(historyHolding.realizedLoss)} gp</span>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+                {holdingTransactions.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    No transactions recorded yet
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-80 overflow-y-auto">
+                    {holdingTransactions.map((tx) => (
+                      <div
+                        key={tx.id}
+                        className="flex items-center gap-3 rounded-lg border bg-card/50 p-3"
+                        data-testid={`transaction-${tx.id}`}
+                      >
+                        <div className={`rounded-full p-2 ${tx.transactionType === "buy" ? "bg-green-500/10" : "bg-red-500/10"}`}>
+                          {tx.transactionType === "buy" ? (
+                            <ArrowDownCircle className="h-4 w-4 text-green-500" />
+                          ) : (
+                            <ArrowUpCircle className="h-4 w-4 text-red-500" />
+                          )}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-sm">
+                            {tx.transactionType === "buy" ? "Bought" : "Sold"} {tx.quantity.toLocaleString()}x
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            @ {formatPrice(tx.pricePerUnit)} gp each
+                            {tx.fees ? ` (${formatPrice(tx.fees)} gp fees)` : ""}
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {format(new Date(tx.transactionDate), "MMM d, yyyy HH:mm")}
+                          </div>
+                          {tx.notes && (
+                            <div className="text-xs text-muted-foreground mt-1 italic">
+                              {tx.notes}
+                            </div>
+                          )}
+                        </div>
+                        <div className="text-right">
+                          <div className="font-mono text-sm font-medium">
+                            {formatPrice(tx.totalValue)} gp
+                          </div>
+                          {tx.profitLoss !== null && (
+                            <div className={`text-xs ${tx.profitLoss >= 0 ? "text-green-500" : "text-red-500"}`}>
+                              {tx.profitLoss >= 0 ? "+" : ""}{formatPrice(tx.profitLoss)} gp
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setHistoryHolding(null)}>Close</Button>
+              <Button
+                onClick={() => {
+                  setHistoryHolding(null);
+                  if (historyHolding) openTransactionDialog(historyHolding, "buy");
+                }}
+                data-testid="button-add-transaction"
+              >
+                <Plus className="mr-2 h-4 w-4" />
+                Add Transaction
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </main>
     </div>
   );
