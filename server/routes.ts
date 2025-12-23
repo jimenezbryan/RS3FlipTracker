@@ -1166,7 +1166,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // === ADMIN ENDPOINTS ===
-  const ADMIN_EMAIL = "fjnovarum@gmail.com";
+  const ADMIN_EMAILS = [
+    "fjnovarum@gmail.com",
+    "bjimenez@virtualsyncsolutions.com"
+  ];
   
   // Middleware to check if user is admin
   const isAdmin = async (req: any, res: any, next: any) => {
@@ -1178,8 +1181,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "User not found" });
       }
       
-      // Check if user email matches admin email or has isAdmin flag
-      if (user.email !== ADMIN_EMAIL && !user.isAdmin) {
+      // Check if user email matches admin emails or has isAdmin flag
+      if (!ADMIN_EMAILS.includes(user.email ?? "") && !user.isAdmin) {
         return res.status(403).json({ error: "Admin access required" });
       }
       
@@ -1199,7 +1202,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json({ isAdmin: false });
       }
       
-      const isAdminUser = user.email === ADMIN_EMAIL || user.isAdmin === true;
+      const isAdminUser = ADMIN_EMAILS.includes(user.email ?? "") || user.isAdmin === true;
       res.json({ isAdmin: isAdminUser });
     } catch (error) {
       res.status(500).json({ error: "Failed to check admin status" });
