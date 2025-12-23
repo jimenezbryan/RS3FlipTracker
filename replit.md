@@ -118,6 +118,12 @@ Database tables:
   - Batched processing (5 flips/batch with 500ms delays) to avoid GE API rate limits
   - Storage layer strips undefined values to prevent data clobbering during updates
   - All flips now show "View Chart" button regardless of itemId presence
+- **GE Tax Calculation Update**: 
+  - Removed 5M tax cap to match current RS3 rules
+  - Tax is now: 2% of sell price per item (floored), multiplied by quantity, with no cap
+  - Items sold for 49 gp or less per item are exempt (tax = 0)
+  - Bonds remain tax exempt
+  - Updated in `shared/taxCalculator.ts` and all frontend/backend components
 
 ### Design System
 The application uses a gaming-themed dark mode design inspired by GE-Tracker:
