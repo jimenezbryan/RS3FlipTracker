@@ -6,6 +6,7 @@ import { randomUUID } from "crypto";
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   upsertUser(user: UpsertUser): Promise<User>;
+  updateUserProfile(userId: string, data: { firstName?: string; lastName?: string; profileImageUrl?: string }): Promise<User | undefined>;
   
   createFlip(userId: string, flip: InsertFlip): Promise<Flip>;
   getFlips(userId: string): Promise<Flip[]>;
@@ -139,6 +140,18 @@ export class MemStorage implements IStorage {
     return user;
   }
 
+  async updateUserProfile(userId: string, data: { firstName?: string; lastName?: string; profileImageUrl?: string }): Promise<User | undefined> {
+    const user = this.users.get(userId);
+    if (!user) return undefined;
+    const updated: User = {
+      ...user,
+      ...data,
+      updatedAt: new Date(),
+    };
+    this.users.set(userId, updated);
+    return updated;
+  }
+
   async createFlip(userId: string, flip: InsertFlip): Promise<Flip> {
     const id = randomUUID();
     const newFlip: Flip = {
@@ -157,6 +170,8 @@ export class MemStorage implements IStorage {
       category: flip.category ?? null,
       strategyTag: flip.strategyTag ?? "Other",
       membershipStatus: flip.membershipStatus ?? "Unknown",
+      isMembers: flip.isMembers ?? null,
+      geLimit: flip.geLimit ?? null,
       deletedAt: null,
     };
     this.flips.set(id, newFlip);
@@ -713,6 +728,15 @@ export class DatabaseStorage implements IStorage {
       })
       .returning();
     return user;
+  }
+
+  async updateUserProfile(userId: string, data: { firstName?: string; lastName?: string; profileImageUrl?: string }): Promise<User | undefined> {
+    const [updated] = await db
+      .update(users)
+      .set({ ...data, updatedAt: new Date() })
+      .where(eq(users.id, userId))
+      .returning();
+    return updated || undefined;
   }
 
   async createFlip(userId: string, flip: InsertFlip): Promise<Flip> {

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -12,11 +12,11 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { User, Plus, Trash2, Star, Edit, Crown, Swords, Shield, Users } from "lucide-react";
+import { User, Plus, Trash2, Star, Edit, Crown, Swords, Shield, Users, Camera, Loader2 } from "lucide-react";
 import type { RsAccount } from "@shared/schema";
 
 const rsAccountSchema = z.object({
@@ -50,10 +50,14 @@ const accountTypeColors: Record<string, string> = {
 };
 
 export default function Profile() {
-  const { user } = useAuth();
+  const { user, refetchUser } = useAuth();
   const { toast } = useToast();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingAccount, setEditingAccount] = useState<RsAccount | null>(null);
+  const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
+  const [editFirstName, setEditFirstName] = useState("");
+  const [editLastName, setEditLastName] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { data: rsAccounts = [], isLoading: accountsLoading } = useQuery<RsAccount[]>({
     queryKey: ["/api/rs-accounts"],
@@ -72,7 +76,7 @@ export default function Profile() {
 
   const createAccountMutation = useMutation({
     mutationFn: async (data: RsAccountForm) => {
-      return await apiRequest("/api/rs-accounts", "POST", {
+      return await apiRequest("POST", "/api/rs-accounts", {
         ...data,
         preferredWorld: data.preferredWorld ? Number(data.preferredWorld) : undefined,
       });
@@ -90,7 +94,7 @@ export default function Profile() {
 
   const updateAccountMutation = useMutation({
     mutationFn: async ({ id, data }: { id: string; data: Partial<RsAccountForm> }) => {
-      return await apiRequest(`/api/rs-accounts/${id}`, "PATCH", {
+      return await apiRequest("PATCH", `/api/rs-accounts/${id}`, {
         ...data,
         preferredWorld: data.preferredWorld ? Number(data.preferredWorld) : undefined,
       });
@@ -109,7 +113,7 @@ export default function Profile() {
 
   const deleteAccountMutation = useMutation({
     mutationFn: async (id: string) => {
-      return await apiRequest(`/api/rs-accounts/${id}`, "DELETE");
+      return await apiRequest("DELETE", `/api/rs-accounts/${id}`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/rs-accounts"] });
@@ -122,7 +126,7 @@ export default function Profile() {
 
   const setDefaultMutation = useMutation({
     mutationFn: async (id: string) => {
-      return await apiRequest(`/api/rs-accounts/${id}/set-default`, "POST");
+      return await apiRequest("POST", `/api/rs-accounts/${id}/set-default`);
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/rs-accounts"] });
@@ -132,6 +136,62 @@ export default function Profile() {
       toast({ title: "Failed to set default account", variant: "destructive" });
     },
   });
+
+  const updateProfileMutation = useMutation({
+    mutationFn: async (data: { firstName: string; lastName: string }) => {
+      return await apiRequest("PATCH", "/api/user/profile", data);
+    },
+    onSuccess: () => {
+      refetchUser();
+      setIsEditProfileOpen(false);
+      toast({ title: "Profile updated" });
+    },
+    onError: () => {
+      toast({ title: "Failed to update profile", variant: "destructive" });
+    },
+  });
+
+  const uploadAvatarMutation = useMutation({
+    mutationFn: async (file: File) => {
+      const formData = new FormData();
+      formData.append("avatar", file);
+      const res = await fetch("/api/user/avatar", {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error("Upload failed");
+      return res.json();
+    },
+    onSuccess: () => {
+      refetchUser();
+      toast({ title: "Avatar updated" });
+    },
+    onError: () => {
+      toast({ title: "Failed to upload avatar", variant: "destructive" });
+    },
+  });
+
+  const handleAvatarClick = () => {
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (file.size > 2 * 1024 * 1024) {
+        toast({ title: "File too large", description: "Max 2MB", variant: "destructive" });
+        return;
+      }
+      uploadAvatarMutation.mutate(file);
+    }
+  };
+
+  const openEditProfile = () => {
+    setEditFirstName(user?.firstName ?? "");
+    setEditLastName(user?.lastName ?? "");
+    setIsEditProfileOpen(true);
+  };
 
   const onSubmit = (data: RsAccountForm) => {
     if (editingAccount) {
@@ -176,21 +236,47 @@ export default function Profile() {
   return (
     <div className="container mx-auto p-6 max-w-4xl space-y-6">
       <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <User className="h-5 w-5" />
-            Profile
-          </CardTitle>
-          <CardDescription>Manage your account and RuneScape characters</CardDescription>
+        <CardHeader className="flex flex-row items-center justify-between gap-4 flex-wrap">
+          <div>
+            <CardTitle className="flex items-center gap-2">
+              <User className="h-5 w-5" />
+              Profile
+            </CardTitle>
+            <CardDescription>Manage your account and RuneScape characters</CardDescription>
+          </div>
+          <Button variant="outline" onClick={openEditProfile} data-testid="button-edit-profile">
+            <Edit className="h-4 w-4 mr-2" />
+            Edit Profile
+          </Button>
         </CardHeader>
         <CardContent className="space-y-6">
           <div className="flex items-center gap-4">
-            <Avatar className="h-16 w-16">
-              <AvatarImage src={user.profileImageUrl ?? undefined} alt={user.firstName ?? "User"} />
-              <AvatarFallback className="text-xl">
-                {(user.firstName?.[0] ?? user.email?.[0] ?? "U").toUpperCase()}
-              </AvatarFallback>
-            </Avatar>
+            <div className="relative group">
+              <Avatar className="h-16 w-16 cursor-pointer" onClick={handleAvatarClick}>
+                <AvatarImage src={user.profileImageUrl ?? undefined} alt={user.firstName ?? "User"} />
+                <AvatarFallback className="text-xl">
+                  {(user.firstName?.[0] ?? user.email?.[0] ?? "U").toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
+              <div 
+                className="absolute inset-0 flex items-center justify-center bg-black/50 rounded-full opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+                onClick={handleAvatarClick}
+              >
+                {uploadAvatarMutation.isPending ? (
+                  <Loader2 className="h-6 w-6 text-white animate-spin" />
+                ) : (
+                  <Camera className="h-6 w-6 text-white" />
+                )}
+              </div>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={handleFileChange}
+                data-testid="input-avatar"
+              />
+            </div>
             <div>
               <h2 className="text-xl font-semibold">
                 {user.firstName} {user.lastName}
@@ -205,6 +291,48 @@ export default function Profile() {
           </div>
         </CardContent>
       </Card>
+
+      <Dialog open={isEditProfileOpen} onOpenChange={setIsEditProfileOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Profile</DialogTitle>
+            <DialogDescription>Update your display name</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <label htmlFor="firstName" className="text-sm font-medium">First Name</label>
+              <Input
+                id="firstName"
+                value={editFirstName}
+                onChange={(e) => setEditFirstName(e.target.value)}
+                placeholder="First name"
+                data-testid="input-first-name"
+              />
+            </div>
+            <div className="space-y-2">
+              <label htmlFor="lastName" className="text-sm font-medium">Last Name</label>
+              <Input
+                id="lastName"
+                value={editLastName}
+                onChange={(e) => setEditLastName(e.target.value)}
+                placeholder="Last name"
+                data-testid="input-last-name"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setIsEditProfileOpen(false)}>Cancel</Button>
+            <Button 
+              onClick={() => updateProfileMutation.mutate({ firstName: editFirstName, lastName: editLastName })}
+              disabled={updateProfileMutation.isPending}
+              data-testid="button-save-profile"
+            >
+              {updateProfileMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-4">

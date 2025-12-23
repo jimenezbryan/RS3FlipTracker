@@ -1156,6 +1156,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // User Profile Update API
+  app.patch("/api/user/profile", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const { firstName, lastName } = req.body;
+      const updated = await storage.updateUserProfile(userId, { firstName, lastName });
+      if (!updated) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update profile" });
+    }
+  });
+
+  // Avatar upload
+  app.post("/api/user/avatar", isAuthenticated, upload.single("avatar"), async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      
+      if (!req.file) {
+        return res.status(400).json({ error: "No file uploaded" });
+      }
+
+      // Convert image to base64 data URL
+      const mimeType = req.file.mimetype;
+      const base64 = req.file.buffer.toString("base64");
+      const profileImageUrl = `data:${mimeType};base64,${base64}`;
+
+      const updated = await storage.updateUserProfile(userId, { profileImageUrl });
+      if (!updated) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      res.json(updated);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to upload avatar" });
+    }
+  });
+
   const httpServer = createServer(app);
 
   return httpServer;
