@@ -76,6 +76,8 @@ export const flips = pgTable("flips", {
   category: varchar("category", { length: 50 }),
   strategyTag: varchar("strategy_tag", { length: 50 }).default("Other"),
   membershipStatus: membershipStatusEnum("membership_status").default("Unknown"),
+  isMembers: boolean("is_members"),
+  geLimit: integer("ge_limit"),
   deletedAt: timestamp("deleted_at"),
 });
 
@@ -98,6 +100,8 @@ export const insertFlipSchema = createInsertSchema(flips).omit({
   category: z.string().max(50).optional(),
   strategyTag: z.enum(["Fast Flip", "Slow Flip", "Bulk", "High Margin", "Speculative", "Other"]).default("Other"),
   membershipStatus: z.enum(["F2P", "Members", "Unknown"]).default("Unknown"),
+  isMembers: z.boolean().optional(),
+  geLimit: z.coerce.number().int().positive().optional(),
 });
 
 export type InsertFlip = z.infer<typeof insertFlipSchema>;

@@ -23,6 +23,9 @@ interface GEItem {
   price: number;
   volume?: number;
   icon?: string;
+  isMembers?: boolean;
+  geLimit?: number;
+  examine?: string;
 }
 
 interface PriceTrend {
@@ -79,6 +82,8 @@ interface FlipFormProps {
     strategyTag: "Fast Flip" | "Slow Flip" | "Bulk" | "High Margin" | "Speculative" | "Other";
     membershipStatus: "F2P" | "Members" | "Unknown";
     rsAccountId?: string;
+    isMembers?: boolean;
+    geLimit?: number;
   }) => void;
   openPositions?: OpenPosition[];
 }
@@ -249,6 +254,10 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
     setSuggestions([]);
     setShowSuggestions(false);
     
+    if (item.isMembers !== undefined) {
+      setMembershipStatus(item.isMembers ? "Members" : "F2P");
+    }
+    
     if (item.id) {
       fetchTrend(item.id);
     }
@@ -306,6 +315,10 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
       setGePrice(data);
       setItemName(data.name || itemName);
       
+      if (data.isMembers !== undefined) {
+        setMembershipStatus(data.isMembers ? "Members" : "F2P");
+      }
+      
       if (data.id) {
         await fetchTrend(data.id);
       }
@@ -347,6 +360,8 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
       strategyTag,
       membershipStatus,
       rsAccountId: selectedRsAccountId || undefined,
+      isMembers: gePrice?.isMembers,
+      geLimit: gePrice?.geLimit,
     });
 
     setItemName("");
@@ -752,11 +767,19 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
                       <div className="font-mono text-lg font-semibold text-success">
                         {gePrice.price.toLocaleString()} gp
                       </div>
-                      {gePrice.volume && (
-                        <div className="text-xs text-muted-foreground">
-                          Volume: {gePrice.volume.toLocaleString()}
-                        </div>
-                      )}
+                      <div className="flex gap-3 text-xs text-muted-foreground">
+                        {gePrice.volume && (
+                          <span>Vol: {gePrice.volume.toLocaleString()}</span>
+                        )}
+                        {gePrice.geLimit && (
+                          <span>Limit: {gePrice.geLimit.toLocaleString()}</span>
+                        )}
+                        {gePrice.isMembers !== undefined && (
+                          <Badge variant={gePrice.isMembers ? "secondary" : "outline"} className="text-xs h-5">
+                            {gePrice.isMembers ? "Members" : "F2P"}
+                          </Badge>
+                        )}
+                      </div>
                     </div>
                     <Button
                       type="button"

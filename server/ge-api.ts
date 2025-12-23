@@ -12,6 +12,9 @@ export interface GEItem {
   volume?: number;
   timestamp?: string;
   icon?: string;
+  isMembers?: boolean;
+  geLimit?: number;
+  examine?: string;
 }
 
 export interface PriceTrend {
@@ -31,10 +34,13 @@ interface CachedItem {
   id: number;
   name: string;
   nameLower: string;
+  isMembers?: boolean;
+  geLimit?: number;
+  examine?: string;
 }
 
 let itemCache: CachedItem[] = [];
-let itemPriceCache: Map<number, { price: number; volume?: number }> = new Map();
+let itemPriceCache: Map<number, { price: number; volume?: number; isMembers?: boolean; geLimit?: number; examine?: string }> = new Map();
 let cacheLastUpdated = 0;
 const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 
@@ -71,12 +77,18 @@ async function refreshItemCache(): Promise<void> {
         id,
         name: itemData.name,
         nameLower: itemData.name.toLowerCase(),
+        isMembers: itemData.members,
+        geLimit: itemData.limit,
+        examine: itemData.examine,
       });
       
       if (itemData.price) {
         itemPriceCache.set(id, {
           price: itemData.price,
           volume: itemData.volume,
+          isMembers: itemData.members,
+          geLimit: itemData.limit,
+          examine: itemData.examine,
         });
       }
     }
@@ -133,6 +145,9 @@ export async function searchItems(query: string): Promise<GEItem[]> {
         price: priceData.price,
         volume: priceData.volume,
         icon: `${RS_ITEMDB_BASE}/obj_sprite.gif?id=${item.id}`,
+        isMembers: item.isMembers,
+        geLimit: item.geLimit,
+        examine: item.examine,
       });
     }
   }
@@ -142,6 +157,8 @@ export async function searchItems(query: string): Promise<GEItem[]> {
 
 export async function getItemPrice(itemName: string): Promise<GEItem | null> {
   try {
+    await refreshItemCache();
+    
     const response = await fetch(
       `${GE_API_BASE}/latest?name=${encodeURIComponent(itemName)}`,
       {
@@ -160,15 +177,20 @@ export async function getItemPrice(itemName: string): Promise<GEItem | null> {
 
     const foundName = keys[0];
     const itemData = data[foundName];
-    const itemId = itemData.id;
+    const itemId = parseInt(itemData.id);
+    
+    const cachedData = itemPriceCache.get(itemId);
 
     return {
-      id: parseInt(itemId),
+      id: itemId,
       name: foundName,
       price: itemData.price,
       volume: itemData.volume,
       timestamp: itemData.timestamp,
       icon: `${RS_ITEMDB_BASE}/obj_sprite.gif?id=${itemId}`,
+      isMembers: cachedData?.isMembers,
+      geLimit: cachedData?.geLimit,
+      examine: cachedData?.examine,
     };
   } catch (error) {
     console.error("Failed to fetch GE price:", error);

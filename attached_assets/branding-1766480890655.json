@@ -1,0 +1,86 @@
+{
+  "colorScheme": "light",
+  "fonts": [
+    {
+      "family": "__saans_cd5095",
+      "count": 67
+    },
+    {
+      "family": "__saans_Fallback_cd5095",
+      "count": 67
+    },
+    {
+      "family": "sans-serif",
+      "count": 67
+    }
+  ],
+  "colors": {
+    "primary": "#1A73E8",
+    "accent": "#9CA3AF",
+    "background": "#FFFFFF",
+    "textPrimary": "#141414",
+    "link": "#9CA3AF"
+  },
+  "typography": {
+    "fontFamilies": {
+      "primary": "__saans_cd5095",
+      "heading": "__saans_cd5095"
+    },
+    "fontStacks": {
+      "body": [
+        "__saans_cd5095",
+        "__saans_Fallback_cd5095",
+        "sans-serif"
+      ],
+      "heading": [
+        "__saans_cd5095",
+        "__saans_Fallback_cd5095",
+        "sans-serif"
+      ],
+      "paragraph": [
+        "__saans_cd5095",
+        "__saans_Fallback_cd5095",
+        "sans-serif"
+      ]
+    },
+    "fontSizes": {
+      "h1": "80px",
+      "h2": "16px",
+      "body": "14px"
+    }
+  },
+  "spacing": {
+    "baseUnit": 4,
+    "borderRadius": "10px"
+  },
+  "components": {},
+  "images": {
+    "logo": "File saved at: attached_assets/logo.svg",
+    "favicon": "File saved at: attached_assets/favicon.ico",
+    "ogImage": "File saved at: attached_assets/ogImage.png"
+  },
+  "__framework_hints": [],
+  "__llm_logo_reasoning": {
+    "selectedIndex": 0,
+    "reasoning": "Heuristic fallback: Moderate indicators: header logo linking to homepage, header location, visible, src contains brand name \"Mobbin\", reasonable size, SVG format. Score: 99. May benefit from LLM validation.",
+    "confidence": 0.5
+  },
+  "__llm_button_reasoning": {
+    "primary": {
+      "index": -1,
+      "text": "N/A",
+      "reasoning": "LLM failed"
+    },
+    "secondary": {
+      "index": -1,
+      "text": "N/A",
+      "reasoning": "LLM failed"
+    },
+    "confidence": 0
+  },
+  "confidence": {
+    "buttons": 0,
+    "colors": 0,
+    "overall": 0
+  }
+}
