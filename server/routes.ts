@@ -1012,15 +1012,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       let totalValue = 0;
       let totalCost = 0;
-      const holdingsWithValues: Array<typeof holdings[0] & { currentPrice: number; value: number; profit: number; profitPercent: number }> = [];
+      let totalRealizedProfit = 0;
+      let totalRealizedLoss = 0;
+      const holdingsWithValues: Array<typeof holdings[0] & { currentPrice: number; value: number; profit: number; profitPercent: number; allocation: number }> = [];
 
+      // First pass: calculate totals
       for (const holding of holdings) {
-        let currentPrice = holding.lastValuedPrice || holding.avgBuyPrice;
-        
+        const currentPrice = holding.lastValuedPrice || holding.avgBuyPrice;
         const value = currentPrice * holding.quantity;
         const cost = holding.avgBuyPrice * holding.quantity;
         totalValue += value;
         totalCost += cost;
+        totalRealizedProfit += holding.realizedProfit || 0;
+        totalRealizedLoss += holding.realizedLoss || 0;
+      }
+
+      // Second pass: add allocation percentages
+      for (const holding of holdings) {
+        const currentPrice = holding.lastValuedPrice || holding.avgBuyPrice;
+        const value = currentPrice * holding.quantity;
+        const cost = holding.avgBuyPrice * holding.quantity;
+        const allocation = totalValue > 0 ? (value / totalValue) * 100 : 0;
 
         holdingsWithValues.push({
           ...holding,
@@ -1028,6 +1040,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           value,
           profit: value - cost,
           profitPercent: cost > 0 ? ((value - cost) / cost) * 100 : 0,
+          allocation,
         });
       }
 
@@ -1066,6 +1079,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         totalCost,
         totalProfit: totalValue - totalCost,
         profitPercent: totalCost > 0 ? ((totalValue - totalCost) / totalCost) * 100 : 0,
+        totalRealizedProfit,
+        totalRealizedLoss,
+        netRealizedProfit: totalRealizedProfit - totalRealizedLoss,
         holdingCount: holdings.length,
         holdings: holdingsWithValues,
         categories: categoryBreakdown,
