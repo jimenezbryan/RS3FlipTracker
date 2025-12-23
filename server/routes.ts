@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
 import { storage } from "./storage";
-import { insertFlipSchema, insertWatchlistSchema, insertPriceAlertSchema, insertFavoriteSchema, insertProfitGoalSchema, insertPortfolioCategorySchema, insertPortfolioHoldingSchema, insertRsAccountSchema } from "@shared/schema";
+import { insertFlipSchema, insertWatchlistSchema, insertPriceAlertSchema, insertFavoriteSchema, insertProfitGoalSchema, insertPortfolioCategorySchema, insertPortfolioHoldingSchema, insertHoldingTransactionSchema, insertRsAccountSchema } from "@shared/schema";
 import { getItemPrice, searchItems, getItemTrend, getItemPriceHistory, getItemSuggestions } from "./ge-api";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { processScreenshot, matchItemsToGE } from "./ocr";
@@ -657,6 +657,153 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(204).send();
     } catch (error) {
       res.status(500).json({ error: "Failed to delete holding" });
+    }
+  });
+
+  // Portfolio Holding Transactions
+  app.get("/api/portfolio/holdings/:holdingId/transactions", isAuthenticated, async (req: any, res) => {
+    try {
+      const { holdingId } = req.params;
+      const userId = req.user.claims.sub;
+      const transactions = await storage.getHoldingTransactions(holdingId, userId);
+      res.json(transactions);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch transactions" });
+    }
+  });
+
+  app.post("/api/portfolio/holdings/:holdingId/transactions", isAuthenticated, async (req: any, res) => {
+    try {
+      const { holdingId } = req.params;
+      const userId = req.user.claims.sub;
+      
+      // Verify holding exists and belongs to user
+      const holding = await storage.getPortfolioHolding(holdingId);
+      if (!holding || holding.userId !== userId) {
+        return res.status(404).json({ error: "Holding not found" });
+      }
+      
+      const validatedTx = insertHoldingTransactionSchema.parse({
+        ...req.body,
+        holdingId,
+      });
+      
+      // Create the transaction
+      const newTx = await storage.createHoldingTransaction(userId, validatedTx);
+      
+      // Recalculate holding aggregates based on all transactions
+      const allTxs = await storage.getHoldingTransactions(holdingId, userId);
+      
+      let totalQuantity = 0;
+      let totalCost = 0;
+      let realizedProfit = 0;
+      let realizedLoss = 0;
+      
+      // Sort transactions by date to process in order
+      const sortedTxs = [...allTxs].sort((a, b) => 
+        new Date(a.transactionDate).getTime() - new Date(b.transactionDate).getTime()
+      );
+      
+      for (const tx of sortedTxs) {
+        if (tx.transactionType === 'buy') {
+          totalCost += tx.totalValue;
+          totalQuantity += tx.quantity;
+        } else if (tx.transactionType === 'sell') {
+          // Calculate P&L on sell based on avg cost at time of sale
+          const avgCostPerUnit = totalQuantity > 0 ? totalCost / totalQuantity : 0;
+          const costBasis = avgCostPerUnit * tx.quantity;
+          const proceeds = tx.totalValue - (tx.fees || 0);
+          const pnl = proceeds - costBasis;
+          
+          if (pnl >= 0) {
+            realizedProfit += pnl;
+          } else {
+            realizedLoss += Math.abs(pnl);
+          }
+          
+          // Reduce cost and quantity
+          totalCost -= costBasis;
+          totalQuantity -= tx.quantity;
+        }
+      }
+      
+      // Calculate new avgBuyPrice
+      const avgBuyPrice = totalQuantity > 0 ? totalCost / totalQuantity : 0;
+      
+      // Update holding with new aggregates
+      await storage.updatePortfolioHolding(holdingId, userId, {
+        quantity: totalQuantity,
+        avgBuyPrice: Math.round(avgBuyPrice),
+        totalCost: Math.round(totalCost),
+        realizedProfit: Math.round(realizedProfit),
+        realizedLoss: Math.round(realizedLoss),
+      });
+      
+      // Return transaction with updated P&L if it was a sell
+      res.status(201).json(newTx);
+    } catch (error) {
+      console.error("Failed to create transaction:", error);
+      res.status(400).json({ error: "Invalid transaction data" });
+    }
+  });
+
+  app.delete("/api/portfolio/holdings/:holdingId/transactions/:txId", isAuthenticated, async (req: any, res) => {
+    try {
+      const { holdingId, txId } = req.params;
+      const userId = req.user.claims.sub;
+      
+      const success = await storage.deleteHoldingTransaction(txId, userId);
+      if (!success) {
+        return res.status(404).json({ error: "Transaction not found" });
+      }
+      
+      // Recalculate holding aggregates after deletion
+      const allTxs = await storage.getHoldingTransactions(holdingId, userId);
+      
+      let totalQuantity = 0;
+      let totalCost = 0;
+      let realizedProfit = 0;
+      let realizedLoss = 0;
+      
+      const sortedTxs = [...allTxs].sort((a, b) => 
+        new Date(a.transactionDate).getTime() - new Date(b.transactionDate).getTime()
+      );
+      
+      for (const tx of sortedTxs) {
+        if (tx.transactionType === 'buy') {
+          totalCost += tx.totalValue;
+          totalQuantity += tx.quantity;
+        } else if (tx.transactionType === 'sell') {
+          const avgCostPerUnit = totalQuantity > 0 ? totalCost / totalQuantity : 0;
+          const costBasis = avgCostPerUnit * tx.quantity;
+          const proceeds = tx.totalValue - (tx.fees || 0);
+          const pnl = proceeds - costBasis;
+          
+          if (pnl >= 0) {
+            realizedProfit += pnl;
+          } else {
+            realizedLoss += Math.abs(pnl);
+          }
+          
+          totalCost -= costBasis;
+          totalQuantity -= tx.quantity;
+        }
+      }
+      
+      const avgBuyPrice = totalQuantity > 0 ? totalCost / totalQuantity : 0;
+      
+      await storage.updatePortfolioHolding(holdingId, userId, {
+        quantity: Math.max(0, totalQuantity),
+        avgBuyPrice: Math.round(avgBuyPrice),
+        totalCost: Math.round(Math.max(0, totalCost)),
+        realizedProfit: Math.round(realizedProfit),
+        realizedLoss: Math.round(realizedLoss),
+      });
+      
+      res.status(204).send();
+    } catch (error) {
+      console.error("Failed to delete transaction:", error);
+      res.status(500).json({ error: "Failed to delete transaction" });
     }
   });
 
