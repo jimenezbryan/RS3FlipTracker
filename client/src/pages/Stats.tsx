@@ -70,6 +70,20 @@ export default function Stats() {
       ? flipsWithProfit.reduce((worst, curr) => curr.profit < worst.profit ? curr : worst).flip
       : null;
 
+    const totalTaxPaid = completedFlips.reduce((sum, f) => {
+      if (f.sellPrice !== null && f.sellPrice !== undefined) {
+        return sum + calculateTax(f.sellPrice, f.quantity);
+      }
+      return sum;
+    }, 0);
+
+    const totalGrossRevenue = completedFlips.reduce((sum, f) => {
+      if (f.sellPrice !== null && f.sellPrice !== undefined) {
+        return sum + (f.sellPrice * f.quantity);
+      }
+      return sum;
+    }, 0);
+
     return {
       totalProfit,
       totalInvested,
@@ -81,6 +95,8 @@ export default function Stats() {
       bestFlip,
       worstFlip,
       completedFlips,
+      totalTaxPaid,
+      totalGrossRevenue,
     };
   }, [flips]);
 
@@ -274,6 +290,46 @@ export default function Stats() {
             </CardContent>
           </Card>
         </div>
+
+        <Card className="mb-8" data-testid="card-tax-summary">
+          <CardHeader className="pb-4">
+            <CardTitle className="flex items-center gap-2">
+              <DollarSign className="h-5 w-5 text-yellow-500" />
+              GE Tax Summary
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Total Tax Paid</p>
+                <p className="text-2xl font-bold font-mono text-yellow-500" data-testid="text-total-tax-paid">
+                  {formatPrice(stats.totalTaxPaid)} gp
+                </p>
+                <p className="text-xs text-muted-foreground">2% of sell value (capped at 5M per trade)</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Gross Revenue</p>
+                <p className="text-2xl font-bold font-mono" data-testid="text-gross-revenue">
+                  {formatPrice(stats.totalGrossRevenue)} gp
+                </p>
+                <p className="text-xs text-muted-foreground">Total sell value before tax</p>
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm text-muted-foreground">Net Revenue</p>
+                <p className="text-2xl font-bold font-mono text-success" data-testid="text-net-revenue">
+                  {formatPrice(stats.totalGrossRevenue - stats.totalTaxPaid)} gp
+                </p>
+                <p className="text-xs text-muted-foreground">Revenue after tax deduction</p>
+              </div>
+            </div>
+            <div className="mt-4 p-3 bg-muted/50 rounded-lg">
+              <p className="text-xs text-muted-foreground">
+                <strong>RS3 GE Tax:</strong> 2% of the total sell value is deducted as Grand Exchange tax. 
+                The tax is capped at 5,000,000 gp per transaction, meaning sales over 250M gp won't pay more than 5M in tax.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
 
         <div className="grid gap-6 lg:grid-cols-2 mb-8">
           <Card data-testid="card-best-flip">

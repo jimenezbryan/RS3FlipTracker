@@ -113,7 +113,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "Unable to generate suggestions" });
       }
       
-      res.json(suggestions);
+      // Enhance suggestions with transaction data from user community
+      const transactions = await storage.getTransactionsByItem(itemId, 100);
+      
+      if (transactions.length > 0) {
+        const buyTransactions = transactions.filter(t => t.transactionType === 'buy');
+        const sellTransactions = transactions.filter(t => t.transactionType === 'sell');
+        
+        const avgUserBuyPrice = buyTransactions.length > 0
+          ? Math.round(buyTransactions.reduce((sum, t) => sum + t.price, 0) / buyTransactions.length)
+          : null;
+        const avgUserSellPrice = sellTransactions.length > 0
+          ? Math.round(sellTransactions.reduce((sum, t) => sum + t.price, 0) / sellTransactions.length)
+          : null;
+        
+        const totalUserVolume = transactions.reduce((sum, t) => sum + (t.totalValue || 0), 0);
+        
+        res.json({
+          ...suggestions,
+          communityData: {
+            totalTransactions: transactions.length,
+            buyTransactions: buyTransactions.length,
+            sellTransactions: sellTransactions.length,
+            avgUserBuyPrice,
+            avgUserSellPrice,
+            totalVolume: totalUserVolume,
+            dataSource: "RS3 Flip Tracker community trades",
+          },
+        });
+      } else {
+        res.json({
+          ...suggestions,
+          communityData: null,
+        });
+      }
     } catch (error) {
       res.status(500).json({ error: "Failed to generate suggestions" });
     }
@@ -134,6 +167,56 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const userId = req.user.claims.sub;
       const validatedFlip = insertFlipSchema.parse(req.body);
       const newFlip = await storage.createFlip(userId, validatedFlip);
+      
+      // Record buy transaction for analytics/LLM training
+      if (newFlip.itemId) {
+        await storage.recordTransaction({
+          flipId: newFlip.id,
+          userId,
+          itemId: newFlip.itemId,
+          itemName: newFlip.itemName,
+          transactionType: 'buy',
+          price: newFlip.buyPrice,
+          quantity: newFlip.quantity ?? 1,
+          strategyTag: newFlip.strategyTag ?? undefined,
+          transactionDate: new Date(newFlip.buyDate),
+        });
+        await storage.updateItemVolume(
+          newFlip.itemId, 
+          newFlip.itemName, 
+          new Date(newFlip.buyDate), 
+          'buy', 
+          newFlip.buyPrice, 
+          newFlip.quantity ?? 1
+        );
+        
+        // Record sell transaction if selling immediately
+        if (newFlip.sellPrice && newFlip.sellDate) {
+          const sellValue = newFlip.sellPrice * (newFlip.quantity ?? 1);
+          const taxPaid = Math.min(Math.floor(sellValue * 0.02), 5000000); // 2% capped at 5M
+          await storage.recordTransaction({
+            flipId: newFlip.id,
+            userId,
+            itemId: newFlip.itemId,
+            itemName: newFlip.itemName,
+            transactionType: 'sell',
+            price: newFlip.sellPrice,
+            quantity: newFlip.quantity ?? 1,
+            taxPaid,
+            strategyTag: newFlip.strategyTag ?? undefined,
+            transactionDate: new Date(newFlip.sellDate),
+          });
+          await storage.updateItemVolume(
+            newFlip.itemId, 
+            newFlip.itemName, 
+            new Date(newFlip.sellDate), 
+            'sell', 
+            newFlip.sellPrice, 
+            newFlip.quantity ?? 1
+          );
+        }
+      }
+      
       res.status(201).json(newFlip);
     } catch (error) {
       res.status(400).json({ error: "Invalid flip data" });
@@ -144,11 +227,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { id } = req.params;
       const userId = req.user.claims.sub;
+      
+      // Get the current flip before updating
+      const existingFlip = await storage.getFlip(id);
+      
       const validatedFlip = insertFlipSchema.partial().parse(req.body);
       const updatedFlip = await storage.updateFlip(id, userId, validatedFlip);
       
       if (!updatedFlip) {
         return res.status(404).json({ error: "Flip not found" });
+      }
+      
+      // If this update is adding a sell price (completing the flip), record the sell transaction
+      if (updatedFlip.itemId && updatedFlip.sellPrice && updatedFlip.sellDate && 
+          (!existingFlip?.sellPrice || existingFlip.sellPrice !== updatedFlip.sellPrice)) {
+        const sellValue = updatedFlip.sellPrice * (updatedFlip.quantity ?? 1);
+        const taxPaid = Math.min(Math.floor(sellValue * 0.02), 5000000); // 2% capped at 5M
+        await storage.recordTransaction({
+          flipId: updatedFlip.id,
+          userId,
+          itemId: updatedFlip.itemId,
+          itemName: updatedFlip.itemName,
+          transactionType: 'sell',
+          price: updatedFlip.sellPrice,
+          quantity: updatedFlip.quantity ?? 1,
+          taxPaid,
+          strategyTag: updatedFlip.strategyTag ?? undefined,
+          transactionDate: new Date(updatedFlip.sellDate),
+        });
+        await storage.updateItemVolume(
+          updatedFlip.itemId, 
+          updatedFlip.itemName, 
+          new Date(updatedFlip.sellDate), 
+          'sell', 
+          updatedFlip.sellPrice, 
+          updatedFlip.quantity ?? 1
+        );
       }
       
       res.json(updatedFlip);
@@ -771,6 +885,202 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch portfolio summary" });
+    }
+  });
+
+  // === ANALYTICS ENDPOINTS ===
+  
+  // Get item volume analytics
+  app.get("/api/analytics/volume/:itemId", isAuthenticated, async (req: any, res) => {
+    try {
+      const itemId = parseInt(req.params.itemId);
+      if (isNaN(itemId)) {
+        return res.status(400).json({ error: "Invalid item ID" });
+      }
+      
+      const range = req.query.range || 'week'; // day, week, month
+      const now = new Date();
+      let startDate: Date;
+      
+      switch (range) {
+        case 'day':
+          startDate = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+          break;
+        case 'month':
+          startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+          break;
+        case 'week':
+        default:
+          startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      }
+      
+      const daily = await storage.getItemVolumeDaily(itemId, startDate, now);
+      const weekly = await storage.getItemVolumeWeekly(itemId);
+      const monthly = await storage.getItemVolumeMonthly(itemId);
+      
+      res.json({ daily, weekly, monthly });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch volume analytics" });
+    }
+  });
+  
+  // Get transactions for an item (for LLM training data review)
+  app.get("/api/analytics/transactions/:itemId", isAuthenticated, async (req: any, res) => {
+    try {
+      const itemId = parseInt(req.params.itemId);
+      if (isNaN(itemId)) {
+        return res.status(400).json({ error: "Invalid item ID" });
+      }
+      
+      const limit = parseInt(req.query.limit as string) || 100;
+      const transactions = await storage.getTransactionsByItem(itemId, limit);
+      res.json(transactions);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch transactions" });
+    }
+  });
+
+  // === USER PRESENCE ENDPOINTS ===
+  
+  // Heartbeat - call every 30 seconds to update online status
+  app.post("/api/heartbeat", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      await storage.updateUserHeartbeat(userId);
+      res.json({ status: "ok" });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update heartbeat" });
+    }
+  });
+
+  // === ADMIN ENDPOINTS ===
+  const ADMIN_EMAIL = "fjnovarum@gmail.com";
+  
+  // Middleware to check if user is admin
+  const isAdmin = async (req: any, res: any, next: any) => {
+    try {
+      const userId = req.user.claims.sub;
+      const user = await storage.getUser(userId);
+      
+      if (!user) {
+        return res.status(403).json({ error: "User not found" });
+      }
+      
+      // Check if user email matches admin email or has isAdmin flag
+      if (user.email !== ADMIN_EMAIL && !user.isAdmin) {
+        return res.status(403).json({ error: "Admin access required" });
+      }
+      
+      next();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to verify admin status" });
+    }
+  };
+  
+  // Check if current user is admin
+  app.get("/api/admin/check", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const user = await storage.getUser(userId);
+      
+      if (!user) {
+        return res.json({ isAdmin: false });
+      }
+      
+      const isAdminUser = user.email === ADMIN_EMAIL || user.isAdmin === true;
+      res.json({ isAdmin: isAdminUser });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to check admin status" });
+    }
+  });
+  
+  // Get all users with online/offline status
+  app.get("/api/admin/users", isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const allUsers = await storage.getAllUsers();
+      const sessions = await storage.getAllUserSessions();
+      const onlineThreshold = 60000; // 1 minute
+      const now = Date.now();
+      
+      const usersWithStatus = allUsers.map(user => {
+        const session = sessions.find(s => s.userId === user.id);
+        const isOnline = session?.lastHeartbeat && 
+          (now - new Date(session.lastHeartbeat).getTime()) < onlineThreshold;
+        
+        return {
+          ...user,
+          isOnline,
+          lastHeartbeat: session?.lastHeartbeat,
+        };
+      });
+      
+      res.json(usersWithStatus);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch users" });
+    }
+  });
+  
+  // Get online/offline user counts
+  app.get("/api/admin/presence", isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const allUsers = await storage.getAllUsers();
+      const onlineUsers = await storage.getOnlineUsers(60000); // 1 minute threshold
+      
+      res.json({
+        totalUsers: allUsers.length,
+        onlineCount: onlineUsers.length,
+        offlineCount: allUsers.length - onlineUsers.length,
+        onlineUsers: onlineUsers.map(u => ({
+          id: u.id,
+          email: u.email,
+          firstName: u.firstName,
+          lastName: u.lastName,
+          profileImageUrl: u.profileImageUrl,
+        })),
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch presence data" });
+    }
+  });
+  
+  // Get platform statistics (for admin)
+  app.get("/api/admin/stats", isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const allUsers = await storage.getAllUsers();
+      const transactions = await storage.getAllTransactions(1000);
+      
+      // Calculate totals
+      const totalTransactions = transactions.length;
+      const buyTransactions = transactions.filter(t => t.transactionType === 'buy').length;
+      const sellTransactions = transactions.filter(t => t.transactionType === 'sell').length;
+      const totalVolume = transactions.reduce((sum, t) => sum + (t.totalValue || 0), 0);
+      const totalTaxPaid = transactions.reduce((sum, t) => sum + (t.taxPaid || 0), 0);
+      
+      // Get unique items traded
+      const uniqueItems = new Set(transactions.map(t => t.itemId)).size;
+      
+      res.json({
+        totalUsers: allUsers.length,
+        totalTransactions,
+        buyTransactions,
+        sellTransactions,
+        totalVolume,
+        totalTaxPaid,
+        uniqueItems,
+      });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch platform stats" });
+    }
+  });
+  
+  // Get all transactions (for admin review/LLM training data export)
+  app.get("/api/admin/transactions", isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 500;
+      const transactions = await storage.getAllTransactions(limit);
+      res.json(transactions);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch transactions" });
     }
   });
 

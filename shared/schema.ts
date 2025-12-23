@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, timestamp, index, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, timestamp, index, jsonb, boolean } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -21,6 +21,8 @@ export const users = pgTable("users", {
   firstName: varchar("first_name"),
   lastName: varchar("last_name"),
   profileImageUrl: varchar("profile_image_url"),
+  isAdmin: boolean("is_admin").default(false),
+  lastSeenAt: timestamp("last_seen_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -251,3 +253,53 @@ export const portfolioSnapshotItems = pgTable("portfolio_snapshot_items", {
 });
 
 export type PortfolioSnapshotItem = typeof portfolioSnapshotItems.$inferSelect;
+
+// Flip transactions - Records each transaction event for analytics and LLM training
+export const flipTransactions = pgTable("flip_transactions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  flipId: varchar("flip_id").references(() => flips.id),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  itemId: integer("item_id").notNull(),
+  itemName: text("item_name").notNull(),
+  transactionType: varchar("transaction_type", { length: 10 }).notNull(), // 'buy' or 'sell'
+  price: integer("price").notNull(),
+  quantity: integer("quantity").notNull(),
+  totalValue: integer("total_value").notNull(),
+  taxPaid: integer("tax_paid").default(0), // Only for sell transactions
+  strategyTag: varchar("strategy_tag", { length: 50 }),
+  transactionDate: timestamp("transaction_date").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type FlipTransaction = typeof flipTransactions.$inferSelect;
+
+// Item volume metrics - Daily aggregated volume data per item
+export const itemVolumeDaily = pgTable("item_volume_daily", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  itemId: integer("item_id").notNull(),
+  itemName: text("item_name").notNull(),
+  date: timestamp("date").notNull(),
+  transactionCount: integer("transaction_count").notNull().default(0),
+  totalQuantity: integer("total_quantity").notNull().default(0),
+  totalValue: integer("total_value").notNull().default(0),
+  avgPrice: integer("avg_price").default(0),
+  minPrice: integer("min_price"),
+  maxPrice: integer("max_price"),
+  buyCount: integer("buy_count").default(0),
+  sellCount: integer("sell_count").default(0),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export type ItemVolumeDaily = typeof itemVolumeDaily.$inferSelect;
+
+// User sessions for presence tracking
+export const userSessions = pgTable("user_sessions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  lastHeartbeat: timestamp("last_heartbeat").notNull(),
+  status: varchar("status", { length: 10 }).notNull().default("online"), // 'online' or 'offline'
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export type UserSession = typeof userSessions.$inferSelect;

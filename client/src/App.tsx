@@ -4,6 +4,7 @@ import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useAuth } from "@/hooks/useAuth";
+import { useHeartbeat } from "@/hooks/useHeartbeat";
 import Home from "@/pages/Home";
 import Landing from "@/pages/Landing";
 import Watchlist from "@/pages/Watchlist";
@@ -11,10 +12,13 @@ import Alerts from "@/pages/Alerts";
 import Stats from "@/pages/Stats";
 import Portfolio from "@/pages/Portfolio";
 import Goals from "@/pages/Goals";
+import Admin from "@/pages/Admin";
 import NotFound from "@/pages/not-found";
 
 function Router() {
   const { isAuthenticated, isLoading } = useAuth();
+  
+  useHeartbeat(30000);
 
   if (isLoading) {
     return (
@@ -41,6 +45,7 @@ function Router() {
       <Route path="/watchlist" component={Watchlist} />
       <Route path="/alerts" component={Alerts} />
       <Route path="/stats" component={Stats} />
+      <Route path="/admin" component={Admin} />
       <Route component={NotFound} />
     </Switch>
   );

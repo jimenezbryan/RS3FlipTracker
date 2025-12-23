@@ -1,6 +1,6 @@
-import { users, flips, watchlist, priceAlerts, favorites, profitGoals, portfolioCategories, portfolioHoldings, portfolioSnapshots, portfolioSnapshotItems, type User, type UpsertUser, type Flip, type InsertFlip, type WatchlistItem, type InsertWatchlistItem, type PriceAlert, type InsertPriceAlert, type Favorite, type InsertFavorite, type ProfitGoal, type InsertProfitGoal, type PortfolioCategory, type InsertPortfolioCategory, type PortfolioHolding, type InsertPortfolioHolding, type PortfolioSnapshot, type PortfolioSnapshotItem } from "@shared/schema";
+import { users, flips, watchlist, priceAlerts, favorites, profitGoals, portfolioCategories, portfolioHoldings, portfolioSnapshots, portfolioSnapshotItems, flipTransactions, itemVolumeDaily, userSessions, type User, type UpsertUser, type Flip, type InsertFlip, type WatchlistItem, type InsertWatchlistItem, type PriceAlert, type InsertPriceAlert, type Favorite, type InsertFavorite, type ProfitGoal, type InsertProfitGoal, type PortfolioCategory, type InsertPortfolioCategory, type PortfolioHolding, type InsertPortfolioHolding, type PortfolioSnapshot, type PortfolioSnapshotItem, type FlipTransaction, type ItemVolumeDaily, type UserSession } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, isNull } from "drizzle-orm";
+import { eq, desc, and, isNull, sql, gte, lte } from "drizzle-orm";
 import { randomUUID } from "crypto";
 
 export interface IStorage {
@@ -54,6 +54,38 @@ export interface IStorage {
   getPortfolioSnapshots(userId: string, limit?: number): Promise<PortfolioSnapshot[]>;
   createSnapshotItems(snapshotId: string, items: Omit<PortfolioSnapshotItem, 'id'>[]): Promise<void>;
   getSnapshotItems(snapshotId: string): Promise<PortfolioSnapshotItem[]>;
+  
+  // Transaction Recording (for LLM training)
+  recordTransaction(tx: {
+    flipId?: string;
+    userId: string;
+    itemId: number;
+    itemName: string;
+    transactionType: 'buy' | 'sell';
+    price: number;
+    quantity: number;
+    taxPaid?: number;
+    strategyTag?: string;
+    transactionDate: Date;
+  }): Promise<FlipTransaction>;
+  getTransactionsByItem(itemId: number, limit?: number): Promise<FlipTransaction[]>;
+  getAllTransactions(limit?: number): Promise<FlipTransaction[]>;
+  
+  // Volume Metrics
+  updateItemVolume(itemId: number, itemName: string, date: Date, txType: 'buy' | 'sell', price: number, quantity: number): Promise<void>;
+  getItemVolumeDaily(itemId: number, startDate: Date, endDate: Date): Promise<ItemVolumeDaily[]>;
+  getItemVolumeWeekly(itemId: number): Promise<{ week: string; transactionCount: number; totalQuantity: number; totalValue: number }[]>;
+  getItemVolumeMonthly(itemId: number): Promise<{ month: string; transactionCount: number; totalQuantity: number; totalValue: number }[]>;
+  
+  // User Presence & Admin
+  updateUserHeartbeat(userId: string): Promise<void>;
+  updateUserLastSeen(userId: string): Promise<void>;
+  getUserSession(userId: string): Promise<UserSession | undefined>;
+  getAllUserSessions(): Promise<UserSession[]>;
+  getOnlineUsers(thresholdMs?: number): Promise<User[]>;
+  getAllUsers(): Promise<User[]>;
+  setUserAdmin(userId: string, isAdmin: boolean): Promise<User | undefined>;
+  getUserByEmail(email: string): Promise<User | undefined>;
 }
 
 export class MemStorage implements IStorage {
@@ -423,6 +455,162 @@ export class MemStorage implements IStorage {
     return Array.from(this.portfolioSnapItems.values())
       .filter(i => i.snapshotId === snapshotId);
   }
+
+  // Transaction Recording (MemStorage - limited support)
+  private transactions: Map<string, FlipTransaction> = new Map();
+  private volumeDaily: Map<string, ItemVolumeDaily> = new Map();
+  private sessions: Map<string, UserSession> = new Map();
+
+  async recordTransaction(tx: {
+    flipId?: string;
+    userId: string;
+    itemId: number;
+    itemName: string;
+    transactionType: 'buy' | 'sell';
+    price: number;
+    quantity: number;
+    taxPaid?: number;
+    strategyTag?: string;
+    transactionDate: Date;
+  }): Promise<FlipTransaction> {
+    const id = randomUUID();
+    const totalValue = tx.price * tx.quantity;
+    const record: FlipTransaction = {
+      id,
+      flipId: tx.flipId ?? null,
+      userId: tx.userId,
+      itemId: tx.itemId,
+      itemName: tx.itemName,
+      transactionType: tx.transactionType,
+      price: tx.price,
+      quantity: tx.quantity,
+      totalValue,
+      taxPaid: tx.taxPaid ?? 0,
+      strategyTag: tx.strategyTag ?? null,
+      transactionDate: tx.transactionDate,
+      createdAt: new Date(),
+    };
+    this.transactions.set(id, record);
+    return record;
+  }
+
+  async getTransactionsByItem(itemId: number, limit?: number): Promise<FlipTransaction[]> {
+    const txs = Array.from(this.transactions.values())
+      .filter(t => t.itemId === itemId)
+      .sort((a, b) => new Date(b.transactionDate).getTime() - new Date(a.transactionDate).getTime());
+    return limit ? txs.slice(0, limit) : txs;
+  }
+
+  async getAllTransactions(limit?: number): Promise<FlipTransaction[]> {
+    const txs = Array.from(this.transactions.values())
+      .sort((a, b) => new Date(b.transactionDate).getTime() - new Date(a.transactionDate).getTime());
+    return limit ? txs.slice(0, limit) : txs;
+  }
+
+  async updateItemVolume(itemId: number, itemName: string, date: Date, txType: 'buy' | 'sell', price: number, quantity: number): Promise<void> {
+    const dateKey = date.toISOString().split('T')[0];
+    const key = `${itemId}-${dateKey}`;
+    const existing = this.volumeDaily.get(key);
+    const totalValue = price * quantity;
+    
+    if (existing) {
+      existing.transactionCount = (existing.transactionCount || 0) + 1;
+      existing.totalQuantity = (existing.totalQuantity || 0) + quantity;
+      existing.totalValue = (existing.totalValue || 0) + totalValue;
+      if (txType === 'buy') existing.buyCount = (existing.buyCount || 0) + 1;
+      else existing.sellCount = (existing.sellCount || 0) + 1;
+      existing.avgPrice = Math.round(existing.totalValue / existing.totalQuantity);
+      existing.minPrice = existing.minPrice ? Math.min(existing.minPrice, price) : price;
+      existing.maxPrice = existing.maxPrice ? Math.max(existing.maxPrice, price) : price;
+      existing.updatedAt = new Date();
+    } else {
+      this.volumeDaily.set(key, {
+        id: randomUUID(),
+        itemId,
+        itemName,
+        date,
+        transactionCount: 1,
+        totalQuantity: quantity,
+        totalValue,
+        avgPrice: price,
+        minPrice: price,
+        maxPrice: price,
+        buyCount: txType === 'buy' ? 1 : 0,
+        sellCount: txType === 'sell' ? 1 : 0,
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+    }
+  }
+
+  async getItemVolumeDaily(itemId: number, startDate: Date, endDate: Date): Promise<ItemVolumeDaily[]> {
+    return Array.from(this.volumeDaily.values())
+      .filter(v => v.itemId === itemId && v.date >= startDate && v.date <= endDate)
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }
+
+  async getItemVolumeWeekly(itemId: number): Promise<{ week: string; transactionCount: number; totalQuantity: number; totalValue: number }[]> {
+    return [];
+  }
+
+  async getItemVolumeMonthly(itemId: number): Promise<{ month: string; transactionCount: number; totalQuantity: number; totalValue: number }[]> {
+    return [];
+  }
+
+  async updateUserHeartbeat(userId: string): Promise<void> {
+    const existing = this.sessions.get(userId);
+    const now = new Date();
+    if (existing) {
+      existing.lastHeartbeat = now;
+      existing.status = "online";
+    } else {
+      this.sessions.set(userId, {
+        id: randomUUID(),
+        userId,
+        lastHeartbeat: now,
+        status: "online",
+        createdAt: now,
+      });
+    }
+    const user = this.users.get(userId);
+    if (user) user.lastSeenAt = now;
+  }
+
+  async updateUserLastSeen(userId: string): Promise<void> {
+    const user = this.users.get(userId);
+    if (user) user.lastSeenAt = new Date();
+  }
+
+  async getUserSession(userId: string): Promise<UserSession | undefined> {
+    return this.sessions.get(userId);
+  }
+
+  async getAllUserSessions(): Promise<UserSession[]> {
+    return Array.from(this.sessions.values());
+  }
+
+  async getOnlineUsers(thresholdMs: number = 60000): Promise<User[]> {
+    const now = Date.now();
+    const onlineUserIds = Array.from(this.sessions.values())
+      .filter(s => s.lastHeartbeat && (now - new Date(s.lastHeartbeat).getTime()) < thresholdMs)
+      .map(s => s.userId);
+    return Array.from(this.users.values()).filter(u => onlineUserIds.includes(u.id));
+  }
+
+  async getAllUsers(): Promise<User[]> {
+    return Array.from(this.users.values());
+  }
+
+  async setUserAdmin(userId: string, isAdmin: boolean): Promise<User | undefined> {
+    const user = this.users.get(userId);
+    if (!user) return undefined;
+    user.isAdmin = isAdmin;
+    return user;
+  }
+
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    return Array.from(this.users.values()).find(u => u.email === email);
+  }
 }
 
 export class DatabaseStorage implements IStorage {
@@ -687,6 +875,213 @@ export class DatabaseStorage implements IStorage {
 
   async getSnapshotItems(snapshotId: string): Promise<PortfolioSnapshotItem[]> {
     return await db.select().from(portfolioSnapshotItems).where(eq(portfolioSnapshotItems.snapshotId, snapshotId));
+  }
+
+  // Transaction Recording (for LLM training)
+  async recordTransaction(tx: {
+    flipId?: string;
+    userId: string;
+    itemId: number;
+    itemName: string;
+    transactionType: 'buy' | 'sell';
+    price: number;
+    quantity: number;
+    taxPaid?: number;
+    strategyTag?: string;
+    transactionDate: Date;
+  }): Promise<FlipTransaction> {
+    const totalValue = tx.price * tx.quantity;
+    const [record] = await db
+      .insert(flipTransactions)
+      .values({
+        flipId: tx.flipId,
+        userId: tx.userId,
+        itemId: tx.itemId,
+        itemName: tx.itemName,
+        transactionType: tx.transactionType,
+        price: tx.price,
+        quantity: tx.quantity,
+        totalValue,
+        taxPaid: tx.taxPaid ?? 0,
+        strategyTag: tx.strategyTag,
+        transactionDate: tx.transactionDate,
+      })
+      .returning();
+    return record;
+  }
+
+  async getTransactionsByItem(itemId: number, limit?: number): Promise<FlipTransaction[]> {
+    const query = db.select().from(flipTransactions)
+      .where(eq(flipTransactions.itemId, itemId))
+      .orderBy(desc(flipTransactions.transactionDate));
+    if (limit) {
+      return await query.limit(limit);
+    }
+    return await query;
+  }
+
+  async getAllTransactions(limit?: number): Promise<FlipTransaction[]> {
+    const query = db.select().from(flipTransactions)
+      .orderBy(desc(flipTransactions.transactionDate));
+    if (limit) {
+      return await query.limit(limit);
+    }
+    return await query;
+  }
+
+  async updateItemVolume(itemId: number, itemName: string, date: Date, txType: 'buy' | 'sell', price: number, quantity: number): Promise<void> {
+    const dateStart = new Date(date);
+    dateStart.setHours(0, 0, 0, 0);
+    const dateEnd = new Date(dateStart);
+    dateEnd.setDate(dateEnd.getDate() + 1);
+    
+    const totalValue = price * quantity;
+    
+    const [existing] = await db.select().from(itemVolumeDaily)
+      .where(and(
+        eq(itemVolumeDaily.itemId, itemId),
+        gte(itemVolumeDaily.date, dateStart),
+        lte(itemVolumeDaily.date, dateEnd)
+      ));
+    
+    if (existing) {
+      await db.update(itemVolumeDaily)
+        .set({
+          transactionCount: (existing.transactionCount || 0) + 1,
+          totalQuantity: (existing.totalQuantity || 0) + quantity,
+          totalValue: (existing.totalValue || 0) + totalValue,
+          avgPrice: Math.round(((existing.totalValue || 0) + totalValue) / ((existing.totalQuantity || 0) + quantity)),
+          minPrice: existing.minPrice ? Math.min(existing.minPrice, price) : price,
+          maxPrice: existing.maxPrice ? Math.max(existing.maxPrice, price) : price,
+          buyCount: txType === 'buy' ? (existing.buyCount || 0) + 1 : existing.buyCount,
+          sellCount: txType === 'sell' ? (existing.sellCount || 0) + 1 : existing.sellCount,
+          updatedAt: new Date(),
+        })
+        .where(eq(itemVolumeDaily.id, existing.id));
+    } else {
+      await db.insert(itemVolumeDaily).values({
+        itemId,
+        itemName,
+        date: dateStart,
+        transactionCount: 1,
+        totalQuantity: quantity,
+        totalValue,
+        avgPrice: price,
+        minPrice: price,
+        maxPrice: price,
+        buyCount: txType === 'buy' ? 1 : 0,
+        sellCount: txType === 'sell' ? 1 : 0,
+      });
+    }
+  }
+
+  async getItemVolumeDaily(itemId: number, startDate: Date, endDate: Date): Promise<ItemVolumeDaily[]> {
+    return await db.select().from(itemVolumeDaily)
+      .where(and(
+        eq(itemVolumeDaily.itemId, itemId),
+        gte(itemVolumeDaily.date, startDate),
+        lte(itemVolumeDaily.date, endDate)
+      ))
+      .orderBy(desc(itemVolumeDaily.date));
+  }
+
+  async getItemVolumeWeekly(itemId: number): Promise<{ week: string; transactionCount: number; totalQuantity: number; totalValue: number }[]> {
+    const result = await db.execute(sql`
+      SELECT 
+        to_char(date_trunc('week', date), 'YYYY-WW') as week,
+        SUM(transaction_count)::int as "transactionCount",
+        SUM(total_quantity)::int as "totalQuantity",
+        SUM(total_value)::bigint as "totalValue"
+      FROM item_volume_daily
+      WHERE item_id = ${itemId}
+      GROUP BY date_trunc('week', date)
+      ORDER BY week DESC
+      LIMIT 12
+    `);
+    return result.rows as { week: string; transactionCount: number; totalQuantity: number; totalValue: number }[];
+  }
+
+  async getItemVolumeMonthly(itemId: number): Promise<{ month: string; transactionCount: number; totalQuantity: number; totalValue: number }[]> {
+    const result = await db.execute(sql`
+      SELECT 
+        to_char(date_trunc('month', date), 'YYYY-MM') as month,
+        SUM(transaction_count)::int as "transactionCount",
+        SUM(total_quantity)::int as "totalQuantity",
+        SUM(total_value)::bigint as "totalValue"
+      FROM item_volume_daily
+      WHERE item_id = ${itemId}
+      GROUP BY date_trunc('month', date)
+      ORDER BY month DESC
+      LIMIT 12
+    `);
+    return result.rows as { month: string; transactionCount: number; totalQuantity: number; totalValue: number }[];
+  }
+
+  // User Presence & Admin
+  async updateUserHeartbeat(userId: string): Promise<void> {
+    const now = new Date();
+    const [existing] = await db.select().from(userSessions).where(eq(userSessions.userId, userId));
+    
+    if (existing) {
+      await db.update(userSessions)
+        .set({ lastHeartbeat: now, status: "online" })
+        .where(eq(userSessions.userId, userId));
+    } else {
+      await db.insert(userSessions).values({
+        userId,
+        lastHeartbeat: now,
+        status: "online",
+      });
+    }
+    
+    await db.update(users)
+      .set({ lastSeenAt: now })
+      .where(eq(users.id, userId));
+  }
+
+  async updateUserLastSeen(userId: string): Promise<void> {
+    await db.update(users)
+      .set({ lastSeenAt: new Date() })
+      .where(eq(users.id, userId));
+  }
+
+  async getUserSession(userId: string): Promise<UserSession | undefined> {
+    const [session] = await db.select().from(userSessions).where(eq(userSessions.userId, userId));
+    return session || undefined;
+  }
+
+  async getAllUserSessions(): Promise<UserSession[]> {
+    return await db.select().from(userSessions);
+  }
+
+  async getOnlineUsers(thresholdMs: number = 60000): Promise<User[]> {
+    const threshold = new Date(Date.now() - thresholdMs);
+    const sessions = await db.select().from(userSessions)
+      .where(gte(userSessions.lastHeartbeat, threshold));
+    
+    if (sessions.length === 0) return [];
+    
+    const userIds = sessions.map(s => s.userId);
+    const onlineUsers = await db.select().from(users)
+      .where(sql`${users.id} = ANY(${userIds})`);
+    return onlineUsers;
+  }
+
+  async getAllUsers(): Promise<User[]> {
+    return await db.select().from(users).orderBy(desc(users.createdAt));
+  }
+
+  async setUserAdmin(userId: string, isAdmin: boolean): Promise<User | undefined> {
+    const [user] = await db.update(users)
+      .set({ isAdmin })
+      .where(eq(users.id, userId))
+      .returning();
+    return user || undefined;
+  }
+
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.email, email));
+    return user || undefined;
   }
 }
 

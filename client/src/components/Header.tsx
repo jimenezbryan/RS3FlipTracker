@@ -1,13 +1,18 @@
-import { TrendingUp, LogOut, Eye, Bell, Home, BarChart3, Briefcase, Target } from "lucide-react";
+import { TrendingUp, LogOut, Eye, Bell, Home, BarChart3, Briefcase, Target, Shield } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Link, useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 
 export function Header() {
   const { user } = useAuth();
   const [location] = useLocation();
+
+  const { data: adminCheck } = useQuery<{ isAdmin: boolean }>({
+    queryKey: ["/api/admin/check"],
+  });
 
   const navItems = [
     { href: "/", label: "Flips", icon: Home },
@@ -16,6 +21,7 @@ export function Header() {
     { href: "/watchlist", label: "Watchlist", icon: Eye },
     { href: "/alerts", label: "Alerts", icon: Bell },
     { href: "/stats", label: "Stats", icon: BarChart3 },
+    ...(adminCheck?.isAdmin ? [{ href: "/admin", label: "Admin", icon: Shield }] : []),
   ];
 
   return (
