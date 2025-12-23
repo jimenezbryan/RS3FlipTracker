@@ -1,4 +1,4 @@
-import { users, flips, watchlist, priceAlerts, favorites, profitGoals, portfolioCategories, portfolioHoldings, portfolioSnapshots, portfolioSnapshotItems, flipTransactions, itemVolumeDaily, userSessions, rsAccounts, type User, type UpsertUser, type Flip, type InsertFlip, type WatchlistItem, type InsertWatchlistItem, type PriceAlert, type InsertPriceAlert, type Favorite, type InsertFavorite, type ProfitGoal, type InsertProfitGoal, type PortfolioCategory, type InsertPortfolioCategory, type PortfolioHolding, type InsertPortfolioHolding, type PortfolioSnapshot, type PortfolioSnapshotItem, type FlipTransaction, type ItemVolumeDaily, type UserSession, type RsAccount, type InsertRsAccount } from "@shared/schema";
+import { users, flips, watchlist, priceAlerts, favorites, profitGoals, portfolioCategories, portfolioHoldings, portfolioHoldingTransactions, portfolioSnapshots, portfolioSnapshotItems, flipTransactions, itemVolumeDaily, userSessions, rsAccounts, type User, type UpsertUser, type Flip, type InsertFlip, type WatchlistItem, type InsertWatchlistItem, type PriceAlert, type InsertPriceAlert, type Favorite, type InsertFavorite, type ProfitGoal, type InsertProfitGoal, type PortfolioCategory, type InsertPortfolioCategory, type PortfolioHolding, type InsertPortfolioHolding, type UpdatePortfolioHolding, type PortfolioSnapshot, type PortfolioSnapshotItem, type FlipTransaction, type ItemVolumeDaily, type UserSession, type RsAccount, type InsertRsAccount, type HoldingTransaction, type InsertHoldingTransaction } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, isNull, sql, gte, lte } from "drizzle-orm";
 import { randomUUID } from "crypto";
@@ -47,8 +47,14 @@ export interface IStorage {
   createPortfolioHolding(userId: string, holding: InsertPortfolioHolding): Promise<PortfolioHolding>;
   getPortfolioHoldings(userId: string): Promise<PortfolioHolding[]>;
   getPortfolioHolding(id: string): Promise<PortfolioHolding | undefined>;
-  updatePortfolioHolding(id: string, userId: string, holding: Partial<InsertPortfolioHolding & { lastValuedPrice?: number, lastValuedAt?: Date }>): Promise<PortfolioHolding | undefined>;
+  updatePortfolioHolding(id: string, userId: string, holding: Partial<InsertPortfolioHolding & { lastValuedPrice?: number, lastValuedAt?: Date, totalCost?: number, realizedProfit?: number, realizedLoss?: number }>): Promise<PortfolioHolding | undefined>;
   deletePortfolioHolding(id: string, userId: string): Promise<boolean>;
+  
+  // Portfolio Holding Transactions
+  createHoldingTransaction(userId: string, tx: InsertHoldingTransaction): Promise<HoldingTransaction>;
+  getHoldingTransactions(holdingId: string, userId: string): Promise<HoldingTransaction[]>;
+  getHoldingTransaction(id: string): Promise<HoldingTransaction | undefined>;
+  deleteHoldingTransaction(id: string, userId: string): Promise<boolean>;
   
   // Portfolio Snapshots
   createPortfolioSnapshot(userId: string, snapshot: { totalValue: number; totalCost: number; totalProfit: number; itemCount: number; snapshotDate: Date }): Promise<PortfolioSnapshot>;
@@ -406,14 +412,18 @@ export class MemStorage implements IStorage {
   // Portfolio Holdings
   async createPortfolioHolding(userId: string, holding: InsertPortfolioHolding): Promise<PortfolioHolding> {
     const id = randomUUID();
+    const quantity = holding.quantity ?? 1;
     const newHolding: PortfolioHolding = {
       id,
       userId,
       itemId: holding.itemId,
       itemName: holding.itemName,
       itemIcon: holding.itemIcon ?? null,
-      quantity: holding.quantity ?? 1,
+      quantity,
       avgBuyPrice: holding.avgBuyPrice,
+      totalCost: holding.avgBuyPrice * quantity,
+      realizedProfit: 0,
+      realizedLoss: 0,
       categoryId: holding.categoryId ?? null,
       source: holding.source ?? "manual",
       notes: holding.notes ?? null,
@@ -448,6 +458,46 @@ export class MemStorage implements IStorage {
     const existing = this.portfolioHolds.get(id);
     if (!existing || existing.userId !== userId) return false;
     return this.portfolioHolds.delete(id);
+  }
+
+  // Portfolio Holding Transactions
+  private holdingTxs: Map<string, HoldingTransaction> = new Map();
+
+  async createHoldingTransaction(userId: string, tx: InsertHoldingTransaction): Promise<HoldingTransaction> {
+    const id = randomUUID();
+    const totalValue = tx.pricePerUnit * tx.quantity;
+    const newTx: HoldingTransaction = {
+      id,
+      holdingId: tx.holdingId,
+      userId,
+      transactionType: tx.transactionType,
+      quantity: tx.quantity,
+      pricePerUnit: tx.pricePerUnit,
+      totalValue,
+      fees: tx.fees ?? 0,
+      profitLoss: null,
+      notes: tx.notes ?? null,
+      transactionDate: tx.transactionDate,
+      createdAt: new Date(),
+    };
+    this.holdingTxs.set(id, newTx);
+    return newTx;
+  }
+
+  async getHoldingTransactions(holdingId: string, userId: string): Promise<HoldingTransaction[]> {
+    return Array.from(this.holdingTxs.values())
+      .filter(tx => tx.holdingId === holdingId && tx.userId === userId)
+      .sort((a, b) => new Date(b.transactionDate).getTime() - new Date(a.transactionDate).getTime());
+  }
+
+  async getHoldingTransaction(id: string): Promise<HoldingTransaction | undefined> {
+    return this.holdingTxs.get(id);
+  }
+
+  async deleteHoldingTransaction(id: string, userId: string): Promise<boolean> {
+    const existing = this.holdingTxs.get(id);
+    if (!existing || existing.userId !== userId) return false;
+    return this.holdingTxs.delete(id);
   }
 
   // Portfolio Snapshots
@@ -951,6 +1001,51 @@ export class DatabaseStorage implements IStorage {
 
   async deletePortfolioHolding(id: string, userId: string): Promise<boolean> {
     const result = await db.delete(portfolioHoldings).where(and(eq(portfolioHoldings.id, id), eq(portfolioHoldings.userId, userId))).returning();
+    return result.length > 0;
+  }
+
+  // Portfolio Holding Transactions
+  async createHoldingTransaction(userId: string, tx: InsertHoldingTransaction): Promise<HoldingTransaction> {
+    const totalValue = tx.pricePerUnit * tx.quantity;
+    const [newTx] = await db
+      .insert(portfolioHoldingTransactions)
+      .values({
+        holdingId: tx.holdingId,
+        userId,
+        transactionType: tx.transactionType,
+        quantity: tx.quantity,
+        pricePerUnit: tx.pricePerUnit,
+        totalValue,
+        fees: tx.fees ?? 0,
+        notes: tx.notes,
+        transactionDate: tx.transactionDate,
+      })
+      .returning();
+    return newTx;
+  }
+
+  async getHoldingTransactions(holdingId: string, userId: string): Promise<HoldingTransaction[]> {
+    return await db.select().from(portfolioHoldingTransactions)
+      .where(and(
+        eq(portfolioHoldingTransactions.holdingId, holdingId),
+        eq(portfolioHoldingTransactions.userId, userId)
+      ))
+      .orderBy(desc(portfolioHoldingTransactions.transactionDate));
+  }
+
+  async getHoldingTransaction(id: string): Promise<HoldingTransaction | undefined> {
+    const [tx] = await db.select().from(portfolioHoldingTransactions)
+      .where(eq(portfolioHoldingTransactions.id, id));
+    return tx || undefined;
+  }
+
+  async deleteHoldingTransaction(id: string, userId: string): Promise<boolean> {
+    const result = await db.delete(portfolioHoldingTransactions)
+      .where(and(
+        eq(portfolioHoldingTransactions.id, id),
+        eq(portfolioHoldingTransactions.userId, userId)
+      ))
+      .returning();
     return result.length > 0;
   }
 
