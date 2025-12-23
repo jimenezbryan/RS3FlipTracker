@@ -112,6 +112,12 @@ Database tables:
   - `getAllFlips()` storage method with user join for FlipWithUser type
   - FlipCard shows user badge when viewing as admin
   - Stats/Portfolio pages use user's own data only (not affected by admin view toggle)
+- **Price Chart Fixes for Missing ItemIds**: 
+  - PriceHistoryChart automatically resolves itemId from itemName if missing via `/api/ge/resolve-id`
+  - Backfill endpoint `/api/flips/backfill-item-ids` populates missing itemIds for existing flips
+  - Batched processing (5 flips/batch with 500ms delays) to avoid GE API rate limits
+  - Storage layer strips undefined values to prevent data clobbering during updates
+  - All flips now show "View Chart" button regardless of itemId presence
 
 ### Design System
 The application uses a gaming-themed dark mode design inspired by GE-Tracker:
