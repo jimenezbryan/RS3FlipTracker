@@ -1,7 +1,11 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, timestamp, index, jsonb, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, timestamp, index, jsonb, boolean, pgEnum } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+
+// Enums
+export const membershipStatusEnum = pgEnum("membership_status", ["F2P", "Members", "Unknown"]);
+export const rsAccountTypeEnum = pgEnum("rs_account_type", ["Main", "Ironman", "HCIM", "Ultimate", "GIM", "Alt", "Other"]);
 
 // Session storage table for Replit Auth
 export const sessions = pgTable(
@@ -27,9 +31,39 @@ export const users = pgTable("users", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+// RS Accounts - for tracking multiple RuneScape accounts (alts)
+export const rsAccounts = pgTable("rs_accounts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  displayName: varchar("display_name", { length: 12 }).notNull(), // RSN max 12 chars
+  accountType: rsAccountTypeEnum("account_type").default("Main"),
+  isDefault: boolean("is_default").default(false),
+  preferredWorld: integer("preferred_world"),
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertRsAccountSchema = createInsertSchema(rsAccounts).omit({
+  id: true,
+  userId: true,
+  createdAt: true,
+  updatedAt: true,
+}).extend({
+  displayName: z.string().min(1).max(12),
+  accountType: z.enum(["Main", "Ironman", "HCIM", "Ultimate", "GIM", "Alt", "Other"]).default("Main"),
+  isDefault: z.boolean().optional(),
+  preferredWorld: z.coerce.number().int().positive().optional(),
+  notes: z.string().optional(),
+});
+
+export type InsertRsAccount = z.infer<typeof insertRsAccountSchema>;
+export type RsAccount = typeof rsAccounts.$inferSelect;
+
 export const flips = pgTable("flips", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id),
+  rsAccountId: varchar("rs_account_id").references(() => rsAccounts.id),
   itemName: text("item_name").notNull(),
   itemIcon: text("item_icon"),
   itemId: integer("item_id"),
@@ -41,6 +75,7 @@ export const flips = pgTable("flips", {
   notes: text("notes"),
   category: varchar("category", { length: 50 }),
   strategyTag: varchar("strategy_tag", { length: 50 }).default("Other"),
+  membershipStatus: membershipStatusEnum("membership_status").default("Unknown"),
   deletedAt: timestamp("deleted_at"),
 });
 
@@ -52,6 +87,7 @@ export const insertFlipSchema = createInsertSchema(flips).omit({
   userId: true,
   deletedAt: true,
 }).extend({
+  rsAccountId: z.string().optional(),
   itemId: z.coerce.number().int().positive().optional(),
   quantity: z.coerce.number().int().positive().default(1),
   buyPrice: z.coerce.number().int().positive(),
@@ -61,6 +97,7 @@ export const insertFlipSchema = createInsertSchema(flips).omit({
   notes: z.string().optional(),
   category: z.string().max(50).optional(),
   strategyTag: z.enum(["Fast Flip", "Slow Flip", "Bulk", "High Margin", "Speculative", "Other"]).default("Other"),
+  membershipStatus: z.enum(["F2P", "Members", "Unknown"]).default("Unknown"),
 });
 
 export type InsertFlip = z.infer<typeof insertFlipSchema>;
@@ -75,6 +112,7 @@ export const watchlist = pgTable("watchlist", {
   itemIcon: text("item_icon"),
   targetBuyPrice: integer("target_buy_price"),
   targetSellPrice: integer("target_sell_price"),
+  membershipStatus: membershipStatusEnum("membership_status").default("Unknown"),
   notes: text("notes"),
   createdAt: timestamp("created_at").defaultNow(),
 });
@@ -87,6 +125,7 @@ export const insertWatchlistSchema = createInsertSchema(watchlist).omit({
   itemId: z.coerce.number().int().positive(),
   targetBuyPrice: z.coerce.number().int().positive().optional(),
   targetSellPrice: z.coerce.number().int().positive().optional(),
+  membershipStatus: z.enum(["F2P", "Members", "Unknown"]).default("Unknown"),
 });
 
 export type InsertWatchlistItem = z.infer<typeof insertWatchlistSchema>;
@@ -101,6 +140,7 @@ export const priceAlerts = pgTable("price_alerts", {
   itemIcon: text("item_icon"),
   alertType: varchar("alert_type", { length: 10 }).notNull(), // 'above' or 'below'
   targetPrice: integer("target_price").notNull(),
+  membershipStatus: membershipStatusEnum("membership_status").default("Unknown"),
   isActive: integer("is_active").notNull().default(1),
   triggeredAt: timestamp("triggered_at"),
   createdAt: timestamp("created_at").defaultNow(),
@@ -116,6 +156,7 @@ export const insertPriceAlertSchema = createInsertSchema(priceAlerts).omit({
   itemId: z.coerce.number().int().positive(),
   alertType: z.enum(["above", "below"]),
   targetPrice: z.coerce.number().int().positive(),
+  membershipStatus: z.enum(["F2P", "Members", "Unknown"]).default("Unknown"),
 });
 
 export type InsertPriceAlert = z.infer<typeof insertPriceAlertSchema>;

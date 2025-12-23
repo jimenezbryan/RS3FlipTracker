@@ -1,4 +1,4 @@
-import { users, flips, watchlist, priceAlerts, favorites, profitGoals, portfolioCategories, portfolioHoldings, portfolioSnapshots, portfolioSnapshotItems, flipTransactions, itemVolumeDaily, userSessions, type User, type UpsertUser, type Flip, type InsertFlip, type WatchlistItem, type InsertWatchlistItem, type PriceAlert, type InsertPriceAlert, type Favorite, type InsertFavorite, type ProfitGoal, type InsertProfitGoal, type PortfolioCategory, type InsertPortfolioCategory, type PortfolioHolding, type InsertPortfolioHolding, type PortfolioSnapshot, type PortfolioSnapshotItem, type FlipTransaction, type ItemVolumeDaily, type UserSession } from "@shared/schema";
+import { users, flips, watchlist, priceAlerts, favorites, profitGoals, portfolioCategories, portfolioHoldings, portfolioSnapshots, portfolioSnapshotItems, flipTransactions, itemVolumeDaily, userSessions, rsAccounts, type User, type UpsertUser, type Flip, type InsertFlip, type WatchlistItem, type InsertWatchlistItem, type PriceAlert, type InsertPriceAlert, type Favorite, type InsertFavorite, type ProfitGoal, type InsertProfitGoal, type PortfolioCategory, type InsertPortfolioCategory, type PortfolioHolding, type InsertPortfolioHolding, type PortfolioSnapshot, type PortfolioSnapshotItem, type FlipTransaction, type ItemVolumeDaily, type UserSession, type RsAccount, type InsertRsAccount } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, isNull, sql, gte, lte } from "drizzle-orm";
 import { randomUUID } from "crypto";
@@ -86,6 +86,14 @@ export interface IStorage {
   getAllUsers(): Promise<User[]>;
   setUserAdmin(userId: string, isAdmin: boolean): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
+  
+  // RS Accounts (Alt management)
+  createRsAccount(userId: string, account: InsertRsAccount): Promise<RsAccount>;
+  getRsAccounts(userId: string): Promise<RsAccount[]>;
+  getRsAccount(id: string): Promise<RsAccount | undefined>;
+  updateRsAccount(id: string, userId: string, account: Partial<InsertRsAccount>): Promise<RsAccount | undefined>;
+  deleteRsAccount(id: string, userId: string): Promise<boolean>;
+  setDefaultRsAccount(id: string, userId: string): Promise<RsAccount | undefined>;
 }
 
 export class MemStorage implements IStorage {
@@ -122,6 +130,8 @@ export class MemStorage implements IStorage {
       firstName: userData.firstName ?? null,
       lastName: userData.lastName ?? null,
       profileImageUrl: userData.profileImageUrl ?? null,
+      isAdmin: userData.isAdmin ?? false,
+      lastSeenAt: null,
       createdAt: new Date(),
       updatedAt: new Date(),
     };
@@ -134,6 +144,7 @@ export class MemStorage implements IStorage {
     const newFlip: Flip = {
       id,
       userId,
+      rsAccountId: flip.rsAccountId ?? null,
       itemName: flip.itemName,
       itemIcon: flip.itemIcon ?? null,
       itemId: flip.itemId ?? null,
@@ -144,6 +155,8 @@ export class MemStorage implements IStorage {
       sellDate: flip.sellDate ?? null,
       notes: flip.notes ?? null,
       category: flip.category ?? null,
+      strategyTag: flip.strategyTag ?? "Other",
+      membershipStatus: flip.membershipStatus ?? "Unknown",
       deletedAt: null,
     };
     this.flips.set(id, newFlip);
@@ -206,6 +219,7 @@ export class MemStorage implements IStorage {
       itemIcon: item.itemIcon ?? null,
       targetBuyPrice: item.targetBuyPrice ?? null,
       targetSellPrice: item.targetSellPrice ?? null,
+      membershipStatus: item.membershipStatus ?? "Unknown",
       notes: item.notes ?? null,
       createdAt: new Date(),
     };
@@ -247,6 +261,7 @@ export class MemStorage implements IStorage {
       itemIcon: alert.itemIcon ?? null,
       alertType: alert.alertType,
       targetPrice: alert.targetPrice,
+      membershipStatus: alert.membershipStatus ?? "Unknown",
       isActive: 1,
       triggeredAt: null,
       createdAt: new Date(),
@@ -610,6 +625,72 @@ export class MemStorage implements IStorage {
 
   async getUserByEmail(email: string): Promise<User | undefined> {
     return Array.from(this.users.values()).find(u => u.email === email);
+  }
+
+  // RS Accounts (Alt management) - MemStorage
+  private rsAccountsStore: Map<string, RsAccount> = new Map();
+
+  async createRsAccount(userId: string, account: InsertRsAccount): Promise<RsAccount> {
+    const id = randomUUID();
+    // If this is the first account or marked as default, unset others
+    if (account.isDefault) {
+      Array.from(this.rsAccountsStore.values()).forEach(acc => {
+        if (acc.userId === userId) acc.isDefault = false;
+      });
+    }
+    const newAccount: RsAccount = {
+      id,
+      userId,
+      displayName: account.displayName,
+      accountType: account.accountType ?? "Main",
+      isDefault: account.isDefault ?? false,
+      preferredWorld: account.preferredWorld ?? null,
+      notes: account.notes ?? null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    this.rsAccountsStore.set(id, newAccount);
+    return newAccount;
+  }
+
+  async getRsAccounts(userId: string): Promise<RsAccount[]> {
+    return Array.from(this.rsAccountsStore.values())
+      .filter(a => a.userId === userId)
+      .sort((a, b) => (b.isDefault ? 1 : 0) - (a.isDefault ? 1 : 0));
+  }
+
+  async getRsAccount(id: string): Promise<RsAccount | undefined> {
+    return this.rsAccountsStore.get(id);
+  }
+
+  async updateRsAccount(id: string, userId: string, account: Partial<InsertRsAccount>): Promise<RsAccount | undefined> {
+    const existing = this.rsAccountsStore.get(id);
+    if (!existing || existing.userId !== userId) return undefined;
+    const updated: RsAccount = {
+      ...existing,
+      ...account,
+      updatedAt: new Date(),
+    };
+    this.rsAccountsStore.set(id, updated);
+    return updated;
+  }
+
+  async deleteRsAccount(id: string, userId: string): Promise<boolean> {
+    const existing = this.rsAccountsStore.get(id);
+    if (!existing || existing.userId !== userId) return false;
+    return this.rsAccountsStore.delete(id);
+  }
+
+  async setDefaultRsAccount(id: string, userId: string): Promise<RsAccount | undefined> {
+    const existing = this.rsAccountsStore.get(id);
+    if (!existing || existing.userId !== userId) return undefined;
+    // Unset all other defaults for this user
+    Array.from(this.rsAccountsStore.values()).forEach(acc => {
+      if (acc.userId === userId) acc.isDefault = false;
+    });
+    existing.isDefault = true;
+    existing.updatedAt = new Date();
+    return existing;
   }
 }
 
@@ -1082,6 +1163,62 @@ export class DatabaseStorage implements IStorage {
   async getUserByEmail(email: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.email, email));
     return user || undefined;
+  }
+
+  // RS Accounts (Alt management) - DatabaseStorage
+  async createRsAccount(userId: string, account: InsertRsAccount): Promise<RsAccount> {
+    // If this is default, unset other defaults first
+    if (account.isDefault) {
+      await db.update(rsAccounts)
+        .set({ isDefault: false })
+        .where(eq(rsAccounts.userId, userId));
+    }
+    const [newAccount] = await db
+      .insert(rsAccounts)
+      .values({ ...account, userId })
+      .returning();
+    return newAccount;
+  }
+
+  async getRsAccounts(userId: string): Promise<RsAccount[]> {
+    return await db.select().from(rsAccounts)
+      .where(eq(rsAccounts.userId, userId))
+      .orderBy(desc(rsAccounts.isDefault), desc(rsAccounts.createdAt));
+  }
+
+  async getRsAccount(id: string): Promise<RsAccount | undefined> {
+    const [account] = await db.select().from(rsAccounts).where(eq(rsAccounts.id, id));
+    return account || undefined;
+  }
+
+  async updateRsAccount(id: string, userId: string, account: Partial<InsertRsAccount>): Promise<RsAccount | undefined> {
+    const [updated] = await db
+      .update(rsAccounts)
+      .set({ ...account, updatedAt: new Date() })
+      .where(and(eq(rsAccounts.id, id), eq(rsAccounts.userId, userId)))
+      .returning();
+    return updated || undefined;
+  }
+
+  async deleteRsAccount(id: string, userId: string): Promise<boolean> {
+    const result = await db
+      .delete(rsAccounts)
+      .where(and(eq(rsAccounts.id, id), eq(rsAccounts.userId, userId)));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async setDefaultRsAccount(id: string, userId: string): Promise<RsAccount | undefined> {
+    // Unset all defaults first
+    await db.update(rsAccounts)
+      .set({ isDefault: false })
+      .where(eq(rsAccounts.userId, userId));
+    // Set the new default
+    const [account] = await db
+      .update(rsAccounts)
+      .set({ isDefault: true, updatedAt: new Date() })
+      .where(and(eq(rsAccounts.id, id), eq(rsAccounts.userId, userId)))
+      .returning();
+    return account || undefined;
   }
 }
 

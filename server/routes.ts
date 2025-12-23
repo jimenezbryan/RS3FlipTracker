@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
 import { storage } from "./storage";
-import { insertFlipSchema, insertWatchlistSchema, insertPriceAlertSchema, insertFavoriteSchema, insertProfitGoalSchema, insertPortfolioCategorySchema, insertPortfolioHoldingSchema } from "@shared/schema";
+import { insertFlipSchema, insertWatchlistSchema, insertPriceAlertSchema, insertFavoriteSchema, insertProfitGoalSchema, insertPortfolioCategorySchema, insertPortfolioHoldingSchema, insertRsAccountSchema } from "@shared/schema";
 import { getItemPrice, searchItems, getItemTrend, getItemPriceHistory, getItemSuggestions } from "./ge-api";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { processScreenshot, matchItemsToGE } from "./ocr";
@@ -1081,6 +1081,78 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(transactions);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch transactions" });
+    }
+  });
+
+  // RS Accounts (Alt management) API
+  app.get("/api/rs-accounts", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const accounts = await storage.getRsAccounts(userId);
+      res.json(accounts);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch RS accounts" });
+    }
+  });
+
+  app.post("/api/rs-accounts", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const validatedAccount = insertRsAccountSchema.parse(req.body);
+      
+      // If this is the first account, make it default
+      const existingAccounts = await storage.getRsAccounts(userId);
+      if (existingAccounts.length === 0) {
+        validatedAccount.isDefault = true;
+      }
+      
+      const newAccount = await storage.createRsAccount(userId, validatedAccount);
+      res.status(201).json(newAccount);
+    } catch (error) {
+      res.status(400).json({ error: "Invalid RS account data" });
+    }
+  });
+
+  app.patch("/api/rs-accounts/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.claims.sub;
+      const updates = insertRsAccountSchema.partial().parse(req.body);
+      const updated = await storage.updateRsAccount(id, userId, updates);
+      if (!updated) {
+        return res.status(404).json({ error: "RS account not found" });
+      }
+      res.json(updated);
+    } catch (error) {
+      res.status(400).json({ error: "Invalid RS account data" });
+    }
+  });
+
+  app.delete("/api/rs-accounts/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.claims.sub;
+      const success = await storage.deleteRsAccount(id, userId);
+      if (!success) {
+        return res.status(404).json({ error: "RS account not found" });
+      }
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete RS account" });
+    }
+  });
+
+  app.post("/api/rs-accounts/:id/set-default", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.claims.sub;
+      const account = await storage.setDefaultRsAccount(id, userId);
+      if (!account) {
+        return res.status(404).json({ error: "RS account not found" });
+      }
+      res.json(account);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to set default RS account" });
     }
   });
 

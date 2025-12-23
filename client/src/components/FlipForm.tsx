@@ -13,8 +13,9 @@ import { format, subDays } from "date-fns";
 import { cn } from "@/lib/utils";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import type { Favorite } from "@shared/schema";
+import type { Favorite, RsAccount } from "@shared/schema";
 import { PriceHistoryChart } from "./PriceHistoryChart";
+import { calculateFlipTax, formatGp } from "@shared/taxCalculator";
 
 interface GEItem {
   id: number;
@@ -76,6 +77,8 @@ interface FlipFormProps {
     notes?: string;
     category?: string;
     strategyTag: "Fast Flip" | "Slow Flip" | "Bulk" | "High Margin" | "Speculative" | "Other";
+    membershipStatus: "F2P" | "Members" | "Unknown";
+    rsAccountId?: string;
   }) => void;
   openPositions?: OpenPosition[];
 }
@@ -83,6 +86,8 @@ interface FlipFormProps {
 const CATEGORIES = ["High Value", "Consumables", "Weapons", "Armor", "Skilling", "Misc"];
 
 const STRATEGIES = ["Fast Flip", "Slow Flip", "Bulk", "High Margin", "Speculative", "Other"];
+
+const MEMBERSHIP_STATUSES = ["F2P", "Members", "Unknown"] as const;
 
 export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
   const [itemName, setItemName] = useState("");
@@ -94,10 +99,26 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
   const [notes, setNotes] = useState("");
   const [category, setCategory] = useState("none");
   const [strategyTag, setStrategyTag] = useState<"Fast Flip" | "Slow Flip" | "Bulk" | "High Margin" | "Speculative" | "Other">("Other");
+  const [membershipStatus, setMembershipStatus] = useState<"F2P" | "Members" | "Unknown">("Unknown");
+  const [selectedRsAccountId, setSelectedRsAccountId] = useState<string>("");
   const [buyDateOpen, setBuyDateOpen] = useState(false);
   const [sellDateOpen, setSellDateOpen] = useState(false);
   
   const [gePrice, setGePrice] = useState<GEItem | null>(null);
+  
+  const { data: rsAccounts = [] } = useQuery<RsAccount[]>({
+    queryKey: ["/api/rs-accounts"],
+  });
+  
+  const taxCalc = useMemo(() => {
+    const buy = parseInt(buyPrice) || 0;
+    const sell = parseInt(sellPrice) || 0;
+    const qty = parseInt(quantity) || 1;
+    if (sell > 0 && buy > 0) {
+      return calculateFlipTax(sell, buy, qty, gePrice?.id, itemName);
+    }
+    return null;
+  }, [buyPrice, sellPrice, quantity, gePrice?.id, itemName]);
   const [priceTrend, setPriceTrend] = useState<PriceTrend | null>(null);
   const [aiSuggestions, setAiSuggestions] = useState<PriceSuggestion | null>(null);
   const [showChart, setShowChart] = useState(false);
@@ -324,6 +345,8 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
       notes: notes || undefined,
       category: category && category !== "none" ? category : undefined,
       strategyTag,
+      membershipStatus,
+      rsAccountId: selectedRsAccountId || undefined,
     });
 
     setItemName("");
@@ -333,6 +356,7 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
     setBuyDate(new Date());
     setSellDate(undefined);
     setNotes("");
+    setMembershipStatus("Unknown");
     setCategory("none");
     setStrategyTag("Other");
     setGePrice(null);
@@ -657,6 +681,41 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
               </div>
             </div>
 
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="membershipStatus">Item Type</Label>
+                <Select value={membershipStatus} onValueChange={(v) => setMembershipStatus(v as typeof membershipStatus)}>
+                  <SelectTrigger id="membershipStatus" data-testid="select-membership">
+                    <SelectValue placeholder="Select item type..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {MEMBERSHIP_STATUSES.map(status => (
+                      <SelectItem key={status} value={status}>{status}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {rsAccounts.length > 0 && (
+                <div className="space-y-2">
+                  <Label htmlFor="rsAccount">RS Account</Label>
+                  <Select value={selectedRsAccountId} onValueChange={setSelectedRsAccountId}>
+                    <SelectTrigger id="rsAccount" data-testid="select-rs-account">
+                      <SelectValue placeholder="Select account..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">Any Account</SelectItem>
+                      {rsAccounts.map(acc => (
+                        <SelectItem key={acc.id} value={acc.id}>
+                          {acc.displayName} ({acc.accountType})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </div>
+
             {duplicatePosition && (
               <div className="rounded-md border border-warning bg-warning/10 p-3" data-testid="warning-duplicate-position">
                 <div className="flex items-start gap-2">
@@ -945,6 +1004,34 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
                 data-testid="input-sell-price"
                 className="font-mono"
               />
+              {taxCalc && (
+                <div className="space-y-1 text-xs">
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Tax ({taxCalc.isTaxExempt ? "Exempt" : "2%"}):</span>
+                    <span className="font-mono text-destructive">
+                      -{formatGp(taxCalc.totalTax)} gp
+                    </span>
+                  </div>
+                  <div className="flex justify-between font-medium">
+                    <span>Net Received:</span>
+                    <span className="font-mono text-success">
+                      {formatGp(taxCalc.netSellTotal)} gp
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Profit:</span>
+                    <span className={cn(
+                      "font-mono font-semibold",
+                      taxCalc.profit >= 0 ? "text-success" : "text-destructive"
+                    )}>
+                      {taxCalc.profit >= 0 ? "+" : ""}{formatGp(taxCalc.profit)} gp
+                    </span>
+                  </div>
+                  {taxCalc.isTaxExempt && taxCalc.exemptReason && (
+                    <p className="text-muted-foreground italic">{taxCalc.exemptReason}</p>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 

@@ -1,4 +1,4 @@
-import { TrendingUp, LogOut, Eye, Bell, Home, BarChart3, Briefcase, Target, Shield } from "lucide-react";
+import { TrendingUp, LogOut, Eye, Bell, Home, BarChart3, Briefcase, Target, Shield, User } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -55,17 +55,19 @@ export function Header() {
         </div>
         <div className="flex items-center gap-3">
           {user && (
-            <div className="flex items-center gap-2">
-              <Avatar className="h-8 w-8">
-                <AvatarImage src={user.profileImageUrl ?? undefined} alt={user.firstName ?? "User"} />
-                <AvatarFallback>
-                  {(user.firstName?.[0] ?? user.email?.[0] ?? "U").toUpperCase()}
-                </AvatarFallback>
-              </Avatar>
-              <span className="text-sm text-muted-foreground hidden sm:inline">
-                {user.firstName ?? user.email ?? "User"}
-              </span>
-            </div>
+            <Link href="/profile">
+              <Button variant="ghost" className="flex items-center gap-2 px-2" data-testid="nav-profile">
+                <Avatar className="h-8 w-8">
+                  <AvatarImage src={user.profileImageUrl ?? undefined} alt={user.firstName ?? "User"} />
+                  <AvatarFallback>
+                    {(user.firstName?.[0] ?? user.email?.[0] ?? "U").toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+                <span className="text-sm text-muted-foreground hidden sm:inline">
+                  {user.firstName ?? user.email ?? "User"}
+                </span>
+              </Button>
+            </Link>
           )}
           <ThemeToggle />
           <Button variant="ghost" size="icon" asChild data-testid="button-logout">

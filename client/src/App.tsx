@@ -13,6 +13,7 @@ import Stats from "@/pages/Stats";
 import Portfolio from "@/pages/Portfolio";
 import Goals from "@/pages/Goals";
 import Admin from "@/pages/Admin";
+import Profile from "@/pages/Profile";
 import NotFound from "@/pages/not-found";
 
 function Router() {
@@ -45,6 +46,7 @@ function Router() {
       <Route path="/watchlist" component={Watchlist} />
       <Route path="/alerts" component={Alerts} />
       <Route path="/stats" component={Stats} />
+      <Route path="/profile" component={Profile} />
       <Route path="/admin" component={Admin} />
       <Route component={NotFound} />
     </Switch>

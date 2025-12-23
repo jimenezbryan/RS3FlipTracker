@@ -168,6 +168,8 @@ export default function Home() {
     notes?: string;
     category?: string;
     strategyTag: "Fast Flip" | "Slow Flip" | "Bulk" | "High Margin" | "Speculative" | "Other";
+    membershipStatus: "F2P" | "Members" | "Unknown";
+    rsAccountId?: string;
   }) => {
     createFlipMutation.mutate(flipData);
   };
