@@ -6,16 +6,52 @@ import { GoalsProgress } from "@/components/GoalsProgress";
 import { PriceHistoryChart } from "@/components/PriceHistoryChart";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import type { Flip } from "@shared/schema";
+import type { Flip, User } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import { Users } from "lucide-react";
 
 export default function Home() {
   const { toast } = useToast();
   const [selectedChart, setSelectedChart] = useState<{ itemId: number; itemName: string } | null>(null);
+  const [viewScope, setViewScope] = useState<'mine' | 'all'>('mine');
+  const [filterUserId, setFilterUserId] = useState<string | null>(null);
   
+  // Check if current user is admin
+  const { data: adminCheck } = useQuery<{ isAdmin: boolean }>({
+    queryKey: ["/api/admin/check"],
+  });
+  const isAdmin = adminCheck?.isAdmin ?? false;
+
+  // Fetch users list for admin filter dropdown
+  const { data: allUsers = [] } = useQuery<User[]>({
+    queryKey: ["/api/admin/users"],
+    enabled: isAdmin && viewScope === 'all',
+  });
+
+  // Build query key with scope and filter params
+  const flipsQueryKey = isAdmin && viewScope === 'all' 
+    ? filterUserId 
+      ? ["/api/flips", { scope: 'all', userId: filterUserId }]
+      : ["/api/flips", { scope: 'all' }]
+    : ["/api/flips"];
+
+  // Build query URL with params
+  const flipsQueryUrl = isAdmin && viewScope === 'all'
+    ? filterUserId
+      ? `/api/flips?scope=all&userId=${filterUserId}`
+      : `/api/flips?scope=all`
+    : `/api/flips`;
+
   const { data: flips = [], isLoading } = useQuery<Flip[]>({
-    queryKey: ["/api/flips"],
+    queryKey: flipsQueryKey,
+    queryFn: async () => {
+      const res = await fetch(flipsQueryUrl, { credentials: 'include' });
+      if (!res.ok) throw new Error('Failed to fetch flips');
+      return res.json();
+    },
   });
 
   const createFlipMutation = useMutation({
@@ -278,9 +314,60 @@ export default function Home() {
     <div className="min-h-screen bg-background">
       <Header />
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
+        {isAdmin && (
+          <div className="mb-6 flex flex-wrap items-center gap-3 p-4 rounded-lg border bg-card">
+            <div className="flex items-center gap-2">
+              <Users className="h-4 w-4 text-muted-foreground" />
+              <span className="text-sm font-medium">View:</span>
+            </div>
+            <Select 
+              value={viewScope} 
+              onValueChange={(value: 'mine' | 'all') => {
+                setViewScope(value);
+                if (value === 'mine') setFilterUserId(null);
+              }}
+            >
+              <SelectTrigger className="w-[140px]" data-testid="select-view-scope">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="mine">My Flips</SelectItem>
+                <SelectItem value="all">All Users</SelectItem>
+              </SelectContent>
+            </Select>
+            
+            {viewScope === 'all' && (
+              <>
+                <span className="text-sm text-muted-foreground">Filter by user:</span>
+                <Select 
+                  value={filterUserId ?? 'all'} 
+                  onValueChange={(value) => setFilterUserId(value === 'all' ? null : value)}
+                >
+                  <SelectTrigger className="w-[200px]" data-testid="select-filter-user">
+                    <SelectValue placeholder="All users" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All users</SelectItem>
+                    {allUsers.map((user) => (
+                      <SelectItem key={user.id} value={user.id}>
+                        {user.firstName || user.email?.split('@')[0] || user.id}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Badge variant="outline" className="text-xs">
+                  {flips.length} flip{flips.length !== 1 ? 's' : ''}
+                </Badge>
+              </>
+            )}
+          </div>
+        )}
+
         <div className="mb-8 grid gap-4 sm:grid-cols-3">
           <div className="rounded-lg border bg-card p-4">
-            <div className="text-sm text-muted-foreground">Total Flips</div>
+            <div className="text-sm text-muted-foreground">
+              {viewScope === 'all' ? 'Total Flips (All Users)' : 'Total Flips'}
+            </div>
             <div className="mt-2 text-2xl font-semibold" data-testid="text-total-flips">
               {flips.length}
             </div>
@@ -292,7 +379,9 @@ export default function Home() {
             </div>
           </div>
           <div className="rounded-lg border bg-card p-4">
-            <div className="text-sm text-muted-foreground">Total Profit</div>
+            <div className="text-sm text-muted-foreground">
+              {viewScope === 'all' ? 'Total Profit (All Users)' : 'Total Profit'}
+            </div>
             <div
               className={`mt-2 font-mono text-2xl font-semibold ${
                 totalProfit > 0 ? "text-success" : totalProfit < 0 ? "text-destructive" : ""

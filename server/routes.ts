@@ -206,15 +206,36 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Check if user is an admin
       const isAdminUser = user && (ADMIN_EMAILS.includes(user.email ?? "") || user.isAdmin === true);
       
-      if (isAdminUser) {
-        // Admin users see all flips with user info
-        const allFlips = await storage.getAllFlips();
-        res.json(allFlips);
-      } else {
-        // Regular users only see their own flips
+      // Query parameters for filtering
+      const scope = req.query.scope as string | undefined; // 'mine' | 'all'
+      const filterUserId = req.query.userId as string | undefined;
+      
+      // Non-admins can only see their own flips
+      if (!isAdminUser) {
+        if (scope === 'all' || filterUserId) {
+          return res.status(403).json({ error: "Admin access required to view other users' flips" });
+        }
         const userFlips = await storage.getFlips(userId);
-        res.json(userFlips);
+        return res.json(userFlips);
       }
+      
+      // Admin users - handle scope and filtering
+      if (scope === 'all') {
+        // Get all flips from all users with user info
+        const allFlips = await storage.getAllFlips();
+        
+        // Optionally filter by specific user
+        if (filterUserId) {
+          const filteredFlips = allFlips.filter(flip => flip.userId === filterUserId);
+          return res.json(filteredFlips);
+        }
+        
+        return res.json(allFlips);
+      }
+      
+      // Default: admin sees only their own flips (scope='mine' or no scope)
+      const adminFlips = await storage.getFlips(userId);
+      res.json(adminFlips);
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch flips" });
     }
