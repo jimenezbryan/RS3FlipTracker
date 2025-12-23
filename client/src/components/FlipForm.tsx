@@ -258,6 +258,19 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
       setMembershipStatus(item.isMembers ? "Members" : "F2P");
     }
     
+    if (item.examine) {
+      const examineText = item.examine.toLowerCase();
+      if (examineText.includes("weapon") || examineText.includes("sword") || examineText.includes("bow") || examineText.includes("staff") || examineText.includes("wand")) {
+        setCategory("Weapons");
+      } else if (examineText.includes("armour") || examineText.includes("armor") || examineText.includes("helm") || examineText.includes("shield") || examineText.includes("platebody") || examineText.includes("platelegs")) {
+        setCategory("Armor");
+      } else if (examineText.includes("potion") || examineText.includes("food") || examineText.includes("eat") || examineText.includes("drink") || examineText.includes("restores")) {
+        setCategory("Consumables");
+      } else if (examineText.includes("ore") || examineText.includes("log") || examineText.includes("fish") || examineText.includes("herb") || examineText.includes("seed") || examineText.includes("bar") || examineText.includes("rune")) {
+        setCategory("Skilling");
+      }
+    }
+    
     if (item.id) {
       fetchTrend(item.id);
     }
@@ -1181,21 +1194,6 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
                 </PopoverContent>
               </Popover>
             </div>
-          </div>
-
-          <div className="space-y-2">
-            <Label htmlFor="category">Category</Label>
-            <Select value={category} onValueChange={setCategory}>
-              <SelectTrigger data-testid="select-category">
-                <SelectValue placeholder="Select category (optional)" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">None</SelectItem>
-                {CATEGORIES.map((cat) => (
-                  <SelectItem key={cat} value={cat}>{cat}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
           </div>
 
           <div className="space-y-2">

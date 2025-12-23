@@ -237,17 +237,12 @@ export function FlipCard({ flip, onDelete, onEdit, onQuickSell, onViewChart }: F
                 </div>
               </div>
 
-              {(flip.category || flip.strategyTag || flip.membershipStatus) && (
+              {(flip.category || flip.membershipStatus) && (
                 <div className="flex flex-wrap gap-2 mt-3">
                   {flip.category && (
                     <Badge variant="secondary" className="text-xs h-5">
                       <Tag className="h-3 w-3 mr-1" />
                       {flip.category}
-                    </Badge>
-                  )}
-                  {flip.strategyTag && flip.strategyTag !== "Other" && (
-                    <Badge variant="outline" className="text-xs h-5">
-                      {flip.strategyTag}
                     </Badge>
                   )}
                   {flip.membershipStatus && flip.membershipStatus !== "Unknown" && (
