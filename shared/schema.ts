@@ -240,6 +240,9 @@ export const portfolioHoldings = pgTable("portfolio_holdings", {
   itemIcon: text("item_icon"),
   quantity: integer("quantity").notNull().default(1),
   avgBuyPrice: integer("avg_buy_price").notNull(), // weighted average buy price
+  totalCost: integer("total_cost").notNull().default(0), // total invested
+  realizedProfit: integer("realized_profit").notNull().default(0), // profit from completed sales
+  realizedLoss: integer("realized_loss").notNull().default(0), // loss from completed sales
   categoryId: varchar("category_id").references(() => portfolioCategories.id),
   source: varchar("source", { length: 20 }).default("manual"), // 'manual', 'screenshot', 'flip'
   notes: text("notes"),
@@ -252,6 +255,9 @@ export const portfolioHoldings = pgTable("portfolio_holdings", {
 export const insertPortfolioHoldingSchema = createInsertSchema(portfolioHoldings).omit({
   id: true,
   userId: true,
+  totalCost: true,
+  realizedProfit: true,
+  realizedLoss: true,
   lastValuedPrice: true,
   lastValuedAt: true,
   createdAt: true,
@@ -265,8 +271,51 @@ export const insertPortfolioHoldingSchema = createInsertSchema(portfolioHoldings
   notes: z.string().optional(),
 });
 
+export const updatePortfolioHoldingSchema = z.object({
+  quantity: z.coerce.number().int().positive().optional(),
+  avgBuyPrice: z.coerce.number().int().positive().optional(),
+  categoryId: z.string().nullable().optional(),
+  notes: z.string().optional(),
+});
+
 export type InsertPortfolioHolding = z.infer<typeof insertPortfolioHoldingSchema>;
+export type UpdatePortfolioHolding = z.infer<typeof updatePortfolioHoldingSchema>;
 export type PortfolioHolding = typeof portfolioHoldings.$inferSelect;
+
+// Portfolio holding transactions - track buy/sell history per holding
+export const portfolioHoldingTransactions = pgTable("portfolio_holding_transactions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  holdingId: varchar("holding_id").notNull().references(() => portfolioHoldings.id, { onDelete: "cascade" }),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  transactionType: varchar("transaction_type", { length: 10 }).notNull(), // 'buy' or 'sell'
+  quantity: integer("quantity").notNull(),
+  pricePerUnit: integer("price_per_unit").notNull(),
+  totalValue: integer("total_value").notNull(),
+  fees: integer("fees").default(0), // GE tax for sells
+  profitLoss: integer("profit_loss"), // calculated on sell: (sellPrice - avgBuyPrice) * quantity - fees
+  notes: text("notes"),
+  transactionDate: timestamp("transaction_date").notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertHoldingTransactionSchema = createInsertSchema(portfolioHoldingTransactions).omit({
+  id: true,
+  userId: true,
+  totalValue: true,
+  profitLoss: true,
+  createdAt: true,
+}).extend({
+  holdingId: z.string(),
+  transactionType: z.enum(["buy", "sell"]),
+  quantity: z.coerce.number().int().positive(),
+  pricePerUnit: z.coerce.number().int().positive(),
+  fees: z.coerce.number().int().min(0).optional(),
+  notes: z.string().optional(),
+  transactionDate: z.coerce.date(),
+});
+
+export type InsertHoldingTransaction = z.infer<typeof insertHoldingTransactionSchema>;
+export type HoldingTransaction = typeof portfolioHoldingTransactions.$inferSelect;
 
 // Portfolio snapshots for tracking value over time
 export const portfolioSnapshots = pgTable("portfolio_snapshots", {
