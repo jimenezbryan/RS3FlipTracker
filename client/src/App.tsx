@@ -12,6 +12,7 @@ import Alerts from "@/pages/Alerts";
 import Stats from "@/pages/Stats";
 import Portfolio from "@/pages/Portfolio";
 import Goals from "@/pages/Goals";
+import Suggestions from "@/pages/Suggestions";
 import Admin from "@/pages/Admin";
 import Profile from "@/pages/Profile";
 import NotFound from "@/pages/not-found";
@@ -43,6 +44,7 @@ function Router() {
       <Route path="/" component={Home} />
       <Route path="/portfolio" component={Portfolio} />
       <Route path="/goals" component={Goals} />
+      <Route path="/suggestions" component={Suggestions} />
       <Route path="/watchlist" component={Watchlist} />
       <Route path="/alerts" component={Alerts} />
       <Route path="/stats" component={Stats} />

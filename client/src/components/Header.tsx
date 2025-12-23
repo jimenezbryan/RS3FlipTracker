@@ -1,4 +1,4 @@
-import { TrendingUp, LogOut, Eye, Bell, Home, BarChart3, Briefcase, Target, Shield, User } from "lucide-react";
+import { TrendingUp, LogOut, Eye, Bell, Home, BarChart3, Briefcase, Target, Shield, User, Sparkles } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -18,6 +18,7 @@ export function Header() {
     { href: "/", label: "Flips", icon: Home },
     { href: "/portfolio", label: "Portfolio", icon: Briefcase },
     { href: "/goals", label: "Goals", icon: Target },
+    { href: "/suggestions", label: "AI Tips", icon: Sparkles },
     { href: "/watchlist", label: "Watchlist", icon: Eye },
     { href: "/alerts", label: "Alerts", icon: Bell },
     { href: "/stats", label: "Stats", icon: BarChart3 },

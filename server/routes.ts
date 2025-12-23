@@ -7,6 +7,7 @@ import { getItemPrice, searchItems, getItemTrend, getItemPriceHistory, getItemSu
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { processScreenshot, matchItemsToGE } from "./ocr";
 import { analyzeRS3Screenshot } from "./ai-vision";
+import { analyzeUserTradingProfile, getPersonalizedRecommendations } from "./ai-recommendations";
 
 const upload = multer({ 
   storage: multer.memoryStorage(),
@@ -149,6 +150,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     } catch (error) {
       res.status(500).json({ error: "Failed to generate suggestions" });
+    }
+  });
+
+  app.get("/api/ai/trading-profile", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const flips = await storage.getFlips(userId);
+      const profile = analyzeUserTradingProfile(flips);
+      res.json(profile);
+    } catch (error) {
+      console.error("Error analyzing trading profile:", error);
+      res.status(500).json({ error: "Failed to analyze trading profile" });
+    }
+  });
+
+  app.get("/api/ai/recommendations", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const flips = await storage.getFlips(userId);
+      
+      if (flips.length < 3) {
+        return res.json({
+          recommendations: [],
+          message: "Complete at least 3 flips to get personalized recommendations",
+          profile: null,
+        });
+      }
+      
+      const profile = analyzeUserTradingProfile(flips);
+      const recommendations = await getPersonalizedRecommendations(profile, flips);
+      
+      res.json({
+        recommendations,
+        profile,
+        message: recommendations.length > 0 ? null : "No recommendations available at this time",
+      });
+    } catch (error) {
+      console.error("Error generating recommendations:", error);
+      res.status(500).json({ error: "Failed to generate recommendations" });
     }
   });
 
