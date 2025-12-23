@@ -1,4 +1,4 @@
-import { users, flips, watchlist, priceAlerts, favorites, profitGoals, portfolioCategories, portfolioHoldings, portfolioHoldingTransactions, portfolioSnapshots, portfolioSnapshotItems, flipTransactions, itemVolumeDaily, userSessions, rsAccounts, type User, type UpsertUser, type Flip, type InsertFlip, type WatchlistItem, type InsertWatchlistItem, type PriceAlert, type InsertPriceAlert, type Favorite, type InsertFavorite, type ProfitGoal, type InsertProfitGoal, type PortfolioCategory, type InsertPortfolioCategory, type PortfolioHolding, type InsertPortfolioHolding, type UpdatePortfolioHolding, type PortfolioSnapshot, type PortfolioSnapshotItem, type FlipTransaction, type ItemVolumeDaily, type UserSession, type RsAccount, type InsertRsAccount, type HoldingTransaction, type InsertHoldingTransaction } from "@shared/schema";
+import { users, flips, watchlist, priceAlerts, favorites, profitGoals, portfolioCategories, portfolioHoldings, portfolioHoldingTransactions, portfolioSnapshots, portfolioSnapshotItems, flipTransactions, itemVolumeDaily, userSessions, rsAccounts, type User, type UpsertUser, type Flip, type InsertFlip, type FlipWithUser, type WatchlistItem, type InsertWatchlistItem, type PriceAlert, type InsertPriceAlert, type Favorite, type InsertFavorite, type ProfitGoal, type InsertProfitGoal, type PortfolioCategory, type InsertPortfolioCategory, type PortfolioHolding, type InsertPortfolioHolding, type UpdatePortfolioHolding, type PortfolioSnapshot, type PortfolioSnapshotItem, type FlipTransaction, type ItemVolumeDaily, type UserSession, type RsAccount, type InsertRsAccount, type HoldingTransaction, type InsertHoldingTransaction } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, isNull, sql, gte, lte, inArray } from "drizzle-orm";
 import { randomUUID } from "crypto";
@@ -10,6 +10,7 @@ export interface IStorage {
   
   createFlip(userId: string, flip: InsertFlip): Promise<Flip>;
   getFlips(userId: string): Promise<Flip[]>;
+  getAllFlips(): Promise<FlipWithUser[]>;
   getFlip(id: string): Promise<Flip | undefined>;
   updateFlip(id: string, userId: string, flip: Partial<InsertFlip>): Promise<Flip | undefined>;
   deleteFlip(id: string, userId: string): Promise<boolean>;
@@ -188,6 +189,25 @@ export class MemStorage implements IStorage {
     return Array.from(this.flips.values())
       .filter(f => f.userId === userId && f.deletedAt === null)
       .sort((a, b) => new Date(b.buyDate).getTime() - new Date(a.buyDate).getTime());
+  }
+
+  async getAllFlips(): Promise<FlipWithUser[]> {
+    const allFlips = Array.from(this.flips.values())
+      .filter(f => f.deletedAt === null)
+      .sort((a, b) => new Date(b.buyDate).getTime() - new Date(a.buyDate).getTime());
+    
+    return allFlips.map(flip => {
+      const user = this.users.get(flip.userId);
+      return {
+        ...flip,
+        user: user ? {
+          id: user.id,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          email: user.email,
+        } : undefined,
+      };
+    });
   }
 
   async getFlip(id: string): Promise<Flip | undefined> {
@@ -821,6 +841,28 @@ export class DatabaseStorage implements IStorage {
     return await db.select().from(flips)
       .where(and(eq(flips.userId, userId), isNull(flips.deletedAt)))
       .orderBy(desc(flips.buyDate));
+  }
+
+  async getAllFlips(): Promise<FlipWithUser[]> {
+    const result = await db
+      .select({
+        flip: flips,
+        user: {
+          id: users.id,
+          firstName: users.firstName,
+          lastName: users.lastName,
+          email: users.email,
+        },
+      })
+      .from(flips)
+      .leftJoin(users, eq(flips.userId, users.id))
+      .where(isNull(flips.deletedAt))
+      .orderBy(desc(flips.buyDate));
+    
+    return result.map(row => ({
+      ...row.flip,
+      user: row.user || undefined,
+    }));
   }
 
   async getFlip(id: string): Promise<Flip | undefined> {

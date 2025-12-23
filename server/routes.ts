@@ -192,11 +192,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Admin emails for checking admin privileges
+  const ADMIN_EMAILS = [
+    "fjnovarum@gmail.com",
+    "bjimenez@virtualsyncsolutions.com"
+  ];
+
   app.get("/api/flips", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
-      const flips = await storage.getFlips(userId);
-      res.json(flips);
+      const user = await storage.getUser(userId);
+      
+      // Check if user is an admin
+      const isAdminUser = user && (ADMIN_EMAILS.includes(user.email ?? "") || user.isAdmin === true);
+      
+      if (isAdminUser) {
+        // Admin users see all flips with user info
+        const allFlips = await storage.getAllFlips();
+        res.json(allFlips);
+      } else {
+        // Regular users only see their own flips
+        const userFlips = await storage.getFlips(userId);
+        res.json(userFlips);
+      }
     } catch (error) {
       res.status(500).json({ error: "Failed to fetch flips" });
     }
@@ -1181,10 +1199,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // === ADMIN ENDPOINTS ===
-  const ADMIN_EMAILS = [
-    "fjnovarum@gmail.com",
-    "bjimenez@virtualsyncsolutions.com"
-  ];
+  // Note: ADMIN_EMAILS is defined near the top of registerRoutes function
   
   // Middleware to check if user is admin
   const isAdmin = async (req: any, res: any, next: any) => {

@@ -9,6 +9,13 @@ import { formatDistanceToNow, format } from "date-fns";
 import { cn } from "@/lib/utils";
 import { calculateFlipTax, formatGp } from "@shared/taxCalculator";
 
+interface FlipUser {
+  id: string;
+  firstName: string | null;
+  lastName: string | null;
+  email: string | null;
+}
+
 interface Flip {
   id: string;
   itemName: string;
@@ -25,6 +32,7 @@ interface Flip {
   membershipStatus?: string;
   isMembers?: boolean;
   geLimit?: number;
+  user?: FlipUser;
 }
 
 interface FlipCardProps {
@@ -116,6 +124,11 @@ export function FlipCard({ flip, onDelete, onEdit, onQuickSell, onViewChart }: F
               {!isCompleted && (
                 <Badge variant="outline" className="text-xs h-5 bg-warning/10 text-warning border-warning/30">
                   Open
+                </Badge>
+              )}
+              {flip.user && (
+                <Badge variant="secondary" className="text-xs h-5" data-testid={`flip-user-${flip.id}`}>
+                  {flip.user.firstName || flip.user.email?.split('@')[0] || 'User'}
                 </Badge>
               )}
             </div>

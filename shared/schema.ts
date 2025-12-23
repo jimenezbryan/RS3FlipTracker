@@ -107,6 +107,15 @@ export const insertFlipSchema = createInsertSchema(flips).omit({
 export type InsertFlip = z.infer<typeof insertFlipSchema>;
 export type Flip = typeof flips.$inferSelect;
 
+export type FlipWithUser = Flip & {
+  user?: {
+    id: string;
+    firstName: string | null;
+    lastName: string | null;
+    email: string | null;
+  };
+};
+
 // Watchlist table for tracking items without logging flips
 export const watchlist = pgTable("watchlist", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),

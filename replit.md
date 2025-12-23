@@ -104,6 +104,11 @@ Database tables:
 - **Item Autocomplete**: Type to search all GE items with fuzzy matching, shows icons and live prices
 - **Date Input UX**: Calendar/Popover with quick presets (Today, Yesterday, Week ago)
 - **Storage Fallback**: MemStorage fallback when database is unavailable
+- **Admin Flip Visibility**: Admin users can view all flips from all users
+  - Admin emails: fjnovarum@gmail.com, bjimenez@virtualsyncsolutions.com
+  - `/api/flips` returns all flips with user info for admins, own flips only for regular users
+  - `getAllFlips()` storage method with user join for FlipWithUser type
+  - FlipCard shows user badge when viewing as admin
 
 ### Design System
 The application uses a gaming-themed dark mode design inspired by GE-Tracker:
