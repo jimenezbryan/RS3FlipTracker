@@ -104,11 +104,14 @@ Database tables:
 - **Item Autocomplete**: Type to search all GE items with fuzzy matching, shows icons and live prices
 - **Date Input UX**: Calendar/Popover with quick presets (Today, Yesterday, Week ago)
 - **Storage Fallback**: MemStorage fallback when database is unavailable
-- **Admin Flip Visibility**: Admin users can view all flips from all users
+- **Admin Flip Visibility & Filtering**: Admin users can view and filter all flips from all users
   - Admin emails: fjnovarum@gmail.com, bjimenez@virtualsyncsolutions.com
-  - `/api/flips` returns all flips with user info for admins, own flips only for regular users
+  - Toggle between "My Flips" (personal stats) and "All Users" (admin view) on Home page
+  - Filter by specific user when viewing all users
+  - `/api/flips?scope=mine|all&userId=<id>` - scope and user filtering with admin validation
   - `getAllFlips()` storage method with user join for FlipWithUser type
   - FlipCard shows user badge when viewing as admin
+  - Stats/Portfolio pages use user's own data only (not affected by admin view toggle)
 
 ### Design System
 The application uses a gaming-themed dark mode design inspired by GE-Tracker:
