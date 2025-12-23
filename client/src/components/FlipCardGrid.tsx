@@ -106,9 +106,9 @@ export function FlipCardGrid({ flips, onDelete, onEdit, onQuickSell, onViewChart
     }
 
     if (statusFilter === "completed") {
-      result = result.filter(flip => flip.sellPrice !== undefined && flip.sellPrice !== null);
+      result = result.filter(flip => flip.sellDate !== undefined && flip.sellDate !== null);
     } else if (statusFilter === "open") {
-      result = result.filter(flip => flip.sellPrice === undefined || flip.sellPrice === null);
+      result = result.filter(flip => flip.sellDate === undefined || flip.sellDate === null);
     }
 
     if (categoryFilter !== "all") {

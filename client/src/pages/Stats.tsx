@@ -45,8 +45,8 @@ export default function Stats() {
   });
 
   const stats = useMemo(() => {
-    const completedFlips = flips.filter(f => f.sellPrice !== null && f.sellPrice !== undefined);
-    const openFlips = flips.filter(f => f.sellPrice === null || f.sellPrice === undefined);
+    const completedFlips = flips.filter(f => f.sellDate !== null && f.sellDate !== undefined);
+    const openFlips = flips.filter(f => f.sellDate === null || f.sellDate === undefined);
     
     const flipsWithProfit = completedFlips
       .map(f => ({ flip: f, profit: calculateProfit(f), roi: calculateROI(f) }))
