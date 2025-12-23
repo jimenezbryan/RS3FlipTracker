@@ -56,6 +56,16 @@ Database tables:
 - `portfolioSnapshotItems` - Individual item data within each snapshot
 
 ### Recent Updates
+- **Card-Based Flip Display**: Replaced table layout with responsive card grid
+  - FlipCard component with Coinbase-style UX: expandable cards, smooth animations
+  - Essential info (Item, Prices, Profit badge) visible by default
+  - Secondary details (ROI, Tax, Dates, Notes, GE Limit) in expandable section
+  - FlipCardGrid with CSS Grid layout: 1 column mobile, 2-3 columns desktop
+  - Filter and sort controls with dropdown menus
+- **Auto-Fetch Item Metadata**: When selecting items from autocomplete, automatically fetches:
+  - Membership status (Members/F2P) - stored in isMembers column
+  - GE Buy Limit - stored in geLimit column
+  - Volume data displayed in form
 - **Strategy Tags for Flips**: Each flip is now tagged with a trading strategy (Fast Flip, Slow Flip, Bulk, High Margin, Speculative, Other) for better analysis
   - Required dropdown on Log Flip form
   - New "Performance by Strategy" table in Stats page showing Total Profit, Avg ROI, Win Rate, and Avg Hold Time
