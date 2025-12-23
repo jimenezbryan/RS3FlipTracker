@@ -30,12 +30,11 @@ import {
 } from "@/components/ui/select";
 
 const GE_TAX_RATE = 0.02;
-const GE_TAX_CAP = 5_000_000;
 
 const calculateGETax = (sellPrice: number, quantity: number) => {
-  const grossRevenue = sellPrice * quantity;
-  const rawTax = grossRevenue * GE_TAX_RATE;
-  return Math.min(rawTax, GE_TAX_CAP);
+  // 2% tax per item, floored, then multiplied by quantity
+  const taxPerItem = Math.floor(sellPrice * GE_TAX_RATE);
+  return taxPerItem * quantity;
 };
 
 const calculateProfit = (flip: Flip) => {

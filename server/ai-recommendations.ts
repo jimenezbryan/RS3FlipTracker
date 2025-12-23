@@ -61,7 +61,7 @@ export function analyzeUserTradingProfile(flips: Flip[]): UserTradingProfile {
     const sellPrice = flip.sellPrice as number;
     const sellValue = sellPrice * flip.quantity;
     const buyValue = flip.buyPrice * flip.quantity;
-    const taxPaid = Math.min(Math.floor(sellValue * 0.02), 5000000);
+    const taxPaid = Math.floor(sellPrice * 0.02) * flip.quantity; // 2% per item, floored
     const profit = sellValue - buyValue - taxPaid;
     const roi = ((sellValue - buyValue - taxPaid) / buyValue) * 100;
     
@@ -258,7 +258,7 @@ Respond with a valid JSON array:
         
         if (isNaN(suggestedBuyPrice) || isNaN(suggestedSellPrice) || suggestedBuyPrice <= 0) continue;
         
-        const potentialProfit = suggestedSellPrice - suggestedBuyPrice - Math.min(Math.floor(suggestedSellPrice * 0.02), 5000000);
+        const potentialProfit = suggestedSellPrice - suggestedBuyPrice - Math.floor(suggestedSellPrice * 0.02); // 2% tax per item
         const potentialROI = suggestedBuyPrice > 0 ? (potentialProfit / suggestedBuyPrice) * 100 : 0;
         
         let confidence: "high" | "medium" | "low" = "medium";

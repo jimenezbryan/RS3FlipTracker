@@ -272,7 +272,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Record sell transaction if selling immediately
         if (newFlip.sellPrice && newFlip.sellDate) {
           const sellValue = newFlip.sellPrice * (newFlip.quantity ?? 1);
-          const taxPaid = Math.min(Math.floor(sellValue * 0.02), 5000000); // 2% capped at 5M
+          const taxPaid = Math.floor(newFlip.sellPrice * 0.02) * (newFlip.quantity ?? 1); // 2% per item, floored
           await storage.recordTransaction({
             flipId: newFlip.id,
             userId,
@@ -321,7 +321,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (updatedFlip.itemId && updatedFlip.sellPrice && updatedFlip.sellDate && 
           (!existingFlip?.sellPrice || existingFlip.sellPrice !== updatedFlip.sellPrice)) {
         const sellValue = updatedFlip.sellPrice * (updatedFlip.quantity ?? 1);
-        const taxPaid = Math.min(Math.floor(sellValue * 0.02), 5000000); // 2% capped at 5M
+        const taxPaid = Math.floor(updatedFlip.sellPrice * 0.02) * (updatedFlip.quantity ?? 1); // 2% per item, floored
         await storage.recordTransaction({
           flipId: updatedFlip.id,
           userId,
