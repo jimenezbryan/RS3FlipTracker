@@ -112,6 +112,11 @@ Database tables:
   - `getAllFlips()` storage method with user join for FlipWithUser type
   - FlipCard shows user badge when viewing as admin
   - Stats/Portfolio pages use user's own data only (not affected by admin view toggle)
+- **Admin Edit Permissions**: Admins can edit any flip from any user
+  - `storage.updateFlip()` accepts optional `skipOwnerCheck` parameter
+  - PATCH `/api/flips/:id` checks admin status and bypasses owner check for admins
+  - Transaction recording uses the flip owner's userId (not admin's) to preserve analytics
+  - Regular users can still only edit their own flips
 - **Price Chart Fixes for Missing ItemIds**: 
   - PriceHistoryChart automatically resolves itemId from itemName if missing via `/api/ge/resolve-id`
   - Backfill endpoint `/api/flips/backfill-item-ids` populates missing itemIds for existing flips
