@@ -324,13 +324,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       // If this update is adding a sell price (completing the flip), record the sell transaction
+      // Use the flip owner's userId for transaction recording, not the admin's userId
       if (updatedFlip.itemId && updatedFlip.sellPrice && updatedFlip.sellDate && 
           (!existingFlip?.sellPrice || existingFlip.sellPrice !== updatedFlip.sellPrice)) {
         const sellValue = updatedFlip.sellPrice * (updatedFlip.quantity ?? 1);
         const taxPaid = Math.floor(updatedFlip.sellPrice * 0.02) * (updatedFlip.quantity ?? 1); // 2% per item, floored
         await storage.recordTransaction({
           flipId: updatedFlip.id,
-          userId,
+          userId: updatedFlip.userId,
           itemId: updatedFlip.itemId,
           itemName: updatedFlip.itemName,
           transactionType: 'sell',
