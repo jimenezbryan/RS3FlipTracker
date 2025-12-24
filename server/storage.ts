@@ -12,7 +12,7 @@ export interface IStorage {
   getFlips(userId: string): Promise<Flip[]>;
   getAllFlips(): Promise<FlipWithUser[]>;
   getFlip(id: string): Promise<Flip | undefined>;
-  updateFlip(id: string, userId: string, flip: Partial<InsertFlip>): Promise<Flip | undefined>;
+  updateFlip(id: string, userId: string, flip: Partial<InsertFlip>, skipOwnerCheck?: boolean): Promise<Flip | undefined>;
   deleteFlip(id: string, userId: string): Promise<boolean>;
   softDeleteFlip(id: string, userId: string): Promise<Flip | undefined>;
   restoreFlip(id: string, userId: string): Promise<Flip | undefined>;
@@ -214,9 +214,10 @@ export class MemStorage implements IStorage {
     return this.flips.get(id);
   }
 
-  async updateFlip(id: string, userId: string, flipUpdate: Partial<InsertFlip>): Promise<Flip | undefined> {
+  async updateFlip(id: string, userId: string, flipUpdate: Partial<InsertFlip>, skipOwnerCheck?: boolean): Promise<Flip | undefined> {
     const existing = this.flips.get(id);
-    if (!existing || existing.userId !== userId) return undefined;
+    if (!existing) return undefined;
+    if (!skipOwnerCheck && existing.userId !== userId) return undefined;
     
     const updated: Flip = {
       ...existing,
@@ -870,7 +871,7 @@ export class DatabaseStorage implements IStorage {
     return flip || undefined;
   }
 
-  async updateFlip(id: string, userId: string, flipUpdate: Partial<InsertFlip>): Promise<Flip | undefined> {
+  async updateFlip(id: string, userId: string, flipUpdate: Partial<InsertFlip>, skipOwnerCheck?: boolean): Promise<Flip | undefined> {
     // Strip undefined values to prevent overwriting existing data
     const cleanedUpdate = Object.fromEntries(
       Object.entries(flipUpdate).filter(([_, value]) => value !== undefined)
@@ -881,10 +882,15 @@ export class DatabaseStorage implements IStorage {
       return this.getFlip(id);
     }
     
+    // Build where clause - skip owner check for admin edits
+    const whereClause = skipOwnerCheck 
+      ? eq(flips.id, id)
+      : and(eq(flips.id, id), eq(flips.userId, userId));
+    
     const [updatedFlip] = await db
       .update(flips)
       .set(cleanedUpdate)
-      .where(and(eq(flips.id, id), eq(flips.userId, userId)))
+      .where(whereClause)
       .returning();
     return updatedFlip || undefined;
   }

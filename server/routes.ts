@@ -307,11 +307,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { id } = req.params;
       const userId = req.user.claims.sub;
       
+      // Check if user is admin
+      const user = await storage.getUser(userId);
+      const isAdminUser = user && (ADMIN_EMAILS.includes(user.email ?? "") || user.isAdmin === true);
+      
       // Get the current flip before updating
       const existingFlip = await storage.getFlip(id);
       
       const validatedFlip = insertFlipSchema.partial().parse(req.body);
-      const updatedFlip = await storage.updateFlip(id, userId, validatedFlip);
+      
+      // Admins can edit any flip, regular users can only edit their own
+      const updatedFlip = await storage.updateFlip(id, userId, validatedFlip, isAdminUser);
       
       if (!updatedFlip) {
         return res.status(404).json({ error: "Flip not found" });
