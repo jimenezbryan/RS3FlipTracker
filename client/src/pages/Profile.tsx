@@ -179,8 +179,8 @@ export default function Profile() {
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
-      if (file.size > 2 * 1024 * 1024) {
-        toast({ title: "File too large", description: "Max 2MB", variant: "destructive" });
+      if (file.size > 10 * 1024 * 1024) {
+        toast({ title: "File too large", description: "Max 10MB", variant: "destructive" });
         return;
       }
       uploadAvatarMutation.mutate(file);
