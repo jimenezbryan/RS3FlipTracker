@@ -55,8 +55,23 @@ Database tables:
 - `portfolioHoldingTransactions` - Buy/sell transaction history per holding with P&L tracking
 - `portfolioSnapshots` - Historical snapshots of total portfolio value
 - `portfolioSnapshotItems` - Individual item data within each snapshot
+- `recipes` - Recipe templates defining output items and required components
+- `recipeComponents` - Component items needed for each recipe template
+- `recipeRuns` - Active crafting runs tracking progress and costs
+- `recipeRunComponents` - Logged component purchases per run with RS account tracking
 
 ### Recent Updates
+- **Recipe/Set Crafting Tracker**: Track multi-component item crafting across RS accounts
+  - Create recipe templates (define output item + required components with quantities)
+  - Start crafting runs from templates
+  - Log component purchases per RS account with buy prices
+  - Track progress: see which components are acquired vs. needed
+  - Complete runs: calculates profit (with GE tax), creates flip record for stats integration
+  - View completed runs history with profit/loss
+  - Database tables: `recipes`, `recipeComponents`, `recipeRuns`, `recipeRunComponents`
+  - API routes: `/api/recipes`, `/api/recipe-runs`, `/api/recipe-run-components`
+  - Frontend: `client/src/pages/Recipes.tsx` with tabs for templates, active runs, completed runs
+  - Integrates with existing RS accounts system for multi-account tracking
 - **Card-Based Flip Display**: Replaced table layout with responsive card grid
   - FlipCard component with Coinbase-style UX: expandable cards, smooth animations
   - Essential info (Item, Prices, Profit badge) visible by default
