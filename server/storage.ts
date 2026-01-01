@@ -1,4 +1,4 @@
-import { users, flips, watchlist, priceAlerts, favorites, profitGoals, portfolioCategories, portfolioHoldings, portfolioHoldingTransactions, portfolioSnapshots, portfolioSnapshotItems, flipTransactions, itemVolumeDaily, userSessions, rsAccounts, type User, type UpsertUser, type Flip, type InsertFlip, type FlipWithUser, type WatchlistItem, type InsertWatchlistItem, type PriceAlert, type InsertPriceAlert, type Favorite, type InsertFavorite, type ProfitGoal, type InsertProfitGoal, type PortfolioCategory, type InsertPortfolioCategory, type PortfolioHolding, type InsertPortfolioHolding, type UpdatePortfolioHolding, type PortfolioSnapshot, type PortfolioSnapshotItem, type FlipTransaction, type ItemVolumeDaily, type UserSession, type RsAccount, type InsertRsAccount, type HoldingTransaction, type InsertHoldingTransaction } from "@shared/schema";
+import { users, flips, watchlist, priceAlerts, favorites, profitGoals, portfolioCategories, portfolioHoldings, portfolioHoldingTransactions, portfolioSnapshots, portfolioSnapshotItems, flipTransactions, itemVolumeDaily, userSessions, rsAccounts, recipes, recipeComponents, recipeRuns, recipeRunComponents, type User, type UpsertUser, type Flip, type InsertFlip, type FlipWithUser, type WatchlistItem, type InsertWatchlistItem, type PriceAlert, type InsertPriceAlert, type Favorite, type InsertFavorite, type ProfitGoal, type InsertProfitGoal, type PortfolioCategory, type InsertPortfolioCategory, type PortfolioHolding, type InsertPortfolioHolding, type UpdatePortfolioHolding, type PortfolioSnapshot, type PortfolioSnapshotItem, type FlipTransaction, type ItemVolumeDaily, type UserSession, type RsAccount, type InsertRsAccount, type HoldingTransaction, type InsertHoldingTransaction, type Recipe, type InsertRecipe, type RecipeComponent, type InsertRecipeComponent, type RecipeRun, type InsertRecipeRun, type RecipeRunComponent, type InsertRecipeRunComponent, type RecipeWithComponents, type RecipeRunWithDetails } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, isNull, sql, gte, lte, inArray } from "drizzle-orm";
 import { randomUUID } from "crypto";
@@ -102,6 +102,35 @@ export interface IStorage {
   updateRsAccount(id: string, userId: string, account: Partial<InsertRsAccount>): Promise<RsAccount | undefined>;
   deleteRsAccount(id: string, userId: string): Promise<boolean>;
   setDefaultRsAccount(id: string, userId: string): Promise<RsAccount | undefined>;
+  
+  // Recipes
+  createRecipe(userId: string, recipe: InsertRecipe): Promise<Recipe>;
+  getRecipes(userId: string): Promise<Recipe[]>;
+  getRecipe(id: string): Promise<Recipe | undefined>;
+  getRecipeWithComponents(id: string): Promise<RecipeWithComponents | undefined>;
+  updateRecipe(id: string, userId: string, recipe: Partial<InsertRecipe>): Promise<Recipe | undefined>;
+  deleteRecipe(id: string, userId: string): Promise<boolean>;
+  archiveRecipe(id: string, userId: string): Promise<Recipe | undefined>;
+  
+  // Recipe Components
+  createRecipeComponent(component: InsertRecipeComponent): Promise<RecipeComponent>;
+  getRecipeComponents(recipeId: string): Promise<RecipeComponent[]>;
+  updateRecipeComponent(id: string, component: Partial<InsertRecipeComponent>): Promise<RecipeComponent | undefined>;
+  deleteRecipeComponent(id: string): Promise<boolean>;
+  
+  // Recipe Runs
+  createRecipeRun(userId: string, run: InsertRecipeRun): Promise<RecipeRun>;
+  getRecipeRuns(userId: string): Promise<RecipeRun[]>;
+  getRecipeRun(id: string): Promise<RecipeRun | undefined>;
+  getRecipeRunWithDetails(id: string): Promise<RecipeRunWithDetails | undefined>;
+  updateRecipeRun(id: string, userId: string, run: Partial<{ status: string; targetSellPrice: number; actualSellPrice: number; totalComponentCost: number; profit: number; linkedFlipId: string; completedAt: Date; notes: string }>): Promise<RecipeRun | undefined>;
+  deleteRecipeRun(id: string, userId: string): Promise<boolean>;
+  
+  // Recipe Run Components
+  createRecipeRunComponent(component: InsertRecipeRunComponent): Promise<RecipeRunComponent>;
+  getRecipeRunComponents(runId: string): Promise<RecipeRunComponent[]>;
+  updateRecipeRunComponent(id: string, component: Partial<InsertRecipeRunComponent>): Promise<RecipeRunComponent | undefined>;
+  deleteRecipeRunComponent(id: string): Promise<boolean>;
 }
 
 export class MemStorage implements IStorage {
@@ -778,6 +807,29 @@ export class MemStorage implements IStorage {
     existing.updatedAt = new Date();
     return existing;
   }
+
+  // Recipe stub implementations for MemStorage
+  async createRecipe(): Promise<Recipe> { throw new Error("Not implemented"); }
+  async getRecipes(): Promise<Recipe[]> { return []; }
+  async getRecipe(): Promise<Recipe | undefined> { return undefined; }
+  async getRecipeWithComponents(): Promise<RecipeWithComponents | undefined> { return undefined; }
+  async updateRecipe(): Promise<Recipe | undefined> { return undefined; }
+  async deleteRecipe(): Promise<boolean> { return false; }
+  async archiveRecipe(): Promise<Recipe | undefined> { return undefined; }
+  async createRecipeComponent(): Promise<RecipeComponent> { throw new Error("Not implemented"); }
+  async getRecipeComponents(): Promise<RecipeComponent[]> { return []; }
+  async updateRecipeComponent(): Promise<RecipeComponent | undefined> { return undefined; }
+  async deleteRecipeComponent(): Promise<boolean> { return false; }
+  async createRecipeRun(): Promise<RecipeRun> { throw new Error("Not implemented"); }
+  async getRecipeRuns(): Promise<RecipeRun[]> { return []; }
+  async getRecipeRun(): Promise<RecipeRun | undefined> { return undefined; }
+  async getRecipeRunWithDetails(): Promise<RecipeRunWithDetails | undefined> { return undefined; }
+  async updateRecipeRun(): Promise<RecipeRun | undefined> { return undefined; }
+  async deleteRecipeRun(): Promise<boolean> { return false; }
+  async createRecipeRunComponent(): Promise<RecipeRunComponent> { throw new Error("Not implemented"); }
+  async getRecipeRunComponents(): Promise<RecipeRunComponent[]> { return []; }
+  async updateRecipeRunComponent(): Promise<RecipeRunComponent | undefined> { return undefined; }
+  async deleteRecipeRunComponent(): Promise<boolean> { return false; }
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1416,6 +1468,190 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(rsAccounts.id, id), eq(rsAccounts.userId, userId)))
       .returning();
     return account || undefined;
+  }
+
+  // Recipes - DatabaseStorage
+  async createRecipe(userId: string, recipe: InsertRecipe): Promise<Recipe> {
+    const [newRecipe] = await db
+      .insert(recipes)
+      .values({ ...recipe, userId })
+      .returning();
+    return newRecipe;
+  }
+
+  async getRecipes(userId: string): Promise<Recipe[]> {
+    return await db.select().from(recipes)
+      .where(and(eq(recipes.userId, userId), eq(recipes.isArchived, false)))
+      .orderBy(desc(recipes.createdAt));
+  }
+
+  async getRecipe(id: string): Promise<Recipe | undefined> {
+    const [recipe] = await db.select().from(recipes).where(eq(recipes.id, id));
+    return recipe || undefined;
+  }
+
+  async getRecipeWithComponents(id: string): Promise<RecipeWithComponents | undefined> {
+    const recipe = await this.getRecipe(id);
+    if (!recipe) return undefined;
+    const components = await this.getRecipeComponents(id);
+    return { ...recipe, components };
+  }
+
+  async updateRecipe(id: string, userId: string, recipe: Partial<InsertRecipe>): Promise<Recipe | undefined> {
+    const [updated] = await db
+      .update(recipes)
+      .set({ ...recipe, updatedAt: new Date() })
+      .where(and(eq(recipes.id, id), eq(recipes.userId, userId)))
+      .returning();
+    return updated || undefined;
+  }
+
+  async deleteRecipe(id: string, userId: string): Promise<boolean> {
+    // First delete all components
+    await db.delete(recipeComponents).where(eq(recipeComponents.recipeId, id));
+    // Then delete runs and their components
+    const runs = await db.select().from(recipeRuns).where(eq(recipeRuns.recipeId, id));
+    for (const run of runs) {
+      await db.delete(recipeRunComponents).where(eq(recipeRunComponents.runId, run.id));
+    }
+    await db.delete(recipeRuns).where(eq(recipeRuns.recipeId, id));
+    // Finally delete the recipe
+    const result = await db
+      .delete(recipes)
+      .where(and(eq(recipes.id, id), eq(recipes.userId, userId)));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async archiveRecipe(id: string, userId: string): Promise<Recipe | undefined> {
+    const [archived] = await db
+      .update(recipes)
+      .set({ isArchived: true, updatedAt: new Date() })
+      .where(and(eq(recipes.id, id), eq(recipes.userId, userId)))
+      .returning();
+    return archived || undefined;
+  }
+
+  // Recipe Components - DatabaseStorage
+  async createRecipeComponent(component: InsertRecipeComponent): Promise<RecipeComponent> {
+    const [newComponent] = await db
+      .insert(recipeComponents)
+      .values(component)
+      .returning();
+    return newComponent;
+  }
+
+  async getRecipeComponents(recipeId: string): Promise<RecipeComponent[]> {
+    return await db.select().from(recipeComponents)
+      .where(eq(recipeComponents.recipeId, recipeId));
+  }
+
+  async updateRecipeComponent(id: string, component: Partial<InsertRecipeComponent>): Promise<RecipeComponent | undefined> {
+    const [updated] = await db
+      .update(recipeComponents)
+      .set(component)
+      .where(eq(recipeComponents.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async deleteRecipeComponent(id: string): Promise<boolean> {
+    const result = await db.delete(recipeComponents).where(eq(recipeComponents.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // Recipe Runs - DatabaseStorage
+  async createRecipeRun(userId: string, run: InsertRecipeRun): Promise<RecipeRun> {
+    const [newRun] = await db
+      .insert(recipeRuns)
+      .values({ ...run, userId })
+      .returning();
+    return newRun;
+  }
+
+  async getRecipeRuns(userId: string): Promise<RecipeRun[]> {
+    return await db.select().from(recipeRuns)
+      .where(eq(recipeRuns.userId, userId))
+      .orderBy(desc(recipeRuns.startedAt));
+  }
+
+  async getRecipeRun(id: string): Promise<RecipeRun | undefined> {
+    const [run] = await db.select().from(recipeRuns).where(eq(recipeRuns.id, id));
+    return run || undefined;
+  }
+
+  async getRecipeRunWithDetails(id: string): Promise<RecipeRunWithDetails | undefined> {
+    const run = await this.getRecipeRun(id);
+    if (!run) return undefined;
+    
+    const recipe = await this.getRecipe(run.recipeId);
+    if (!recipe) return undefined;
+    
+    const runComponents = await this.getRecipeRunComponents(id);
+    const recipeComps = await this.getRecipeComponents(run.recipeId);
+    
+    const componentsWithDetails = await Promise.all(
+      runComponents.map(async (rc) => {
+        const component = recipeComps.find(c => c.id === rc.componentId);
+        const rsAccount = rc.rsAccountId ? await this.getRsAccount(rc.rsAccountId) : null;
+        return {
+          ...rc,
+          component: component!,
+          rsAccount,
+        };
+      })
+    );
+    
+    return {
+      ...run,
+      recipe,
+      components: componentsWithDetails,
+    };
+  }
+
+  async updateRecipeRun(id: string, userId: string, run: Partial<{ status: string; targetSellPrice: number; actualSellPrice: number; totalComponentCost: number; profit: number; linkedFlipId: string; completedAt: Date; notes: string }>): Promise<RecipeRun | undefined> {
+    const [updated] = await db
+      .update(recipeRuns)
+      .set(run as any)
+      .where(and(eq(recipeRuns.id, id), eq(recipeRuns.userId, userId)))
+      .returning();
+    return updated || undefined;
+  }
+
+  async deleteRecipeRun(id: string, userId: string): Promise<boolean> {
+    // Delete run components first
+    await db.delete(recipeRunComponents).where(eq(recipeRunComponents.runId, id));
+    const result = await db
+      .delete(recipeRuns)
+      .where(and(eq(recipeRuns.id, id), eq(recipeRuns.userId, userId)));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  // Recipe Run Components - DatabaseStorage
+  async createRecipeRunComponent(component: InsertRecipeRunComponent): Promise<RecipeRunComponent> {
+    const [newComponent] = await db
+      .insert(recipeRunComponents)
+      .values(component)
+      .returning();
+    return newComponent;
+  }
+
+  async getRecipeRunComponents(runId: string): Promise<RecipeRunComponent[]> {
+    return await db.select().from(recipeRunComponents)
+      .where(eq(recipeRunComponents.runId, runId));
+  }
+
+  async updateRecipeRunComponent(id: string, component: Partial<InsertRecipeRunComponent>): Promise<RecipeRunComponent | undefined> {
+    const [updated] = await db
+      .update(recipeRunComponents)
+      .set(component)
+      .where(eq(recipeRunComponents.id, id))
+      .returning();
+    return updated || undefined;
+  }
+
+  async deleteRecipeRunComponent(id: string): Promise<boolean> {
+    const result = await db.delete(recipeRunComponents).where(eq(recipeRunComponents.id, id));
+    return (result.rowCount ?? 0) > 0;
   }
 }
 
