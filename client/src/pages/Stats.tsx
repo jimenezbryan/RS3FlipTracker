@@ -20,6 +20,7 @@ import {
 } from "recharts";
 import { format, subDays, startOfDay, addDays } from "date-fns";
 import { calculateFlipTax } from "@shared/taxCalculator";
+import { ItemLeaderboard } from "@/components/ItemLeaderboard";
 
 function calculateProfit(flip: Flip): number | null {
   if (flip.sellPrice === null || flip.sellPrice === undefined) return null;
@@ -322,8 +323,8 @@ export default function Stats() {
             </div>
             <div className="mt-4 p-3 bg-muted/50 rounded-lg">
               <p className="text-xs text-muted-foreground">
-                <strong>RS3 GE Tax:</strong> 2% of the total sell value is deducted as Grand Exchange tax. 
-                The tax is capped at 5,000,000 gp per transaction, meaning sales over 250M gp won't pay more than 5M in tax.
+                <strong>RS3 GE Tax:</strong> 2% of the sell price per item is deducted as Grand Exchange tax (floored). 
+                Items sold for 49 gp or less are exempt. Bonds are also exempt.
               </p>
             </div>
           </CardContent>
@@ -516,6 +517,10 @@ export default function Stats() {
             )}
           </CardContent>
         </Card>
+
+        <div className="mb-8">
+          <ItemLeaderboard />
+        </div>
 
         <Card data-testid="chart-top-items">
           <CardHeader className="pb-4">

@@ -8,6 +8,7 @@ import { setupAuth, isAuthenticated } from "./replitAuth";
 import { processScreenshot, matchItemsToGE } from "./ocr";
 import { analyzeRS3Screenshot } from "./ai-vision";
 import { analyzeUserTradingProfile, getPersonalizedRecommendations } from "./ai-recommendations";
+import { calculateFlipTax } from "@shared/taxCalculator";
 
 const upload = multer({ 
   storage: multer.memoryStorage(),
@@ -436,13 +437,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         };
 
         if (flip.sellPrice !== null && flip.sellPrice !== undefined) {
-          // Calculate profit with tax
-          const taxPerItem = flip.sellPrice > 49 ? Math.floor(flip.sellPrice * 0.02) : 0;
-          const totalTax = taxPerItem * flip.quantity;
-          const netSellTotal = (flip.sellPrice * flip.quantity) - totalTax;
+          // Calculate profit with tax using shared calculator (handles bonds, low-price exemptions)
+          const taxDetails = calculateFlipTax(
+            flip.sellPrice, 
+            flip.buyPrice, 
+            flip.quantity, 
+            flip.itemId ?? undefined, 
+            flip.itemName
+          );
+          const profit = taxDetails.profit;
+          const roi = taxDetails.roi;
           const totalBuyCost = flip.buyPrice * flip.quantity;
-          const profit = netSellTotal - totalBuyCost;
-          const roi = totalBuyCost > 0 ? (profit / totalBuyCost) * 100 : 0;
 
           existing.totalProfit += profit;
           existing.totalQuantity += flip.quantity;
