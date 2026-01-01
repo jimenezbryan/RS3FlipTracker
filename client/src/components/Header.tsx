@@ -1,4 +1,4 @@
-import { LogOut, Eye, Bell, Home, BarChart3, Briefcase, Target, Shield, Sparkles, Users } from "lucide-react";
+import { LogOut, Eye, Bell, Home, BarChart3, Briefcase, Target, Shield, Sparkles, Users, BookOpen } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
@@ -22,6 +22,7 @@ export function Header() {
 
   const navItems = [
     { href: "/", label: "Flips", icon: Home },
+    { href: "/recipes", label: "Recipes", icon: BookOpen },
     { href: "/portfolio", label: "Portfolio", icon: Briefcase },
     { href: "/goals", label: "Goals", icon: Target },
     { href: "/suggestions", label: "AI Tips", icon: Sparkles },
