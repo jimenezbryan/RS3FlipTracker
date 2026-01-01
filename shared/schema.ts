@@ -406,3 +406,141 @@ export const userSessions = pgTable("user_sessions", {
 });
 
 export type UserSession = typeof userSessions.$inferSelect;
+
+// Recipe run status enum
+export const recipeRunStatusEnum = pgEnum("recipe_run_status", ["gathering", "ready", "crafted", "sold", "cancelled"]);
+
+// Recipes - Template definitions for craftable items (e.g., ECB, SGB)
+export const recipes = pgTable("recipes", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  name: varchar("name", { length: 100 }).notNull(),
+  outputItemId: integer("output_item_id"),
+  outputItemName: text("output_item_name").notNull(),
+  outputItemIcon: text("output_item_icon"),
+  outputQuantity: integer("output_quantity").notNull().default(1),
+  notes: text("notes"),
+  isArchived: boolean("is_archived").default(false),
+  createdAt: timestamp("created_at").defaultNow(),
+  updatedAt: timestamp("updated_at").defaultNow(),
+});
+
+export const insertRecipeSchema = createInsertSchema(recipes).omit({
+  id: true,
+  userId: true,
+  isArchived: true,
+  createdAt: true,
+  updatedAt: true,
+}).extend({
+  name: z.string().min(1).max(100),
+  outputItemId: z.coerce.number().int().positive().optional(),
+  outputItemName: z.string().min(1),
+  outputItemIcon: z.string().optional(),
+  outputQuantity: z.coerce.number().int().positive().default(1),
+  notes: z.string().optional(),
+});
+
+export type InsertRecipe = z.infer<typeof insertRecipeSchema>;
+export type Recipe = typeof recipes.$inferSelect;
+
+// Recipe Components - Items needed to craft a recipe
+export const recipeComponents = pgTable("recipe_components", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  recipeId: varchar("recipe_id").notNull().references(() => recipes.id),
+  itemId: integer("item_id"),
+  itemName: text("item_name").notNull(),
+  itemIcon: text("item_icon"),
+  quantityRequired: integer("quantity_required").notNull().default(1),
+  notes: text("notes"),
+});
+
+export const insertRecipeComponentSchema = createInsertSchema(recipeComponents).omit({
+  id: true,
+}).extend({
+  recipeId: z.string(),
+  itemId: z.coerce.number().int().positive().optional(),
+  itemName: z.string().min(1),
+  itemIcon: z.string().optional(),
+  quantityRequired: z.coerce.number().int().positive().default(1),
+  notes: z.string().optional(),
+});
+
+export type InsertRecipeComponent = z.infer<typeof insertRecipeComponentSchema>;
+export type RecipeComponent = typeof recipeComponents.$inferSelect;
+
+// Recipe Runs - Active crafting attempts
+export const recipeRuns = pgTable("recipe_runs", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  recipeId: varchar("recipe_id").notNull().references(() => recipes.id),
+  status: recipeRunStatusEnum("status").notNull().default("gathering"),
+  targetSellPrice: integer("target_sell_price"),
+  actualSellPrice: integer("actual_sell_price"),
+  totalComponentCost: integer("total_component_cost").default(0),
+  profit: integer("profit"),
+  linkedFlipId: varchar("linked_flip_id").references(() => flips.id),
+  startedAt: timestamp("started_at").defaultNow(),
+  completedAt: timestamp("completed_at"),
+  notes: text("notes"),
+});
+
+export const insertRecipeRunSchema = createInsertSchema(recipeRuns).omit({
+  id: true,
+  userId: true,
+  status: true,
+  totalComponentCost: true,
+  profit: true,
+  linkedFlipId: true,
+  startedAt: true,
+  completedAt: true,
+}).extend({
+  recipeId: z.string(),
+  targetSellPrice: z.coerce.number().int().positive().optional(),
+  actualSellPrice: z.coerce.number().int().positive().optional(),
+  notes: z.string().optional(),
+});
+
+export type InsertRecipeRun = z.infer<typeof insertRecipeRunSchema>;
+export type RecipeRun = typeof recipeRuns.$inferSelect;
+
+// Recipe Run Components - Individual component purchases for a run
+export const recipeRunComponents = pgTable("recipe_run_components", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  runId: varchar("run_id").notNull().references(() => recipeRuns.id),
+  componentId: varchar("component_id").notNull().references(() => recipeComponents.id),
+  rsAccountId: varchar("rs_account_id").references(() => rsAccounts.id),
+  quantityAcquired: integer("quantity_acquired").notNull().default(0),
+  buyPrice: integer("buy_price").notNull(),
+  totalCost: integer("total_cost").notNull(),
+  purchaseDate: timestamp("purchase_date").defaultNow(),
+  notes: text("notes"),
+});
+
+export const insertRecipeRunComponentSchema = createInsertSchema(recipeRunComponents).omit({
+  id: true,
+  purchaseDate: true,
+}).extend({
+  runId: z.string(),
+  componentId: z.string(),
+  rsAccountId: z.string().optional(),
+  quantityAcquired: z.coerce.number().int().positive(),
+  buyPrice: z.coerce.number().int().positive(),
+  totalCost: z.coerce.number().int().positive(),
+  notes: z.string().optional(),
+});
+
+export type InsertRecipeRunComponent = z.infer<typeof insertRecipeRunComponentSchema>;
+export type RecipeRunComponent = typeof recipeRunComponents.$inferSelect;
+
+// Extended types for recipes with components
+export type RecipeWithComponents = Recipe & {
+  components: RecipeComponent[];
+};
+
+export type RecipeRunWithDetails = RecipeRun & {
+  recipe: Recipe;
+  components: (RecipeRunComponent & {
+    component: RecipeComponent;
+    rsAccount?: RsAccount | null;
+  })[];
+};
