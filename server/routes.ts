@@ -397,6 +397,106 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Item Summary Leaderboard - aggregated performance by item
+  app.get("/api/stats/item-summary", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const flips = await storage.getFlips(userId);
+      
+      // Only include completed flips (have sellDate)
+      const completedFlips = flips.filter(f => f.sellDate !== null);
+      
+      // Aggregate by item
+      const itemStats = new Map<string, {
+        itemName: string;
+        itemId: number | null;
+        itemIcon: string | null;
+        totalProfit: number;
+        totalQuantity: number;
+        totalBuyCost: number;
+        tradeCount: number;
+        wins: number;
+        roiSum: number;
+        avgHoldTime: number[];
+      }>();
+
+      for (const flip of completedFlips) {
+        const key = flip.itemName;
+        const existing = itemStats.get(key) || {
+          itemName: flip.itemName,
+          itemId: flip.itemId,
+          itemIcon: flip.itemIcon,
+          totalProfit: 0,
+          totalQuantity: 0,
+          totalBuyCost: 0,
+          tradeCount: 0,
+          wins: 0,
+          roiSum: 0,
+          avgHoldTime: [],
+        };
+
+        if (flip.sellPrice !== null && flip.sellPrice !== undefined) {
+          // Calculate profit with tax
+          const taxPerItem = flip.sellPrice > 49 ? Math.floor(flip.sellPrice * 0.02) : 0;
+          const totalTax = taxPerItem * flip.quantity;
+          const netSellTotal = (flip.sellPrice * flip.quantity) - totalTax;
+          const totalBuyCost = flip.buyPrice * flip.quantity;
+          const profit = netSellTotal - totalBuyCost;
+          const roi = totalBuyCost > 0 ? (profit / totalBuyCost) * 100 : 0;
+
+          existing.totalProfit += profit;
+          existing.totalQuantity += flip.quantity;
+          existing.totalBuyCost += totalBuyCost;
+          existing.tradeCount += 1;
+          existing.roiSum += roi;
+          if (profit > 0) existing.wins += 1;
+
+          // Calculate hold time
+          if (flip.buyDate && flip.sellDate) {
+            const holdDays = Math.floor(
+              (new Date(flip.sellDate).getTime() - new Date(flip.buyDate).getTime()) / (1000 * 60 * 60 * 24)
+            );
+            existing.avgHoldTime.push(holdDays);
+          }
+
+          // Update icon if we have one
+          if (flip.itemIcon && !existing.itemIcon) {
+            existing.itemIcon = flip.itemIcon;
+          }
+          // Update itemId if we have one
+          if (flip.itemId && !existing.itemId) {
+            existing.itemId = flip.itemId;
+          }
+        }
+
+        itemStats.set(key, existing);
+      }
+
+      // Convert to array and calculate final metrics
+      const result = Array.from(itemStats.values()).map(item => ({
+        itemName: item.itemName,
+        itemId: item.itemId,
+        itemIcon: item.itemIcon,
+        totalProfit: Math.round(item.totalProfit),
+        totalQuantity: item.totalQuantity,
+        tradeCount: item.tradeCount,
+        avgROI: item.tradeCount > 0 ? Math.round((item.roiSum / item.tradeCount) * 100) / 100 : 0,
+        winRate: item.tradeCount > 0 ? Math.round((item.wins / item.tradeCount) * 100 * 10) / 10 : 0,
+        avgHoldTime: item.avgHoldTime.length > 0 
+          ? Math.round(item.avgHoldTime.reduce((a, b) => a + b, 0) / item.avgHoldTime.length) 
+          : 0,
+      }));
+
+      // Sort by total profit descending by default
+      result.sort((a, b) => b.totalProfit - a.totalProfit);
+
+      res.json(result);
+    } catch (error) {
+      console.error("Failed to get item summary:", error);
+      res.status(500).json({ error: "Failed to fetch item summary" });
+    }
+  });
+
   app.get("/api/watchlist", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
