@@ -272,7 +272,7 @@ export default function Admin() {
                 <div className="text-muted-foreground">No users found</div>
               ) : (
                 <div className="space-y-3">
-                  {users?.map((user) => (
+                  {users?.filter((user) => user.email).map((user) => (
                     <div key={user.id} className="flex items-center gap-3" data-testid={`user-row-${user.id}`}>
                       <div className="relative">
                         <Avatar className="h-8 w-8">
