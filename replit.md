@@ -129,6 +129,13 @@ Database tables:
   - Items sold for 49 gp or less per item are exempt (tax = 0)
   - Bonds remain tax exempt
   - Updated in `shared/taxCalculator.ts` and all frontend/backend components
+- **Item Leaderboard**: Aggregated trading performance per item (leaderboard view)
+  - New `/api/stats/item-summary` endpoint aggregates completed flips by item
+  - Calculates total profit, total quantity traded, trade count, avg ROI, win rate, avg hold time
+  - Uses shared `calculateFlipTax` for accurate profit calculations (handles bond/low-price exemptions)
+  - `ItemLeaderboard.tsx` component with sortable table (click column headers to sort)
+  - Displays item icons, profit with +/- indicators, and color-coded win rate badges
+  - Added to Stats page between Performance by Strategy and Top Items charts
 
 ### Design System
 The application uses a gaming-themed dark mode design inspired by GE-Tracker:
