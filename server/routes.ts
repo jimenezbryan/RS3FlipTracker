@@ -2,7 +2,7 @@ import type { Express } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
 import { storage } from "./storage";
-import { insertFlipSchema, insertWatchlistSchema, insertPriceAlertSchema, insertFavoriteSchema, insertProfitGoalSchema, insertPortfolioCategorySchema, insertPortfolioHoldingSchema, updatePortfolioHoldingSchema, insertHoldingTransactionSchema, insertRsAccountSchema } from "@shared/schema";
+import { insertFlipSchema, insertWatchlistSchema, insertPriceAlertSchema, insertFavoriteSchema, insertProfitGoalSchema, insertPortfolioCategorySchema, insertPortfolioHoldingSchema, updatePortfolioHoldingSchema, insertHoldingTransactionSchema, insertRsAccountSchema, insertRecipeSchema, insertRecipeComponentSchema, insertRecipeRunSchema, insertRecipeRunComponentSchema } from "@shared/schema";
 import { getItemPrice, searchItems, getItemTrend, getItemPriceHistory, getItemSuggestions } from "./ge-api";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { processScreenshot, matchItemsToGE } from "./ocr";
@@ -1659,6 +1659,339 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json(updated);
     } catch (error) {
       res.status(500).json({ error: "Failed to upload avatar" });
+    }
+  });
+
+  // =====================
+  // RECIPE ROUTES
+  // =====================
+
+  // Get all recipes for user
+  app.get("/api/recipes", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const recipes = await storage.getRecipes(userId);
+      res.json(recipes);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch recipes" });
+    }
+  });
+
+  // Get single recipe with components
+  app.get("/api/recipes/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const recipe = await storage.getRecipeWithComponents(id);
+      if (!recipe) {
+        return res.status(404).json({ error: "Recipe not found" });
+      }
+      res.json(recipe);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch recipe" });
+    }
+  });
+
+  // Create recipe with components
+  app.post("/api/recipes", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const { components, ...recipeData } = req.body;
+      const validatedRecipe = insertRecipeSchema.parse(recipeData);
+      
+      const recipe = await storage.createRecipe(userId, validatedRecipe);
+      
+      // Create components if provided
+      if (components && Array.isArray(components)) {
+        for (const comp of components) {
+          const validatedComp = insertRecipeComponentSchema.parse({
+            ...comp,
+            recipeId: recipe.id,
+          });
+          await storage.createRecipeComponent(validatedComp);
+        }
+      }
+      
+      // Return recipe with components
+      const fullRecipe = await storage.getRecipeWithComponents(recipe.id);
+      res.status(201).json(fullRecipe);
+    } catch (error) {
+      console.error("Error creating recipe:", error);
+      res.status(400).json({ error: "Invalid recipe data" });
+    }
+  });
+
+  // Update recipe
+  app.patch("/api/recipes/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.claims.sub;
+      const updates = insertRecipeSchema.partial().parse(req.body);
+      const updated = await storage.updateRecipe(id, userId, updates);
+      if (!updated) {
+        return res.status(404).json({ error: "Recipe not found" });
+      }
+      res.json(updated);
+    } catch (error) {
+      res.status(400).json({ error: "Invalid recipe data" });
+    }
+  });
+
+  // Delete recipe
+  app.delete("/api/recipes/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.claims.sub;
+      const success = await storage.deleteRecipe(id, userId);
+      if (!success) {
+        return res.status(404).json({ error: "Recipe not found" });
+      }
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete recipe" });
+    }
+  });
+
+  // Archive recipe
+  app.post("/api/recipes/:id/archive", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.claims.sub;
+      const archived = await storage.archiveRecipe(id, userId);
+      if (!archived) {
+        return res.status(404).json({ error: "Recipe not found" });
+      }
+      res.json(archived);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to archive recipe" });
+    }
+  });
+
+  // Add component to recipe
+  app.post("/api/recipes/:recipeId/components", isAuthenticated, async (req: any, res) => {
+    try {
+      const { recipeId } = req.params;
+      const validatedComp = insertRecipeComponentSchema.parse({
+        ...req.body,
+        recipeId,
+      });
+      const component = await storage.createRecipeComponent(validatedComp);
+      res.status(201).json(component);
+    } catch (error) {
+      res.status(400).json({ error: "Invalid component data" });
+    }
+  });
+
+  // Update component
+  app.patch("/api/recipe-components/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const updates = insertRecipeComponentSchema.partial().parse(req.body);
+      const updated = await storage.updateRecipeComponent(id, updates);
+      if (!updated) {
+        return res.status(404).json({ error: "Component not found" });
+      }
+      res.json(updated);
+    } catch (error) {
+      res.status(400).json({ error: "Invalid component data" });
+    }
+  });
+
+  // Delete component
+  app.delete("/api/recipe-components/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const success = await storage.deleteRecipeComponent(id);
+      if (!success) {
+        return res.status(404).json({ error: "Component not found" });
+      }
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete component" });
+    }
+  });
+
+  // =====================
+  // RECIPE RUN ROUTES
+  // =====================
+
+  // Get all runs for user
+  app.get("/api/recipe-runs", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const runs = await storage.getRecipeRuns(userId);
+      res.json(runs);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch recipe runs" });
+    }
+  });
+
+  // Get single run with details
+  app.get("/api/recipe-runs/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const run = await storage.getRecipeRunWithDetails(id);
+      if (!run) {
+        return res.status(404).json({ error: "Run not found" });
+      }
+      res.json(run);
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch run" });
+    }
+  });
+
+  // Start a new run
+  app.post("/api/recipe-runs", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const validatedRun = insertRecipeRunSchema.parse(req.body);
+      const run = await storage.createRecipeRun(userId, validatedRun);
+      res.status(201).json(run);
+    } catch (error) {
+      console.error("Error creating run:", error);
+      res.status(400).json({ error: "Invalid run data" });
+    }
+  });
+
+  // Update run (status, prices, etc)
+  app.patch("/api/recipe-runs/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.claims.sub;
+      const updated = await storage.updateRecipeRun(id, userId, req.body);
+      if (!updated) {
+        return res.status(404).json({ error: "Run not found" });
+      }
+      res.json(updated);
+    } catch (error) {
+      res.status(400).json({ error: "Invalid run data" });
+    }
+  });
+
+  // Delete run
+  app.delete("/api/recipe-runs/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.claims.sub;
+      const success = await storage.deleteRecipeRun(id, userId);
+      if (!success) {
+        return res.status(404).json({ error: "Run not found" });
+      }
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete run" });
+    }
+  });
+
+  // Log component purchase for a run
+  app.post("/api/recipe-runs/:runId/components", isAuthenticated, async (req: any, res) => {
+    try {
+      const { runId } = req.params;
+      const userId = req.user.claims.sub;
+      
+      // Verify run belongs to user
+      const run = await storage.getRecipeRun(runId);
+      if (!run || run.userId !== userId) {
+        return res.status(404).json({ error: "Run not found" });
+      }
+      
+      const validatedComp = insertRecipeRunComponentSchema.parse({
+        ...req.body,
+        runId,
+        totalCost: req.body.buyPrice * req.body.quantityAcquired,
+      });
+      
+      const component = await storage.createRecipeRunComponent(validatedComp);
+      
+      // Update run's total component cost
+      const runComponents = await storage.getRecipeRunComponents(runId);
+      const totalCost = runComponents.reduce((sum, c) => sum + c.totalCost, 0);
+      await storage.updateRecipeRun(runId, userId, { totalComponentCost: totalCost });
+      
+      res.status(201).json(component);
+    } catch (error) {
+      console.error("Error logging component:", error);
+      res.status(400).json({ error: "Invalid component data" });
+    }
+  });
+
+  // Update run component
+  app.patch("/api/recipe-run-components/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const updates = insertRecipeRunComponentSchema.partial().parse(req.body);
+      const updated = await storage.updateRecipeRunComponent(id, updates);
+      if (!updated) {
+        return res.status(404).json({ error: "Component not found" });
+      }
+      res.json(updated);
+    } catch (error) {
+      res.status(400).json({ error: "Invalid component data" });
+    }
+  });
+
+  // Delete run component
+  app.delete("/api/recipe-run-components/:id", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const success = await storage.deleteRecipeRunComponent(id);
+      if (!success) {
+        return res.status(404).json({ error: "Component not found" });
+      }
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete component" });
+    }
+  });
+
+  // Complete run and create flip record
+  app.post("/api/recipe-runs/:id/complete", isAuthenticated, async (req: any, res) => {
+    try {
+      const { id } = req.params;
+      const userId = req.user.claims.sub;
+      const { sellPrice, sellDate } = req.body;
+      
+      const runDetails = await storage.getRecipeRunWithDetails(id);
+      if (!runDetails || runDetails.userId !== userId) {
+        return res.status(404).json({ error: "Run not found" });
+      }
+      
+      const totalCost = runDetails.totalComponentCost || 0;
+      const actualSellPrice = sellPrice || runDetails.targetSellPrice || 0;
+      
+      // Calculate profit (with tax)
+      const taxDetails = calculateFlipTax(actualSellPrice, totalCost, runDetails.recipe.outputQuantity);
+      const profit = taxDetails.profit;
+      
+      // Create a flip record for stats
+      const flip = await storage.createFlip(userId, {
+        itemName: runDetails.recipe.outputItemName,
+        itemId: runDetails.recipe.outputItemId ?? undefined,
+        itemIcon: runDetails.recipe.outputItemIcon ?? undefined,
+        quantity: runDetails.recipe.outputQuantity,
+        buyPrice: Math.floor(totalCost / runDetails.recipe.outputQuantity), // Average cost per item
+        sellPrice: actualSellPrice,
+        buyDate: runDetails.startedAt || new Date(),
+        sellDate: sellDate ? new Date(sellDate) : new Date(),
+        strategyTag: "Other",
+        membershipStatus: "Unknown",
+        notes: `Crafted from recipe: ${runDetails.recipe.name}`,
+        category: "Crafting",
+      });
+      
+      // Update run status
+      await storage.updateRecipeRun(id, userId, {
+        status: "sold",
+        actualSellPrice,
+        profit,
+        linkedFlipId: flip.id,
+        completedAt: new Date(),
+      });
+      
+      const updatedRun = await storage.getRecipeRunWithDetails(id);
+      res.json({ run: updatedRun, flip });
+    } catch (error) {
+      console.error("Error completing run:", error);
+      res.status(500).json({ error: "Failed to complete run" });
     }
   });
 
