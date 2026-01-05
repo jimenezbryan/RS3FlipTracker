@@ -9,6 +9,7 @@ import { processScreenshot, matchItemsToGE } from "./ocr";
 import { analyzeRS3Screenshot } from "./ai-vision";
 import { analyzeUserTradingProfile, getPersonalizedRecommendations } from "./ai-recommendations";
 import { calculateFlipTax } from "@shared/taxCalculator";
+import { sendFlipToDiscord } from "./discord";
 
 const upload = multer({ 
   storage: multer.memoryStorage(),
@@ -296,6 +297,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           );
         }
       }
+      
+      // Send to Discord (fire and forget - don't block response)
+      sendFlipToDiscord(newFlip).catch(err => {
+        console.error("[Discord] Failed to send flip:", err);
+      });
       
       res.status(201).json(newFlip);
     } catch (error) {
