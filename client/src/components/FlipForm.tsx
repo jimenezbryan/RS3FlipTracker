@@ -16,6 +16,7 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import type { Favorite, RsAccount } from "@shared/schema";
 import { PriceHistoryChart } from "./PriceHistoryChart";
 import { calculateFlipTax, formatGp } from "@shared/taxCalculator";
+import { parseGp } from "@shared/gpParser";
 
 interface GEItem {
   id: number;
@@ -116,8 +117,8 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
   });
   
   const taxCalc = useMemo(() => {
-    const buy = parseInt(buyPrice) || 0;
-    const sell = parseInt(sellPrice) || 0;
+    const buy = parseGp(buyPrice) || 0;
+    const sell = parseGp(sellPrice) || 0;
     const qty = parseInt(quantity) || 1;
     if (sell > 0 && buy > 0) {
       return calculateFlipTax(sell, buy, qty, gePrice?.id, itemName);
@@ -357,15 +358,18 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!itemName || !quantity || !buyPrice || !buyDate) return;
+    const parsedBuyPrice = parseGp(buyPrice);
+    const parsedSellPrice = sellPrice ? parseGp(sellPrice) : undefined;
+    
+    if (!itemName || !quantity || !parsedBuyPrice || !buyDate) return;
 
     onSubmit({
       itemName,
       itemIcon: gePrice?.icon,
       itemId: gePrice?.id,
       quantity: parseInt(quantity),
-      buyPrice: parseInt(buyPrice),
-      sellPrice: sellPrice ? parseInt(sellPrice) : undefined,
+      buyPrice: parsedBuyPrice,
+      sellPrice: parsedSellPrice || undefined,
       buyDate: buyDate,
       sellDate: sellDate,
       notes: notes || undefined,
@@ -1005,10 +1009,10 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
               </div>
               <Input
                 id="buyPrice"
-                type="number"
+                type="text"
                 value={buyPrice}
                 onChange={(e) => setBuyPrice(e.target.value)}
-                placeholder="0"
+                placeholder="e.g. 4.3b, 500m, 100k"
                 data-testid="input-buy-price"
                 className="font-mono"
                 required
@@ -1033,10 +1037,10 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
               </div>
               <Input
                 id="sellPrice"
-                type="number"
+                type="text"
                 value={sellPrice}
                 onChange={(e) => setSellPrice(e.target.value)}
-                placeholder="0"
+                placeholder="e.g. 4.4b, 550m, 120k"
                 data-testid="input-sell-price"
                 className="font-mono"
               />
