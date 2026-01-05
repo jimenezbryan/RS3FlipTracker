@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, timestamp, index, jsonb, boolean, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, bigint, timestamp, index, jsonb, boolean, pgEnum } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -68,8 +68,8 @@ export const flips = pgTable("flips", {
   itemIcon: text("item_icon"),
   itemId: integer("item_id"),
   quantity: integer("quantity").notNull().default(1),
-  buyPrice: integer("buy_price").notNull(),
-  sellPrice: integer("sell_price"),
+  buyPrice: bigint("buy_price", { mode: "number" }).notNull(),
+  sellPrice: bigint("sell_price", { mode: "number" }),
   buyDate: timestamp("buy_date").notNull(),
   sellDate: timestamp("sell_date"),
   notes: text("notes"),
@@ -123,8 +123,8 @@ export const watchlist = pgTable("watchlist", {
   itemId: integer("item_id").notNull(),
   itemName: text("item_name").notNull(),
   itemIcon: text("item_icon"),
-  targetBuyPrice: integer("target_buy_price"),
-  targetSellPrice: integer("target_sell_price"),
+  targetBuyPrice: bigint("target_buy_price", { mode: "number" }),
+  targetSellPrice: bigint("target_sell_price", { mode: "number" }),
   membershipStatus: membershipStatusEnum("membership_status").default("Unknown"),
   notes: text("notes"),
   createdAt: timestamp("created_at").defaultNow(),
@@ -152,7 +152,7 @@ export const priceAlerts = pgTable("price_alerts", {
   itemName: text("item_name").notNull(),
   itemIcon: text("item_icon"),
   alertType: varchar("alert_type", { length: 10 }).notNull(), // 'above' or 'below'
-  targetPrice: integer("target_price").notNull(),
+  targetPrice: bigint("target_price", { mode: "number" }).notNull(),
   membershipStatus: membershipStatusEnum("membership_status").default("Unknown"),
   isActive: integer("is_active").notNull().default(1),
   triggeredAt: timestamp("triggered_at"),
@@ -201,7 +201,7 @@ export const profitGoals = pgTable("profit_goals", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id),
   goalType: varchar("goal_type", { length: 10 }).notNull(), // 'daily', 'weekly', 'monthly'
-  targetAmount: integer("target_amount").notNull(),
+  targetAmount: bigint("target_amount", { mode: "number" }).notNull(),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -248,14 +248,14 @@ export const portfolioHoldings = pgTable("portfolio_holdings", {
   itemName: text("item_name").notNull(),
   itemIcon: text("item_icon"),
   quantity: integer("quantity").notNull().default(1),
-  avgBuyPrice: integer("avg_buy_price").notNull(), // weighted average buy price
-  totalCost: integer("total_cost").notNull().default(0), // total invested
-  realizedProfit: integer("realized_profit").notNull().default(0), // profit from completed sales
-  realizedLoss: integer("realized_loss").notNull().default(0), // loss from completed sales
+  avgBuyPrice: bigint("avg_buy_price", { mode: "number" }).notNull(), // weighted average buy price
+  totalCost: bigint("total_cost", { mode: "number" }).notNull().default(0), // total invested
+  realizedProfit: bigint("realized_profit", { mode: "number" }).notNull().default(0), // profit from completed sales
+  realizedLoss: bigint("realized_loss", { mode: "number" }).notNull().default(0), // loss from completed sales
   categoryId: varchar("category_id").references(() => portfolioCategories.id),
   source: varchar("source", { length: 20 }).default("manual"), // 'manual', 'screenshot', 'flip'
   notes: text("notes"),
-  lastValuedPrice: integer("last_valued_price"),
+  lastValuedPrice: bigint("last_valued_price", { mode: "number" }),
   lastValuedAt: timestamp("last_valued_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
@@ -298,10 +298,10 @@ export const portfolioHoldingTransactions = pgTable("portfolio_holding_transacti
   userId: varchar("user_id").notNull().references(() => users.id),
   transactionType: varchar("transaction_type", { length: 10 }).notNull(), // 'buy' or 'sell'
   quantity: integer("quantity").notNull(),
-  pricePerUnit: integer("price_per_unit").notNull(),
-  totalValue: integer("total_value").notNull(),
-  fees: integer("fees").default(0), // GE tax for sells
-  profitLoss: integer("profit_loss"), // calculated on sell: (sellPrice - avgBuyPrice) * quantity - fees
+  pricePerUnit: bigint("price_per_unit", { mode: "number" }).notNull(),
+  totalValue: bigint("total_value", { mode: "number" }).notNull(),
+  fees: bigint("fees", { mode: "number" }).default(0), // GE tax for sells
+  profitLoss: bigint("profit_loss", { mode: "number" }), // calculated on sell: (sellPrice - avgBuyPrice) * quantity - fees
   notes: text("notes"),
   transactionDate: timestamp("transaction_date").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
@@ -330,9 +330,9 @@ export type HoldingTransaction = typeof portfolioHoldingTransactions.$inferSelec
 export const portfolioSnapshots = pgTable("portfolio_snapshots", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id),
-  totalValue: integer("total_value").notNull(),
-  totalCost: integer("total_cost").notNull(),
-  totalProfit: integer("total_profit").notNull(),
+  totalValue: bigint("total_value", { mode: "number" }).notNull(),
+  totalCost: bigint("total_cost", { mode: "number" }).notNull(),
+  totalProfit: bigint("total_profit", { mode: "number" }).notNull(),
   itemCount: integer("item_count").notNull(),
   snapshotDate: timestamp("snapshot_date").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
@@ -348,10 +348,10 @@ export const portfolioSnapshotItems = pgTable("portfolio_snapshot_items", {
   itemId: integer("item_id").notNull(),
   itemName: text("item_name").notNull(),
   quantity: integer("quantity").notNull(),
-  avgBuyPrice: integer("avg_buy_price").notNull(),
-  currentPrice: integer("current_price").notNull(),
-  value: integer("value").notNull(),
-  profit: integer("profit").notNull(),
+  avgBuyPrice: bigint("avg_buy_price", { mode: "number" }).notNull(),
+  currentPrice: bigint("current_price", { mode: "number" }).notNull(),
+  value: bigint("value", { mode: "number" }).notNull(),
+  profit: bigint("profit", { mode: "number" }).notNull(),
   categoryId: varchar("category_id"),
 });
 
@@ -365,10 +365,10 @@ export const flipTransactions = pgTable("flip_transactions", {
   itemId: integer("item_id").notNull(),
   itemName: text("item_name").notNull(),
   transactionType: varchar("transaction_type", { length: 10 }).notNull(), // 'buy' or 'sell'
-  price: integer("price").notNull(),
+  price: bigint("price", { mode: "number" }).notNull(),
   quantity: integer("quantity").notNull(),
-  totalValue: integer("total_value").notNull(),
-  taxPaid: integer("tax_paid").default(0), // Only for sell transactions
+  totalValue: bigint("total_value", { mode: "number" }).notNull(),
+  taxPaid: bigint("tax_paid", { mode: "number" }).default(0), // Only for sell transactions
   strategyTag: varchar("strategy_tag", { length: 50 }),
   transactionDate: timestamp("transaction_date").notNull(),
   createdAt: timestamp("created_at").defaultNow(),
@@ -384,10 +384,10 @@ export const itemVolumeDaily = pgTable("item_volume_daily", {
   date: timestamp("date").notNull(),
   transactionCount: integer("transaction_count").notNull().default(0),
   totalQuantity: integer("total_quantity").notNull().default(0),
-  totalValue: integer("total_value").notNull().default(0),
-  avgPrice: integer("avg_price").default(0),
-  minPrice: integer("min_price"),
-  maxPrice: integer("max_price"),
+  totalValue: bigint("total_value", { mode: "number" }).notNull().default(0),
+  avgPrice: bigint("avg_price", { mode: "number" }).default(0),
+  minPrice: bigint("min_price", { mode: "number" }),
+  maxPrice: bigint("max_price", { mode: "number" }),
   buyCount: integer("buy_count").default(0),
   sellCount: integer("sell_count").default(0),
   createdAt: timestamp("created_at").defaultNow(),
@@ -474,10 +474,10 @@ export const recipeRuns = pgTable("recipe_runs", {
   userId: varchar("user_id").notNull().references(() => users.id),
   recipeId: varchar("recipe_id").notNull().references(() => recipes.id),
   status: recipeRunStatusEnum("status").notNull().default("gathering"),
-  targetSellPrice: integer("target_sell_price"),
-  actualSellPrice: integer("actual_sell_price"),
-  totalComponentCost: integer("total_component_cost").default(0),
-  profit: integer("profit"),
+  targetSellPrice: bigint("target_sell_price", { mode: "number" }),
+  actualSellPrice: bigint("actual_sell_price", { mode: "number" }),
+  totalComponentCost: bigint("total_component_cost", { mode: "number" }).default(0),
+  profit: bigint("profit", { mode: "number" }),
   linkedFlipId: varchar("linked_flip_id").references(() => flips.id),
   startedAt: timestamp("started_at").defaultNow(),
   completedAt: timestamp("completed_at"),
@@ -510,8 +510,8 @@ export const recipeRunComponents = pgTable("recipe_run_components", {
   componentId: varchar("component_id").notNull().references(() => recipeComponents.id),
   rsAccountId: varchar("rs_account_id").references(() => rsAccounts.id),
   quantityAcquired: integer("quantity_acquired").notNull().default(0),
-  buyPrice: integer("buy_price").notNull(),
-  totalCost: integer("total_cost").notNull(),
+  buyPrice: bigint("buy_price", { mode: "number" }).notNull(),
+  totalCost: bigint("total_cost", { mode: "number" }).notNull(),
   purchaseDate: timestamp("purchase_date").defaultNow(),
   notes: text("notes"),
 });
