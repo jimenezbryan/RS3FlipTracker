@@ -16,7 +16,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
-import { User, Plus, Trash2, Star, Edit, Crown, Swords, Shield, Users, Camera, Loader2 } from "lucide-react";
+import { User, Plus, Trash2, Star, Edit, Crown, Swords, Shield, Users, Camera, Loader2, ArrowLeft } from "lucide-react";
+import { Link } from "wouter";
 import type { RsAccount } from "@shared/schema";
 
 const rsAccountSchema = z.object({
@@ -235,6 +236,12 @@ export default function Profile() {
 
   return (
     <div className="container mx-auto p-6 max-w-4xl space-y-6">
+      <Link href="/">
+        <Button variant="ghost" size="sm" className="gap-2" data-testid="button-back-home">
+          <ArrowLeft className="h-4 w-4" />
+          Back to Dashboard
+        </Button>
+      </Link>
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-4 flex-wrap">
           <div>
