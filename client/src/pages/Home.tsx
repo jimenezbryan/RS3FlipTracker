@@ -344,9 +344,9 @@ export default function Home() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All users</SelectItem>
-                    {allUsers.filter((user) => user.email).map((user) => (
+                    {allUsers.filter((user) => user.email && user.email.includes('@')).map((user) => (
                       <SelectItem key={user.id} value={user.id}>
-                        {user.firstName || user.email?.split('@')[0] || user.id}
+                        {user.email}
                       </SelectItem>
                     ))}
                   </SelectContent>
