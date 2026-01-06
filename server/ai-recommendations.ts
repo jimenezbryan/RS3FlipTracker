@@ -203,10 +203,16 @@ Respond with a valid JSON array:
 ]`;
 
   try {
+    console.log("[AI Recommendations] Generating recommendations for profile:", {
+      totalFlips: profile.totalFlips,
+      avgROI: profile.avgROI,
+      preferredStrategies: profile.preferredStrategies.slice(0, 3),
+    });
+
     const response = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [
-        { role: "system", content: "You are an RS3 GE trading expert. Only suggest real, tradeable RS3 items." },
+        { role: "system", content: "You are an RS3 GE trading expert. Only suggest real, tradeable RS3 items. Always respond with a JSON object containing an 'items' array." },
         { role: "user", content: prompt }
       ],
       response_format: { type: "json_object" },
@@ -214,24 +220,63 @@ Respond with a valid JSON array:
     });
 
     const content = response.choices[0]?.message?.content;
-    if (!content) return [];
+    console.log("[AI Recommendations] OpenAI raw response:", content?.substring(0, 500));
+    
+    if (!content) {
+      console.log("[AI Recommendations] No content in response, using fallback");
+      return getFallbackRecommendations(profile, openPositions);
+    }
 
     const parsed = JSON.parse(content);
-    const suggestions = parsed.items || parsed;
     
-    if (!Array.isArray(suggestions)) return [];
+    // Handle various response formats from OpenAI
+    let suggestions: any[] = [];
+    if (Array.isArray(parsed)) {
+      suggestions = parsed;
+    } else if (parsed.items && Array.isArray(parsed.items)) {
+      suggestions = parsed.items;
+    } else if (parsed.recommendations && Array.isArray(parsed.recommendations)) {
+      suggestions = parsed.recommendations;
+    } else if (parsed.suggestions && Array.isArray(parsed.suggestions)) {
+      suggestions = parsed.suggestions;
+    } else {
+      // Try to find any array in the parsed object
+      const arrayKeys = Object.keys(parsed).filter(k => Array.isArray(parsed[k]));
+      if (arrayKeys.length > 0) {
+        suggestions = parsed[arrayKeys[0]];
+      }
+    }
+    
+    console.log("[AI Recommendations] Parsed suggestions count:", suggestions.length);
+    
+    if (!Array.isArray(suggestions) || suggestions.length === 0) {
+      console.log("[AI Recommendations] No valid suggestions, using fallback");
+      return getFallbackRecommendations(profile, openPositions);
+    }
 
     const recommendations: PersonalizedRecommendation[] = [];
     
     for (const suggestion of suggestions.slice(0, 5)) {
       try {
-        if (!suggestion || !suggestion.itemName) continue;
+        if (!suggestion || !suggestion.itemName) {
+          console.log("[AI Recommendations] Skipping suggestion - no itemName");
+          continue;
+        }
         
+        console.log("[AI Recommendations] Looking up item:", suggestion.itemName);
         const searchResults = await searchItems(suggestion.itemName);
-        if (!searchResults || searchResults.length === 0) continue;
+        if (!searchResults || searchResults.length === 0) {
+          console.log("[AI Recommendations] Item not found in GE:", suggestion.itemName);
+          continue;
+        }
         
         const item = searchResults[0];
-        if (!item || typeof item.price !== 'number' || item.price <= 0 || !item.id) continue;
+        if (!item || typeof item.price !== 'number' || item.price <= 0 || !item.id) {
+          console.log("[AI Recommendations] Invalid item data for:", suggestion.itemName, { price: item?.price, id: item?.id });
+          continue;
+        }
+        
+        console.log("[AI Recommendations] Found item:", item.name, "Price:", item.price);
         
         const history = await getItemPriceHistory(item.id);
         
@@ -288,10 +333,18 @@ Respond with a valid JSON array:
       }
     }
     
+    // If no AI recommendations worked, try fallback
+    if (recommendations.length === 0) {
+      console.log("[AI Recommendations] No AI items validated, using fallback");
+      return getFallbackRecommendations(profile, openPositions);
+    }
+    
+    console.log("[AI Recommendations] Returning", recommendations.length, "AI-generated recommendations");
     return recommendations;
   } catch (error) {
     console.error("[AI Recommendations] Error generating recommendations:", error);
-    return [];
+    // Return fallback recommendations on error
+    return getFallbackRecommendations(profile, openPositions);
   }
 }
 
@@ -308,4 +361,112 @@ function formatHoldTime(ms: number): string {
   if (hours < 24) return `${Math.round(hours)} hours`;
   const days = hours / 24;
   return `${Math.round(days)} days`;
+}
+
+// Popular items to recommend as fallback when AI suggestions fail
+const FALLBACK_ITEMS = [
+  { name: "Nature rune", strategy: "Bulk", risk: "low" as const },
+  { name: "Death rune", strategy: "Bulk", risk: "low" as const },
+  { name: "Blood rune", strategy: "Bulk", risk: "low" as const },
+  { name: "Fire rune", strategy: "Bulk", risk: "low" as const },
+  { name: "Super restore (4)", strategy: "Fast Flip", risk: "low" as const },
+  { name: "Prayer potion (4)", strategy: "Fast Flip", risk: "low" as const },
+  { name: "Saradomin brew (4)", strategy: "Fast Flip", risk: "low" as const },
+  { name: "Overload (4)", strategy: "Fast Flip", risk: "medium" as const },
+  { name: "Raw rocktail", strategy: "Bulk", risk: "low" as const },
+  { name: "Rocktail", strategy: "Bulk", risk: "low" as const },
+  { name: "Luminite stone spirit", strategy: "Bulk", risk: "low" as const },
+  { name: "Necrite stone spirit", strategy: "Bulk", risk: "low" as const },
+  { name: "Elder rune bar", strategy: "Slow Flip", risk: "medium" as const },
+  { name: "Onyx bolt tips", strategy: "High Margin", risk: "medium" as const },
+  { name: "Ascension shard", strategy: "Bulk", risk: "low" as const },
+];
+
+async function getFallbackRecommendations(
+  profile: UserTradingProfile,
+  openPositions: string[]
+): Promise<PersonalizedRecommendation[]> {
+  console.log("[AI Recommendations] Using fallback recommendations");
+  
+  const recommendations: PersonalizedRecommendation[] = [];
+  
+  // Filter out items user already has open positions in
+  const availableItems = FALLBACK_ITEMS.filter(
+    item => !openPositions.includes(item.name.toLowerCase())
+  );
+  
+  // Pick items based on profile preferences
+  let selectedItems = availableItems;
+  
+  // Prioritize items matching user's preferred strategies
+  const preferredStrategies = profile.preferredStrategies.map(s => s.strategy);
+  if (preferredStrategies.length > 0) {
+    selectedItems = [
+      ...availableItems.filter(item => preferredStrategies.includes(item.strategy)),
+      ...availableItems.filter(item => !preferredStrategies.includes(item.strategy))
+    ];
+  }
+  
+  for (const fallbackItem of selectedItems.slice(0, 5)) {
+    try {
+      const searchResults = await searchItems(fallbackItem.name);
+      if (!searchResults || searchResults.length === 0) continue;
+      
+      const item = searchResults[0];
+      if (!item || typeof item.price !== 'number' || item.price <= 0 || !item.id) continue;
+      
+      // Skip if outside user's price range
+      if (item.price < profile.preferredPriceRange.min * 0.1 || 
+          item.price > profile.preferredPriceRange.max * 10) {
+        continue;
+      }
+      
+      const history = await getItemPriceHistory(item.id);
+      
+      let suggestedBuyPrice = item.price;
+      let suggestedSellPrice = item.price;
+      
+      if (history && history.length > 0) {
+        const prices = history.map(h => h.price);
+        const avgPrice = prices.reduce((a, b) => a + b, 0) / prices.length;
+        
+        if (fallbackItem.strategy === "Fast Flip") {
+          suggestedBuyPrice = Math.round(avgPrice * 0.99);
+          suggestedSellPrice = Math.round(avgPrice * 1.01);
+        } else if (fallbackItem.strategy === "Bulk") {
+          suggestedBuyPrice = Math.round(avgPrice * 0.98);
+          suggestedSellPrice = Math.round(avgPrice * 1.02);
+        } else {
+          suggestedBuyPrice = Math.round(avgPrice * 0.97);
+          suggestedSellPrice = Math.round(avgPrice * 1.03);
+        }
+      }
+      
+      const potentialProfit = suggestedSellPrice - suggestedBuyPrice - Math.floor(suggestedSellPrice * 0.02);
+      const potentialROI = suggestedBuyPrice > 0 ? (potentialProfit / suggestedBuyPrice) * 100 : 0;
+      
+      recommendations.push({
+        itemName: item.name,
+        itemId: item.id,
+        itemIcon: item.icon,
+        currentPrice: item.price,
+        suggestedBuyPrice,
+        suggestedSellPrice,
+        potentialProfit,
+        potentialROI,
+        confidence: "medium",
+        reasoning: `Popular ${fallbackItem.strategy.toLowerCase()} item with consistent trading volume`,
+        matchScore: 65,
+        matchReasons: ["High volume item", "Reliable price margins"],
+        strategy: fallbackItem.strategy,
+        riskLevel: fallbackItem.risk,
+        estimatedHoldTime: fallbackItem.strategy === "Fast Flip" ? "1-4 hours" : "1-2 days",
+      });
+    } catch (err) {
+      console.error(`[AI Recommendations] Fallback item lookup failed: ${fallbackItem.name}`, err);
+    }
+  }
+  
+  console.log("[AI Recommendations] Fallback generated", recommendations.length, "recommendations");
+  return recommendations;
 }
