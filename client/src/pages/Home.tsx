@@ -1,5 +1,4 @@
 import { useState } from "react";
-import { Header } from "@/components/Header";
 import { FlipForm } from "@/components/FlipForm";
 import { FlipCardGrid } from "@/components/FlipCardGrid";
 import { GoalsProgress } from "@/components/GoalsProgress";
@@ -300,8 +299,7 @@ export default function Home() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background">
-        <Header />
+      <div className="bg-background">
         <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
           <div className="text-center text-muted-foreground">Loading flips...</div>
         </main>
@@ -310,8 +308,7 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <Header />
+    <div className="bg-background">
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
         {isAdmin && (
           <div className="mb-6 flex flex-wrap items-center gap-3 p-4 rounded-lg border bg-card">

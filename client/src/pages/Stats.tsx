@@ -1,4 +1,3 @@
-import { Header } from "@/components/Header";
 import { useQuery } from "@tanstack/react-query";
 import type { Flip } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -211,8 +210,7 @@ export default function Stats() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background">
-        <Header />
+      <div className="bg-background">
         <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
           <div className="text-center text-muted-foreground">Loading statistics...</div>
         </main>
@@ -221,8 +219,7 @@ export default function Stats() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <Header />
+    <div className="bg-background">
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
         <div className="mb-6">
           <h1 className="text-2xl font-bold flex items-center gap-2">

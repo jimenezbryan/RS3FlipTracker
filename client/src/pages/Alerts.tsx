@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Header } from "@/components/Header";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import type { PriceAlert } from "@shared/schema";
@@ -257,8 +256,7 @@ export default function Alerts() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background">
-        <Header />
+      <div className="bg-background">
         <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
           <div className="text-center text-muted-foreground">Loading alerts...</div>
         </main>
@@ -267,8 +265,7 @@ export default function Alerts() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <Header />
+    <div className="bg-background">
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
         <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
           <div>

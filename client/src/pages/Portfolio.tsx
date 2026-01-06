@@ -1,5 +1,4 @@
 import { useState, useRef, useEffect } from "react";
-import { Header } from "@/components/Header";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import type { PortfolioHolding, PortfolioCategory, PortfolioSnapshot, HoldingTransaction } from "@shared/schema";
 import { ItemIcon } from "@/components/ItemIcon";
@@ -365,8 +364,7 @@ export default function Portfolio() {
 
   if (isSummaryLoading) {
     return (
-      <div className="min-h-screen bg-background">
-        <Header />
+      <div className="bg-background">
         <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
           <div className="text-center text-muted-foreground">Loading portfolio...</div>
         </main>
@@ -382,8 +380,7 @@ export default function Portfolio() {
   }, {} as Record<string, typeof filteredHoldings>);
 
   return (
-    <div className="min-h-screen bg-background">
-      <Header />
+    <div className="bg-background">
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
         <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
           <div>

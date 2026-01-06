@@ -1,5 +1,4 @@
 import { useState, useEffect, useRef } from "react";
-import { Header } from "@/components/Header";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import type { WatchlistItem } from "@shared/schema";
@@ -151,8 +150,7 @@ export default function Watchlist() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background">
-        <Header />
+      <div className="bg-background">
         <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
           <div className="text-center text-muted-foreground">Loading watchlist...</div>
         </main>
@@ -161,8 +159,7 @@ export default function Watchlist() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <Header />
+    <div className="bg-background">
       <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6">
         <div className="mb-6">
           <h1 className="text-2xl font-bold flex items-center gap-2">

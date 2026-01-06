@@ -1,4 +1,3 @@
-import { Header } from "@/components/Header";
 import { AIRecommendations } from "@/components/AIRecommendations";
 import { useLocation } from "wouter";
 
@@ -10,8 +9,7 @@ export default function Suggestions() {
   };
 
   return (
-    <div className="min-h-screen bg-background" data-testid="page-suggestions">
-      <Header />
+    <div className="bg-background" data-testid="page-suggestions">
       <main className="mx-auto max-w-4xl px-4 py-8 sm:px-6">
         <div className="mb-6">
           <h1 className="text-2xl font-bold">AI-Powered Suggestions</h1>

@@ -1,5 +1,4 @@
 import { useState, useRef } from "react";
-import { Header } from "@/components/Header";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import type { Recipe, RecipeWithComponents, RecipeRun, RecipeRunWithDetails, RsAccount } from "@shared/schema";
 import { ItemIcon } from "@/components/ItemIcon";
@@ -294,8 +293,7 @@ export default function Recipes() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <Header />
+    <div className="bg-background">
       <main className="container mx-auto px-4 py-6">
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-3">
