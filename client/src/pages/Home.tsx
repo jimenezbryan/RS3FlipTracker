@@ -344,7 +344,11 @@ export default function Home() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="all">All users</SelectItem>
-                    {allUsers.filter((user) => user.email && user.email.includes('@')).map((user) => (
+                    {allUsers.filter((user) => {
+                      if (!user.email || !user.email.includes('@')) return false;
+                      const testDomains = ['@example.com', '@test.com', '@localhost', '@replit.com'];
+                      return !testDomains.some(domain => user.email?.toLowerCase().endsWith(domain));
+                    }).map((user) => (
                       <SelectItem key={user.id} value={user.id}>
                         {user.email}
                       </SelectItem>
