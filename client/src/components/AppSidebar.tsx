@@ -50,8 +50,8 @@ export function AppSidebar() {
     <Sidebar collapsible="icon" className="border-r">
       <SidebarHeader className="p-3">
         <div className="flex items-center gap-2">
-          <GPStackLogo size={28} />
-          <span className="font-semibold text-sm group-data-[collapsible=icon]:hidden">RS3 Flip Tracker</span>
+          <GPStackLogo size={32} />
+          <span className="font-semibold text-sm group-data-[collapsible=icon]:hidden">FlipSync</span>
         </div>
       </SidebarHeader>
       <SidebarContent>
