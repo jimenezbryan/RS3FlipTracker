@@ -1,46 +1,30 @@
-import { LogOut, Eye, Bell, Home, BarChart3, Briefcase, Target, Shield, Sparkles, Users, BookOpen } from "lucide-react";
+import { LogOut, Users } from "lucide-react";
 import { ThemeToggle } from "./ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Link, useLocation } from "wouter";
+import { Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { GPStackLogo } from "./GPStackLogo";
+import { SidebarTrigger } from "@/components/ui/sidebar";
 
 export function Header() {
   const { user } = useAuth();
-  const [location] = useLocation();
-
-  const { data: adminCheck } = useQuery<{ isAdmin: boolean }>({
-    queryKey: ["/api/admin/check"],
-  });
 
   const { data: onlineData } = useQuery<{ onlineCount: number }>({
     queryKey: ["/api/presence/online-count"],
     refetchInterval: 30000,
   });
 
-  const navItems = [
-    { href: "/", label: "Flips", icon: Home },
-    { href: "/recipes", label: "Recipes", icon: BookOpen },
-    { href: "/portfolio", label: "Portfolio", icon: Briefcase },
-    { href: "/goals", label: "Goals", icon: Target },
-    { href: "/suggestions", label: "AI Tips", icon: Sparkles },
-    { href: "/watchlist", label: "Watchlist", icon: Eye },
-    { href: "/alerts", label: "Alerts", icon: Bell },
-    { href: "/stats", label: "Stats", icon: BarChart3 },
-    ...(adminCheck?.isAdmin ? [{ href: "/admin", label: "Admin", icon: Shield }] : []),
-  ];
-
   return (
     <header className="sticky top-0 z-50 border-b bg-card">
-      <div className="flex h-16 items-center justify-between px-6 gap-4">
-        <div className="flex items-center gap-6">
+      <div className="flex h-14 items-center justify-between px-4 gap-4">
+        <div className="flex items-center gap-4">
+          <SidebarTrigger data-testid="button-sidebar-toggle" />
           <div className="flex items-center gap-3">
-            <GPStackLogo size={40} />
+            <GPStackLogo size={32} />
             <div className="hidden sm:block">
-              <h1 className="text-xl font-semibold text-foreground">RS3 Flip Tracker</h1>
-              <p className="text-xs text-muted-foreground">Grand Exchange Profit Tracker</p>
+              <h1 className="text-lg font-semibold text-foreground">RS3 Flip Tracker</h1>
             </div>
           </div>
           <div className="flex items-center gap-1.5 text-sm text-muted-foreground" data-testid="online-users-indicator">
@@ -48,21 +32,6 @@ export function Header() {
             <span className="font-mono">{onlineData?.onlineCount ?? 0}</span>
             <span className="hidden sm:inline">online</span>
           </div>
-          <nav className="flex items-center gap-1">
-            {navItems.map((item) => (
-              <Link key={item.href} href={item.href}>
-                <Button
-                  variant={location === item.href ? "secondary" : "ghost"}
-                  size="sm"
-                  className="gap-2"
-                  data-testid={`nav-${item.label.toLowerCase()}`}
-                >
-                  <item.icon className="h-4 w-4" />
-                  <span className="hidden sm:inline">{item.label}</span>
-                </Button>
-              </Link>
-            ))}
-          </nav>
         </div>
         <div className="flex items-center gap-3">
           {user && (
