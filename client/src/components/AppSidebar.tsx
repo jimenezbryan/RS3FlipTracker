@@ -1,11 +1,13 @@
-import { Home, BarChart3, Briefcase, Target, Sparkles, Eye, Bell, BookOpen, Shield } from "lucide-react";
+import { Home, BarChart3, Briefcase, Target, Sparkles, Eye, Bell, BookOpen, Shield, Users } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
+  SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -15,6 +17,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { GPStackLogo } from "./GPStackLogo";
 
 const navItems = [
   { href: "/", label: "Flips", icon: Home },
@@ -34,13 +37,24 @@ export function AppSidebar() {
     queryKey: ["/api/admin/check"],
   });
 
+  const { data: onlineData } = useQuery<{ onlineCount: number }>({
+    queryKey: ["/api/presence/online-count"],
+    refetchInterval: 30000,
+  });
+
   const allNavItems = adminCheck?.isAdmin 
     ? [...navItems, { href: "/admin", label: "Admin", icon: Shield }]
     : navItems;
 
   return (
     <Sidebar collapsible="icon" className="border-r">
-      <SidebarContent className="pt-4">
+      <SidebarHeader className="p-3">
+        <div className="flex items-center gap-2">
+          <GPStackLogo size={28} />
+          <span className="font-semibold text-sm group-data-[collapsible=icon]:hidden">RS3 Flip Tracker</span>
+        </div>
+      </SidebarHeader>
+      <SidebarContent>
         <SidebarGroup>
           <SidebarGroupContent>
             <SidebarMenu>
@@ -72,6 +86,13 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+      <SidebarFooter className="p-3">
+        <div className="flex items-center gap-2 text-xs text-muted-foreground" data-testid="online-users-indicator">
+          <Users className="h-4 w-4 text-green-500" />
+          <span className="font-mono">{onlineData?.onlineCount ?? 0}</span>
+          <span className="group-data-[collapsible=icon]:hidden">online</span>
+        </div>
+      </SidebarFooter>
     </Sidebar>
   );
 }
