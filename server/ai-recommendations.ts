@@ -1,6 +1,5 @@
 import OpenAI from "openai";
 import type { Flip } from "@shared/schema";
-import { getItemPrice, getItemPriceHistory, searchItems } from "./ge-api";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
@@ -159,6 +158,91 @@ export function analyzeUserTradingProfile(flips: Flip[]): UserTradingProfile {
   };
 }
 
+// Interface for item stats calculated from user's trading history
+interface ItemTradingStats {
+  itemName: string;
+  itemId: number | null;
+  itemIcon: string | null;
+  tradeCount: number;
+  totalProfit: number;
+  avgBuyPrice: number;
+  avgSellPrice: number;
+  avgROI: number;
+  winRate: number;
+  avgHoldTimeMs: number;
+  lastTraded: Date;
+  strategies: string[];
+  isMembers: boolean | null;
+}
+
+// Calculate detailed stats for each item from user's trading history
+function calculateItemStats(flips: Flip[]): ItemTradingStats[] {
+  const completedFlips = flips.filter(f => f.sellPrice && f.sellDate && !f.deletedAt);
+  const itemMap = new Map<string, {
+    trades: Flip[];
+    totalProfit: number;
+    totalBuyPrice: number;
+    totalSellPrice: number;
+    totalROI: number;
+    wins: number;
+    totalHoldTime: number;
+    strategies: Set<string>;
+  }>();
+  
+  for (const flip of completedFlips) {
+    const sellPrice = flip.sellPrice as number;
+    const taxPaid = Math.floor(sellPrice * 0.02) * flip.quantity;
+    const profit = (sellPrice * flip.quantity) - (flip.buyPrice * flip.quantity) - taxPaid;
+    const roi = ((sellPrice - flip.buyPrice - Math.floor(sellPrice * 0.02)) / flip.buyPrice) * 100;
+    const holdTime = new Date(flip.sellDate as Date).getTime() - new Date(flip.buyDate).getTime();
+    
+    const existing = itemMap.get(flip.itemName) || {
+      trades: [],
+      totalProfit: 0,
+      totalBuyPrice: 0,
+      totalSellPrice: 0,
+      totalROI: 0,
+      wins: 0,
+      totalHoldTime: 0,
+      strategies: new Set<string>(),
+    };
+    
+    existing.trades.push(flip);
+    existing.totalProfit += profit;
+    existing.totalBuyPrice += flip.buyPrice;
+    existing.totalSellPrice += sellPrice;
+    existing.totalROI += roi;
+    if (profit > 0) existing.wins++;
+    existing.totalHoldTime += holdTime;
+    if (flip.strategyTag) existing.strategies.add(flip.strategyTag);
+    
+    itemMap.set(flip.itemName, existing);
+  }
+  
+  return Array.from(itemMap.entries()).map(([itemName, data]) => {
+    const count = data.trades.length;
+    const latestFlip = data.trades.sort((a, b) => 
+      new Date(b.sellDate as Date).getTime() - new Date(a.sellDate as Date).getTime()
+    )[0];
+    
+    return {
+      itemName,
+      itemId: latestFlip?.itemId || null,
+      itemIcon: latestFlip?.itemIcon || null,
+      tradeCount: count,
+      totalProfit: data.totalProfit,
+      avgBuyPrice: Math.round(data.totalBuyPrice / count),
+      avgSellPrice: Math.round(data.totalSellPrice / count),
+      avgROI: data.totalROI / count,
+      winRate: (data.wins / count) * 100,
+      avgHoldTimeMs: data.totalHoldTime / count,
+      lastTraded: new Date(latestFlip?.sellDate as Date),
+      strategies: Array.from(data.strategies),
+      isMembers: latestFlip?.isMembers ?? null,
+    };
+  });
+}
+
 export async function getPersonalizedRecommendations(
   profile: UserTradingProfile,
   existingFlips: Flip[]
@@ -167,185 +251,207 @@ export async function getPersonalizedRecommendations(
     .filter(f => !f.sellPrice && !f.deletedAt)
     .map(f => f.itemName.toLowerCase());
   
-  const prompt = `You are an expert RuneScape 3 Grand Exchange trading advisor. Based on a user's trading profile, suggest 5 specific items they should consider flipping.
+  // Calculate stats for all items the user has traded
+  const itemStats = calculateItemStats(existingFlips);
+  
+  // Filter out items with open positions
+  const availableItems = itemStats.filter(
+    item => !openPositions.includes(item.itemName.toLowerCase())
+  );
+  
+  console.log("[AI Recommendations] Found", availableItems.length, "unique items in trading history");
+  
+  if (availableItems.length === 0) {
+    console.log("[AI Recommendations] No items in history, returning empty");
+    return [];
+  }
+  
+  // If we have very few items, just return them directly sorted by performance
+  if (availableItems.length <= 5) {
+    console.log("[AI Recommendations] Few items, returning sorted by profit");
+    return availableItems
+      .sort((a, b) => b.totalProfit - a.totalProfit)
+      .map(item => buildRecommendation(item, profile, "Top performer from your history"));
+  }
+  
+  // Build item summary for AI to analyze
+  const itemSummaries = availableItems
+    .sort((a, b) => b.tradeCount - a.tradeCount) // Prioritize frequently traded items
+    .slice(0, 30) // Limit to top 30 items to keep prompt size reasonable
+    .map(item => ({
+      name: item.itemName,
+      trades: item.tradeCount,
+      profit: formatGp(item.totalProfit),
+      avgBuy: formatGp(item.avgBuyPrice),
+      avgSell: formatGp(item.avgSellPrice),
+      roi: `${item.avgROI.toFixed(1)}%`,
+      winRate: `${item.winRate.toFixed(0)}%`,
+      holdTime: formatHoldTime(item.avgHoldTimeMs),
+      strategies: item.strategies.join(", ") || "Unknown",
+      members: item.isMembers ? "Members" : "F2P",
+    }));
+  
+  const prompt = `You are an RS3 trading advisor. Analyze this user's trading history and select the 5 BEST items they should trade again.
 
-USER TRADING PROFILE:
+USER PROFILE:
 - Risk Profile: ${profile.riskProfile}
-- Preferred Price Range: ${formatGp(profile.preferredPriceRange.min)} - ${formatGp(profile.preferredPriceRange.max)}
 - Average ROI: ${profile.avgROI.toFixed(1)}%
 - Win Rate: ${profile.winRate.toFixed(1)}%
-- Average Hold Time: ${formatHoldTime(profile.avgHoldTime)}
-- Total Completed Flips: ${profile.totalFlips}
-- Membership Preference: ${profile.membershipPreference}
-- Top Performing Items: ${profile.topPerformingItems.map(i => i.name).join(", ") || "None yet"}
-- Frequently Traded: ${profile.frequentlyTradedItems.join(", ") || "None yet"}
-- Preferred Strategies: ${profile.preferredStrategies.map(s => `${s.strategy} (${s.frequency} trades, ${s.avgROI.toFixed(1)}% avg ROI)`).join(", ") || "None yet"}
-- Currently Open Positions: ${openPositions.join(", ") || "None"}
+- Preferred Strategies: ${profile.preferredStrategies.map(s => s.strategy).slice(0, 3).join(", ") || "Various"}
 
-REQUIREMENTS:
-1. Suggest items that match the user's risk profile and price range
-2. Consider their preferred trading strategies
-3. Avoid items they already have open positions in
-4. Include a mix of familiar categories and new opportunities
-5. Each item must be a real RS3 tradeable item
+ITEMS FROM USER'S TRADING HISTORY (select from these ONLY):
+${JSON.stringify(itemSummaries, null, 2)}
 
-Respond with a valid JSON array:
-[
-  {
-    "itemName": "Exact RS3 item name",
-    "reasoning": "Brief explanation why this fits the user's style",
-    "strategy": "Fast Flip|Slow Flip|Bulk|High Margin|Speculative",
-    "riskLevel": "low|medium|high",
-    "estimatedHoldTime": "e.g., 1-2 hours, 1-3 days",
-    "matchScore": 0-100,
-    "matchReasons": ["reason1", "reason2"]
-  }
-]`;
+SELECTION CRITERIA:
+1. Prioritize items with high profit AND high win rate
+2. Consider items matching their preferred strategies
+3. Factor in ROI and trading frequency
+4. Balance between proven winners and items with improvement potential
+
+Respond with JSON containing an "items" array. Each item must use the EXACT item name from the list above:
+{
+  "items": [
+    {
+      "itemName": "EXACT name from list",
+      "reasoning": "Why this item suits them",
+      "suggestedStrategy": "Fast Flip|Slow Flip|Bulk|High Margin|Speculative",
+      "confidence": "high|medium|low",
+      "matchScore": 0-100,
+      "tips": "Specific trading tip for this item"
+    }
+  ]
+}`;
 
   try {
-    console.log("[AI Recommendations] Generating recommendations for profile:", {
-      totalFlips: profile.totalFlips,
-      avgROI: profile.avgROI,
-      preferredStrategies: profile.preferredStrategies.slice(0, 3),
-    });
+    console.log("[AI Recommendations] Asking AI to analyze", itemSummaries.length, "items");
 
     const response = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [
-        { role: "system", content: "You are an RS3 GE trading expert. Only suggest real, tradeable RS3 items. Always respond with a JSON object containing an 'items' array." },
+        { role: "system", content: "You are an RS3 GE trading advisor. Only select items from the provided list. Never suggest items not in the user's history." },
         { role: "user", content: prompt }
       ],
       response_format: { type: "json_object" },
-      max_completion_tokens: 2000,
+      max_completion_tokens: 1500,
     });
 
     const content = response.choices[0]?.message?.content;
-    console.log("[AI Recommendations] OpenAI raw response:", content?.substring(0, 500));
+    console.log("[AI Recommendations] AI response received");
     
     if (!content) {
-      console.log("[AI Recommendations] No content in response, using fallback");
-      return getFallbackRecommendations(profile, openPositions);
+      console.log("[AI Recommendations] No content, using profit-sorted fallback");
+      return getTopProfitItems(availableItems, profile);
     }
 
     const parsed = JSON.parse(content);
-    
-    // Handle various response formats from OpenAI
-    let suggestions: any[] = [];
-    if (Array.isArray(parsed)) {
-      suggestions = parsed;
-    } else if (parsed.items && Array.isArray(parsed.items)) {
-      suggestions = parsed.items;
-    } else if (parsed.recommendations && Array.isArray(parsed.recommendations)) {
-      suggestions = parsed.recommendations;
-    } else if (parsed.suggestions && Array.isArray(parsed.suggestions)) {
-      suggestions = parsed.suggestions;
-    } else {
-      // Try to find any array in the parsed object
-      const arrayKeys = Object.keys(parsed).filter(k => Array.isArray(parsed[k]));
-      if (arrayKeys.length > 0) {
-        suggestions = parsed[arrayKeys[0]];
-      }
-    }
-    
-    console.log("[AI Recommendations] Parsed suggestions count:", suggestions.length);
+    const suggestions = parsed.items || parsed.recommendations || parsed.suggestions || [];
     
     if (!Array.isArray(suggestions) || suggestions.length === 0) {
-      console.log("[AI Recommendations] No valid suggestions, using fallback");
-      return getFallbackRecommendations(profile, openPositions);
+      console.log("[AI Recommendations] No valid AI suggestions, using profit-sorted fallback");
+      return getTopProfitItems(availableItems, profile);
     }
 
     const recommendations: PersonalizedRecommendation[] = [];
     
     for (const suggestion of suggestions.slice(0, 5)) {
-      try {
-        if (!suggestion || !suggestion.itemName) {
-          console.log("[AI Recommendations] Skipping suggestion - no itemName");
-          continue;
-        }
-        
-        console.log("[AI Recommendations] Looking up item:", suggestion.itemName);
-        const searchResults = await searchItems(suggestion.itemName);
-        if (!searchResults || searchResults.length === 0) {
-          console.log("[AI Recommendations] Item not found in GE:", suggestion.itemName);
-          continue;
-        }
-        
-        const item = searchResults[0];
-        if (!item || typeof item.price !== 'number' || item.price <= 0 || !item.id) {
-          console.log("[AI Recommendations] Invalid item data for:", suggestion.itemName, { price: item?.price, id: item?.id });
-          continue;
-        }
-        
-        console.log("[AI Recommendations] Found item:", item.name, "Price:", item.price);
-        
-        const history = await getItemPriceHistory(item.id);
-        
-        let suggestedBuyPrice = item.price;
-        let suggestedSellPrice = item.price;
-        
-        if (history && history.length > 0) {
-          const prices = history.map(h => h.price);
-          const avgPrice = prices.reduce((a, b) => a + b, 0) / prices.length;
-          const minPrice = Math.min(...prices);
-          const maxPrice = Math.max(...prices);
-          
-          suggestedBuyPrice = Math.round(avgPrice * 0.97);
-          suggestedSellPrice = Math.round(avgPrice * 1.03);
-          
-          if (suggestion.strategy === "High Margin") {
-            suggestedBuyPrice = Math.round(minPrice * 1.02);
-            suggestedSellPrice = Math.round(maxPrice * 0.98);
-          } else if (suggestion.strategy === "Fast Flip") {
-            suggestedBuyPrice = Math.round(avgPrice * 0.99);
-            suggestedSellPrice = Math.round(avgPrice * 1.01);
-          }
-        }
-        
-        if (isNaN(suggestedBuyPrice) || isNaN(suggestedSellPrice) || suggestedBuyPrice <= 0) continue;
-        
-        const potentialProfit = suggestedSellPrice - suggestedBuyPrice - Math.floor(suggestedSellPrice * 0.02); // 2% tax per item
-        const potentialROI = suggestedBuyPrice > 0 ? (potentialProfit / suggestedBuyPrice) * 100 : 0;
-        
-        let confidence: "high" | "medium" | "low" = "medium";
-        const matchScore = typeof suggestion.matchScore === 'number' ? suggestion.matchScore : 70;
-        if (matchScore >= 80) confidence = "high";
-        else if (matchScore < 50) confidence = "low";
-        
-        recommendations.push({
-          itemName: item.name,
-          itemId: item.id,
-          itemIcon: item.icon,
-          currentPrice: item.price,
-          suggestedBuyPrice,
-          suggestedSellPrice,
-          potentialProfit,
-          potentialROI,
-          confidence,
-          reasoning: suggestion.reasoning || "Matches your trading profile",
-          matchScore,
-          matchReasons: Array.isArray(suggestion.matchReasons) ? suggestion.matchReasons : [],
-          strategy: suggestion.strategy || "Other",
-          riskLevel: suggestion.riskLevel || "medium",
-          estimatedHoldTime: suggestion.estimatedHoldTime || "1-3 days",
-        });
-      } catch (err) {
-        console.error(`Failed to look up item: ${suggestion.itemName}`, err);
+      if (!suggestion?.itemName) continue;
+      
+      // Find the item in our stats (case-insensitive match)
+      const itemData = availableItems.find(
+        i => i.itemName.toLowerCase() === suggestion.itemName.toLowerCase()
+      );
+      
+      if (!itemData) {
+        console.log("[AI Recommendations] AI suggested unknown item:", suggestion.itemName);
+        continue;
+      }
+      
+      recommendations.push(buildRecommendation(itemData, profile, suggestion.reasoning || "Matches your trading style", {
+        confidence: suggestion.confidence,
+        matchScore: suggestion.matchScore,
+        strategy: suggestion.suggestedStrategy,
+        tips: suggestion.tips,
+      }));
+    }
+    
+    // Fill remaining slots with top profit items if needed
+    if (recommendations.length < 5) {
+      const existingNames = new Set(recommendations.map(r => r.itemName.toLowerCase()));
+      const remaining = availableItems
+        .filter(i => !existingNames.has(i.itemName.toLowerCase()))
+        .sort((a, b) => b.totalProfit - a.totalProfit)
+        .slice(0, 5 - recommendations.length);
+      
+      for (const item of remaining) {
+        recommendations.push(buildRecommendation(item, profile, "Top profit performer from your history"));
       }
     }
     
-    // If no AI recommendations worked, try fallback
-    if (recommendations.length === 0) {
-      console.log("[AI Recommendations] No AI items validated, using fallback");
-      return getFallbackRecommendations(profile, openPositions);
-    }
-    
-    console.log("[AI Recommendations] Returning", recommendations.length, "AI-generated recommendations");
+    console.log("[AI Recommendations] Returning", recommendations.length, "recommendations from history");
     return recommendations;
   } catch (error) {
-    console.error("[AI Recommendations] Error generating recommendations:", error);
-    // Return fallback recommendations on error
-    return getFallbackRecommendations(profile, openPositions);
+    console.error("[AI Recommendations] Error:", error);
+    return getTopProfitItems(availableItems, profile);
   }
+}
+
+// Build a recommendation from item stats
+function buildRecommendation(
+  item: ItemTradingStats,
+  profile: UserTradingProfile,
+  reasoning: string,
+  aiData?: { confidence?: string; matchScore?: number; strategy?: string; tips?: string }
+): PersonalizedRecommendation {
+  const potentialProfit = item.avgSellPrice - item.avgBuyPrice - Math.floor(item.avgSellPrice * 0.02);
+  const potentialROI = item.avgBuyPrice > 0 ? (potentialProfit / item.avgBuyPrice) * 100 : 0;
+  
+  let confidence: "high" | "medium" | "low" = "medium";
+  if (aiData?.confidence === "high" || item.winRate >= 80) confidence = "high";
+  else if (aiData?.confidence === "low" || item.winRate < 50) confidence = "low";
+  
+  const holdHours = item.avgHoldTimeMs / 3600000;
+  let estimatedHoldTime = "1-3 days";
+  if (holdHours < 4) estimatedHoldTime = "1-4 hours";
+  else if (holdHours < 24) estimatedHoldTime = "4-24 hours";
+  else if (holdHours < 72) estimatedHoldTime = "1-3 days";
+  else estimatedHoldTime = "3+ days";
+  
+  let riskLevel: "low" | "medium" | "high" = "medium";
+  if (item.winRate >= 75 && item.avgROI > 0) riskLevel = "low";
+  else if (item.winRate < 50 || item.avgROI < 0) riskLevel = "high";
+  
+  const matchReasons: string[] = [];
+  if (item.winRate >= 70) matchReasons.push(`${item.winRate.toFixed(0)}% win rate`);
+  if (item.avgROI > profile.avgROI) matchReasons.push("Above your average ROI");
+  if (item.tradeCount >= 5) matchReasons.push(`${item.tradeCount} successful trades`);
+  if (item.totalProfit > 0) matchReasons.push(`${formatGp(item.totalProfit)} total profit`);
+  if (aiData?.tips) matchReasons.push(aiData.tips);
+  
+  return {
+    itemName: item.itemName,
+    itemId: item.itemId || 0,
+    itemIcon: item.itemIcon || undefined,
+    currentPrice: item.avgSellPrice, // Use their historical sell price as "current"
+    suggestedBuyPrice: item.avgBuyPrice,
+    suggestedSellPrice: item.avgSellPrice,
+    potentialProfit,
+    potentialROI,
+    confidence,
+    reasoning,
+    matchScore: aiData?.matchScore || Math.round(50 + (item.winRate / 2)),
+    matchReasons,
+    strategy: aiData?.strategy || item.strategies[0] || "Other",
+    riskLevel,
+    estimatedHoldTime,
+  };
+}
+
+// Fallback: return top profit items
+function getTopProfitItems(items: ItemTradingStats[], profile: UserTradingProfile): PersonalizedRecommendation[] {
+  return items
+    .sort((a, b) => b.totalProfit - a.totalProfit)
+    .slice(0, 5)
+    .map(item => buildRecommendation(item, profile, "Top profit performer from your history"));
 }
 
 function formatGp(value: number): string {
@@ -361,112 +467,4 @@ function formatHoldTime(ms: number): string {
   if (hours < 24) return `${Math.round(hours)} hours`;
   const days = hours / 24;
   return `${Math.round(days)} days`;
-}
-
-// Popular items to recommend as fallback when AI suggestions fail
-const FALLBACK_ITEMS = [
-  { name: "Nature rune", strategy: "Bulk", risk: "low" as const },
-  { name: "Death rune", strategy: "Bulk", risk: "low" as const },
-  { name: "Blood rune", strategy: "Bulk", risk: "low" as const },
-  { name: "Fire rune", strategy: "Bulk", risk: "low" as const },
-  { name: "Super restore (4)", strategy: "Fast Flip", risk: "low" as const },
-  { name: "Prayer potion (4)", strategy: "Fast Flip", risk: "low" as const },
-  { name: "Saradomin brew (4)", strategy: "Fast Flip", risk: "low" as const },
-  { name: "Overload (4)", strategy: "Fast Flip", risk: "medium" as const },
-  { name: "Raw rocktail", strategy: "Bulk", risk: "low" as const },
-  { name: "Rocktail", strategy: "Bulk", risk: "low" as const },
-  { name: "Luminite stone spirit", strategy: "Bulk", risk: "low" as const },
-  { name: "Necrite stone spirit", strategy: "Bulk", risk: "low" as const },
-  { name: "Elder rune bar", strategy: "Slow Flip", risk: "medium" as const },
-  { name: "Onyx bolt tips", strategy: "High Margin", risk: "medium" as const },
-  { name: "Ascension shard", strategy: "Bulk", risk: "low" as const },
-];
-
-async function getFallbackRecommendations(
-  profile: UserTradingProfile,
-  openPositions: string[]
-): Promise<PersonalizedRecommendation[]> {
-  console.log("[AI Recommendations] Using fallback recommendations");
-  
-  const recommendations: PersonalizedRecommendation[] = [];
-  
-  // Filter out items user already has open positions in
-  const availableItems = FALLBACK_ITEMS.filter(
-    item => !openPositions.includes(item.name.toLowerCase())
-  );
-  
-  // Pick items based on profile preferences
-  let selectedItems = availableItems;
-  
-  // Prioritize items matching user's preferred strategies
-  const preferredStrategies = profile.preferredStrategies.map(s => s.strategy);
-  if (preferredStrategies.length > 0) {
-    selectedItems = [
-      ...availableItems.filter(item => preferredStrategies.includes(item.strategy)),
-      ...availableItems.filter(item => !preferredStrategies.includes(item.strategy))
-    ];
-  }
-  
-  for (const fallbackItem of selectedItems.slice(0, 5)) {
-    try {
-      const searchResults = await searchItems(fallbackItem.name);
-      if (!searchResults || searchResults.length === 0) continue;
-      
-      const item = searchResults[0];
-      if (!item || typeof item.price !== 'number' || item.price <= 0 || !item.id) continue;
-      
-      // Skip if outside user's price range
-      if (item.price < profile.preferredPriceRange.min * 0.1 || 
-          item.price > profile.preferredPriceRange.max * 10) {
-        continue;
-      }
-      
-      const history = await getItemPriceHistory(item.id);
-      
-      let suggestedBuyPrice = item.price;
-      let suggestedSellPrice = item.price;
-      
-      if (history && history.length > 0) {
-        const prices = history.map(h => h.price);
-        const avgPrice = prices.reduce((a, b) => a + b, 0) / prices.length;
-        
-        if (fallbackItem.strategy === "Fast Flip") {
-          suggestedBuyPrice = Math.round(avgPrice * 0.99);
-          suggestedSellPrice = Math.round(avgPrice * 1.01);
-        } else if (fallbackItem.strategy === "Bulk") {
-          suggestedBuyPrice = Math.round(avgPrice * 0.98);
-          suggestedSellPrice = Math.round(avgPrice * 1.02);
-        } else {
-          suggestedBuyPrice = Math.round(avgPrice * 0.97);
-          suggestedSellPrice = Math.round(avgPrice * 1.03);
-        }
-      }
-      
-      const potentialProfit = suggestedSellPrice - suggestedBuyPrice - Math.floor(suggestedSellPrice * 0.02);
-      const potentialROI = suggestedBuyPrice > 0 ? (potentialProfit / suggestedBuyPrice) * 100 : 0;
-      
-      recommendations.push({
-        itemName: item.name,
-        itemId: item.id,
-        itemIcon: item.icon,
-        currentPrice: item.price,
-        suggestedBuyPrice,
-        suggestedSellPrice,
-        potentialProfit,
-        potentialROI,
-        confidence: "medium",
-        reasoning: `Popular ${fallbackItem.strategy.toLowerCase()} item with consistent trading volume`,
-        matchScore: 65,
-        matchReasons: ["High volume item", "Reliable price margins"],
-        strategy: fallbackItem.strategy,
-        riskLevel: fallbackItem.risk,
-        estimatedHoldTime: fallbackItem.strategy === "Fast Flip" ? "1-4 hours" : "1-2 days",
-      });
-    } catch (err) {
-      console.error(`[AI Recommendations] Fallback item lookup failed: ${fallbackItem.name}`, err);
-    }
-  }
-  
-  console.log("[AI Recommendations] Fallback generated", recommendations.length, "recommendations");
-  return recommendations;
 }
