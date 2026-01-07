@@ -9,7 +9,7 @@ import { processScreenshot, matchItemsToGE } from "./ocr";
 import { analyzeRS3Screenshot } from "./ai-vision";
 import { analyzeUserTradingProfile, getPersonalizedRecommendations } from "./ai-recommendations";
 import { calculateFlipTax } from "@shared/taxCalculator";
-import { sendFlipToDiscord } from "./discord";
+import { sendFlipToDiscord, sendFlipUpdateToDiscord } from "./discord";
 
 const upload = multer({ 
   storage: multer.memoryStorage(),
@@ -356,6 +356,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           updatedFlip.sellPrice, 
           updatedFlip.quantity ?? 1
         );
+      }
+      
+      // Send update notification to Discord (fire and forget)
+      if (existingFlip) {
+        sendFlipUpdateToDiscord(existingFlip, updatedFlip).catch(err => {
+          console.error("[Discord] Failed to send flip update:", err);
+        });
       }
       
       res.json(updatedFlip);
