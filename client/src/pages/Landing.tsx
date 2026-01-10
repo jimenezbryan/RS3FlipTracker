@@ -1,3 +1,4 @@
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { GPStackLogo } from "@/components/GPStackLogo";
@@ -11,8 +12,29 @@ import {
   ArrowRight,
   Zap,
   Shield,
-  LineChart
+  LineChart,
+  ClipboardList,
+  PieChart,
+  Rocket,
+  Quote
 } from "lucide-react";
+import dashboardPreview from "@assets/image_1768017836449.png";
+
+function LoadingSkeleton() {
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-[#0f1419] via-[#131a22] to-[#0f1419] flex items-center justify-center">
+      <div className="text-center space-y-6 animate-pulse">
+        <div className="w-16 h-16 rounded-xl bg-success/20 mx-auto animate-logo-glow" />
+        <div className="h-8 w-48 bg-white/10 rounded-lg mx-auto" />
+        <div className="flex gap-2 justify-center">
+          <div className="h-2 w-2 bg-success/50 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+          <div className="h-2 w-2 bg-success/50 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+          <div className="h-2 w-2 bg-success/50 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function AnimatedBackground() {
   return (
@@ -65,7 +87,70 @@ function AnimatedBackground() {
   );
 }
 
+const testimonials = [
+  {
+    quote: "Made over 500M in my first month using FlipSync. The profit tracking and AI tips are game-changers!",
+    author: "DragonSlayer99",
+    profit: "+523M",
+    avatar: "D"
+  },
+  {
+    quote: "Finally a tracker that calculates GE tax correctly. My ROI analytics helped me double down on winning strategies.",
+    author: "MerchantKing",
+    profit: "+1.2B",
+    avatar: "M"
+  },
+  {
+    quote: "The price alerts saved me so many times. Got notified right when rare items dropped - instant profit.",
+    author: "FlipMaster_RS",
+    profit: "+890M",
+    avatar: "F"
+  }
+];
+
+const howItWorks = [
+  {
+    step: 1,
+    title: "Log Your Trades",
+    description: "Add your buy and sell transactions. FlipSync auto-fetches item data and calculates GE tax.",
+    icon: ClipboardList,
+    color: "text-success"
+  },
+  {
+    step: 2,
+    title: "Track Performance",
+    description: "See real-time profits, ROI, and performance by strategy. Set goals and watch your progress.",
+    icon: PieChart,
+    color: "text-blue-400"
+  },
+  {
+    step: 3,
+    title: "Optimize & Profit",
+    description: "Get AI recommendations based on your trading history. Find your next winning flip.",
+    icon: Rocket,
+    color: "text-purple-400"
+  }
+];
+
+function smoothScrollTo(elementId: string) {
+  const element = document.getElementById(elementId);
+  if (element) {
+    element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+}
+
 export default function Landing() {
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setIsLoading(false), 800);
+    return () => clearTimeout(timer);
+  }, []);
+
+  if (isLoading) {
+    return <LoadingSkeleton />;
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#0f1419] via-[#131a22] to-[#0f1419] text-foreground relative">
       <style>{`
@@ -97,12 +182,18 @@ export default function Landing() {
           0%, 100% { opacity: 0.3; transform: translate(-50%, 0) scale(1); }
           50% { opacity: 0.6; transform: translate(-50%, 0) scale(1.1); }
         }
+        @keyframes logo-glow {
+          0%, 100% { box-shadow: 0 0 20px rgba(34, 197, 94, 0.3), 0 0 40px rgba(34, 197, 94, 0.1); }
+          50% { box-shadow: 0 0 30px rgba(34, 197, 94, 0.5), 0 0 60px rgba(34, 197, 94, 0.2); }
+        }
         .animate-orb-float { animation: orb-float 20s ease-in-out infinite; }
         .animate-orb-float-delayed { animation: orb-float-delayed 25s ease-in-out infinite; }
         .animate-orb-float-slow { animation: orb-float-slow 30s ease-in-out infinite; }
         .animate-orb-pulse { animation: orb-pulse 8s ease-in-out infinite; }
         .animate-twinkle { animation: twinkle 3s ease-in-out infinite; }
         .animate-grid-pulse { animation: grid-pulse 6s ease-in-out infinite; }
+        .animate-logo-glow { animation: logo-glow 3s ease-in-out infinite; }
+        html { scroll-behavior: smooth; }
       `}</style>
       
       <AnimatedBackground />
@@ -110,9 +201,34 @@ export default function Landing() {
       <header className="border-b border-border/40 backdrop-blur-sm bg-[#0f1419]/80 sticky top-0 z-50 relative">
         <div className="mx-auto max-w-7xl px-4 py-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <GPStackLogo size={36} />
+            <div className="animate-logo-glow rounded-lg">
+              <GPStackLogo size={36} />
+            </div>
             <span className="text-xl font-bold text-white">FlipSync</span>
           </div>
+          <nav className="hidden md:flex items-center gap-6">
+            <button 
+              onClick={() => smoothScrollTo('features')} 
+              className="text-sm text-muted-foreground hover:text-white transition-colors"
+              data-testid="nav-features"
+            >
+              Features
+            </button>
+            <button 
+              onClick={() => smoothScrollTo('how-it-works')} 
+              className="text-sm text-muted-foreground hover:text-white transition-colors"
+              data-testid="nav-how-it-works"
+            >
+              How It Works
+            </button>
+            <button 
+              onClick={() => smoothScrollTo('testimonials')} 
+              className="text-sm text-muted-foreground hover:text-white transition-colors"
+              data-testid="nav-testimonials"
+            >
+              Testimonials
+            </button>
+          </nav>
           <Button variant="default" asChild data-testid="button-login">
             <a href="/api/login" className="flex items-center gap-2">
               Sign In
@@ -170,6 +286,56 @@ export default function Landing() {
         </section>
 
         <section className="relative mx-auto max-w-7xl px-4 py-16">
+          <div className="text-center mb-12">
+            <h2 className="text-2xl sm:text-3xl font-bold text-white mb-4">
+              See Your Dashboard in Action
+            </h2>
+            <p className="text-muted-foreground max-w-xl mx-auto">
+              Track flips, monitor goals, and analyze your trading performance all in one place.
+            </p>
+          </div>
+          <div className="relative max-w-5xl mx-auto">
+            <div className="absolute -inset-4 bg-gradient-to-r from-success/20 via-blue-500/20 to-purple-500/20 rounded-2xl blur-xl opacity-50" />
+            <Card className="relative bg-[#1a2332]/90 border-border/50 p-2 overflow-hidden backdrop-blur-sm">
+              <img 
+                src={dashboardPreview} 
+                alt="FlipSync Dashboard Preview" 
+                className="w-full rounded-lg shadow-2xl"
+                data-testid="img-dashboard-preview"
+              />
+            </Card>
+          </div>
+        </section>
+
+        <section id="how-it-works" className="relative mx-auto max-w-7xl px-4 py-20">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">
+              How It Works
+            </h2>
+            <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+              Get started in minutes. No complicated setup required.
+            </p>
+          </div>
+
+          <div className="grid gap-8 md:grid-cols-3">
+            {howItWorks.map((item) => (
+              <div key={item.step} className="relative text-center">
+                <div className="absolute top-0 left-1/2 -translate-x-1/2 w-12 h-12 rounded-full bg-[#1a2332] border-2 border-border/50 flex items-center justify-center text-lg font-bold text-white z-10">
+                  {item.step}
+                </div>
+                <Card className="bg-[#1a2332]/80 border-border/50 pt-16 pb-8 px-6 mt-6 backdrop-blur-sm">
+                  <div className={`h-14 w-14 rounded-xl bg-[#0f1419] flex items-center justify-center mx-auto mb-4`}>
+                    <item.icon className={`h-7 w-7 ${item.color}`} />
+                  </div>
+                  <h3 className="text-xl font-semibold text-white mb-3">{item.title}</h3>
+                  <p className="text-muted-foreground">{item.description}</p>
+                </Card>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section id="features" className="relative mx-auto max-w-7xl px-4 py-16">
           <div className="text-center mb-16">
             <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">
               Everything you need to flip smarter
@@ -242,6 +408,39 @@ export default function Landing() {
           </div>
         </section>
 
+        <section id="testimonials" className="relative mx-auto max-w-7xl px-4 py-20">
+          <div className="text-center mb-16">
+            <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">
+              Trusted by RS3 Traders
+            </h2>
+            <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+              See what our community is saying about FlipSync.
+            </p>
+          </div>
+
+          <div className="grid gap-6 md:grid-cols-3">
+            {testimonials.map((testimonial, index) => (
+              <Card 
+                key={index} 
+                className="bg-[#1a2332]/80 border-border/50 p-6 backdrop-blur-sm relative"
+                data-testid={`testimonial-card-${index}`}
+              >
+                <Quote className="absolute top-4 right-4 h-8 w-8 text-success/20" />
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="h-10 w-10 rounded-full bg-gradient-to-br from-success/30 to-blue-500/30 flex items-center justify-center text-white font-bold">
+                    {testimonial.avatar}
+                  </div>
+                  <div>
+                    <div className="font-semibold text-white">{testimonial.author}</div>
+                    <div className="text-sm text-success font-mono">{testimonial.profit}</div>
+                  </div>
+                </div>
+                <p className="text-muted-foreground italic">"{testimonial.quote}"</p>
+              </Card>
+            ))}
+          </div>
+        </section>
+
         <section className="relative mx-auto max-w-7xl px-4 py-16">
           <Card className="bg-gradient-to-r from-[#1a2332] to-[#1e2a3a] border-border/50 p-8 sm:p-12 backdrop-blur-sm">
             <div className="flex flex-col lg:flex-row items-center justify-between gap-8">
@@ -267,7 +466,9 @@ export default function Landing() {
       <footer className="border-t border-border/40 bg-[#0f1419]/80 py-8 relative">
         <div className="mx-auto max-w-7xl px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <GPStackLogo size={28} />
+            <div className="animate-logo-glow rounded-lg">
+              <GPStackLogo size={28} />
+            </div>
             <span className="font-semibold text-white">FlipSync</span>
           </div>
           <div className="text-sm text-muted-foreground">
