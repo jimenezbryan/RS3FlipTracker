@@ -593,15 +593,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (!flip.itemId) continue;
         
         const existing = itemMap.get(flip.itemId);
-        const profit = (flip.sellPrice! - flip.buyPrice) * flip.quantity;
-        const tax = calculateFlipTax(flip.itemName, flip.sellPrice!, flip.quantity);
+        const buyPrice = Number(flip.buyPrice);
+        const sellPrice = Number(flip.sellPrice!);
+        const profit = (sellPrice - buyPrice) * flip.quantity;
+        const tax = calculateFlipTax(flip.itemName, sellPrice, flip.quantity);
         const netProfit = profit - tax;
-        const roi = flip.buyPrice > 0 ? (netProfit / (flip.buyPrice * flip.quantity)) * 100 : 0;
+        const roi = buyPrice > 0 ? (netProfit / (buyPrice * flip.quantity)) * 100 : 0;
         const tradeDate = flip.sellDate || flip.buyDate;
 
         if (existing) {
-          existing.buyPrices.push(flip.buyPrice);
-          existing.sellPrices.push(flip.sellPrice!);
+          existing.buyPrices.push(buyPrice);
+          existing.sellPrices.push(sellPrice);
           existing.profits.push(netProfit);
           existing.rois.push(roi);
           existing.traders.add(flip.userId);
@@ -613,8 +615,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             itemId: flip.itemId,
             itemName: flip.itemName,
             itemIcon: flip.itemIcon || undefined,
-            buyPrices: [flip.buyPrice],
-            sellPrices: [flip.sellPrice!],
+            buyPrices: [buyPrice],
+            sellPrices: [sellPrice],
             profits: [netProfit],
             rois: [roi],
             traders: new Set([flip.userId]),
@@ -752,8 +754,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json(null);
       }
 
-      const buyPrices = itemFlips.map(f => f.buyPrice);
-      const sellPrices = itemFlips.map(f => f.sellPrice!);
+      const buyPrices = itemFlips.map(f => Number(f.buyPrice));
+      const sellPrices = itemFlips.map(f => Number(f.sellPrice!));
       const traders = new Set(itemFlips.map(f => f.userId));
       const latestTrade = itemFlips.reduce((latest, f) => {
         const date = f.sellDate || f.buyDate;
@@ -776,13 +778,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Calculate profits and ROI
       const profits = itemFlips.map(f => {
-        const gross = (f.sellPrice! - f.buyPrice) * f.quantity;
-        const tax = calculateFlipTax(f.itemName, f.sellPrice!, f.quantity);
+        const buyPrice = Number(f.buyPrice);
+        const sellPrice = Number(f.sellPrice!);
+        const gross = (sellPrice - buyPrice) * f.quantity;
+        const tax = calculateFlipTax(f.itemName, sellPrice, f.quantity);
         return gross - tax;
       });
       const rois = itemFlips.map(f => {
-        const netProfit = (f.sellPrice! - f.buyPrice) * f.quantity - calculateFlipTax(f.itemName, f.sellPrice!, f.quantity);
-        return f.buyPrice > 0 ? (netProfit / (f.buyPrice * f.quantity)) * 100 : 0;
+        const buyPrice = Number(f.buyPrice);
+        const sellPrice = Number(f.sellPrice!);
+        const netProfit = (sellPrice - buyPrice) * f.quantity - calculateFlipTax(f.itemName, sellPrice, f.quantity);
+        return buyPrice > 0 ? (netProfit / (buyPrice * f.quantity)) * 100 : 0;
       });
 
       // Get GE price
