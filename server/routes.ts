@@ -569,6 +569,250 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Community Prices - Aggregates real trade data from all users
+  app.get("/api/community-prices", isAuthenticated, async (req: any, res) => {
+    try {
+      // Get all completed flips from all users to build community price data
+      const allFlips = await storage.getAllFlips();
+      const completedFlips = allFlips.filter(f => f.sellPrice && !f.deletedAt);
+      
+      // Group by item and calculate community prices
+      const itemMap = new Map<number, {
+        itemId: number;
+        itemName: string;
+        itemIcon?: string;
+        buyPrices: number[];
+        sellPrices: number[];
+        profits: number[];
+        rois: number[];
+        traders: Set<string>;
+        lastTradeDate: Date;
+      }>();
+
+      for (const flip of completedFlips) {
+        if (!flip.itemId) continue;
+        
+        const existing = itemMap.get(flip.itemId);
+        const profit = (flip.sellPrice! - flip.buyPrice) * flip.quantity;
+        const tax = calculateFlipTax(flip.itemName, flip.sellPrice!, flip.quantity);
+        const netProfit = profit - tax;
+        const roi = flip.buyPrice > 0 ? (netProfit / (flip.buyPrice * flip.quantity)) * 100 : 0;
+        const tradeDate = flip.sellDate || flip.buyDate;
+
+        if (existing) {
+          existing.buyPrices.push(flip.buyPrice);
+          existing.sellPrices.push(flip.sellPrice!);
+          existing.profits.push(netProfit);
+          existing.rois.push(roi);
+          existing.traders.add(flip.userId);
+          if (tradeDate > existing.lastTradeDate) {
+            existing.lastTradeDate = tradeDate;
+          }
+        } else {
+          itemMap.set(flip.itemId, {
+            itemId: flip.itemId,
+            itemName: flip.itemName,
+            itemIcon: flip.itemIcon || undefined,
+            buyPrices: [flip.buyPrice],
+            sellPrices: [flip.sellPrice!],
+            profits: [netProfit],
+            rois: [roi],
+            traders: new Set([flip.userId]),
+            lastTradeDate: tradeDate,
+          });
+        }
+      }
+
+      // Calculate final stats and confidence
+      const result = await Promise.all(Array.from(itemMap.values()).map(async (item) => {
+        const avgBuy = Math.round(item.buyPrices.reduce((a, b) => a + b, 0) / item.buyPrices.length);
+        const avgSell = Math.round(item.sellPrices.reduce((a, b) => a + b, 0) / item.sellPrices.length);
+        const avgProfit = Math.round(item.profits.reduce((a, b) => a + b, 0) / item.profits.length);
+        const avgRoi = item.rois.reduce((a, b) => a + b, 0) / item.rois.length;
+        const tradeCount = item.buyPrices.length;
+        const uniqueTraders = item.traders.size;
+        const daysSinceLastTrade = Math.floor((Date.now() - item.lastTradeDate.getTime()) / (1000 * 60 * 60 * 24));
+        
+        // Get current GE price for comparison
+        let gePriceValue = 0;
+        try {
+          const geData = await getItemPrice(item.itemName);
+          if (geData) gePriceValue = geData.price;
+        } catch {}
+
+        // Calculate confidence based on trade count, trader count, and recency
+        let confidence: 'high' | 'medium' | 'low' = 'low';
+        if (tradeCount >= 10 && uniqueTraders >= 3 && daysSinceLastTrade <= 7) {
+          confidence = 'high';
+        } else if (tradeCount >= 5 && uniqueTraders >= 2 && daysSinceLastTrade <= 14) {
+          confidence = 'medium';
+        }
+
+        // Calculate price accuracy (how close community price is to GE)
+        const communityAvg = Math.round((avgBuy + avgSell) / 2);
+        const priceAccuracy = gePriceValue > 0 ? Math.round((1 - Math.abs(communityAvg - gePriceValue) / gePriceValue) * 100) : 0;
+
+        return {
+          itemId: item.itemId,
+          itemName: item.itemName,
+          itemIcon: item.itemIcon,
+          gePriceValue,
+          communityBuyPrice: avgBuy,
+          communitySellPrice: avgSell,
+          tradeCount,
+          uniqueTraders,
+          lastTradeDate: item.lastTradeDate.toISOString(),
+          avgProfit,
+          avgRoi: Math.round(avgRoi * 100) / 100,
+          confidence,
+          priceAccuracy,
+        };
+      }));
+
+      // Filter out items with no GE price data and sort by trade count
+      const filtered = result.filter(r => r.tradeCount >= 1);
+      filtered.sort((a, b) => b.tradeCount - a.tradeCount);
+
+      res.json(filtered.slice(0, 50)); // Return top 50 items
+    } catch (error) {
+      console.error("Failed to get community prices:", error);
+      res.status(500).json({ error: "Failed to fetch community prices" });
+    }
+  });
+
+  // Hot items - Most traded in last 7 days
+  app.get("/api/community-prices/hot", isAuthenticated, async (req: any, res) => {
+    try {
+      const allFlips = await storage.getAllFlips();
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const recentFlips = allFlips.filter(f => 
+        f.sellPrice && !f.deletedAt && 
+        (f.sellDate || f.buyDate) >= sevenDaysAgo
+      );
+
+      // Group by item and count trades
+      const itemCounts = new Map<number, {
+        itemId: number;
+        itemName: string;
+        itemIcon?: string;
+        tradeCount: number;
+        traders: Set<string>;
+      }>();
+
+      for (const flip of recentFlips) {
+        if (!flip.itemId) continue;
+        
+        const existing = itemCounts.get(flip.itemId);
+        if (existing) {
+          existing.tradeCount++;
+          existing.traders.add(flip.userId);
+        } else {
+          itemCounts.set(flip.itemId, {
+            itemId: flip.itemId,
+            itemName: flip.itemName,
+            itemIcon: flip.itemIcon || undefined,
+            tradeCount: 1,
+            traders: new Set([flip.userId]),
+          });
+        }
+      }
+
+      const result = Array.from(itemCounts.values()).map(item => ({
+        itemId: item.itemId,
+        itemName: item.itemName,
+        itemIcon: item.itemIcon,
+        tradeCount: item.tradeCount,
+        uniqueTraders: item.traders.size,
+        confidence: item.tradeCount >= 5 && item.traders.size >= 2 ? 'high' as const : 
+                   item.tradeCount >= 2 ? 'medium' as const : 'low' as const,
+      }));
+
+      result.sort((a, b) => b.tradeCount - a.tradeCount);
+      res.json(result.slice(0, 10));
+    } catch (error) {
+      console.error("Failed to get hot items:", error);
+      res.status(500).json({ error: "Failed to fetch hot items" });
+    }
+  });
+
+  // Lookup specific item community price
+  app.get("/api/community-prices/lookup", isAuthenticated, async (req: any, res) => {
+    try {
+      const itemId = parseInt(req.query.itemId as string);
+      if (isNaN(itemId)) {
+        return res.status(400).json({ error: "Invalid item ID" });
+      }
+
+      const allFlips = await storage.getAllFlips();
+      const itemFlips = allFlips.filter(f => 
+        f.itemId === itemId && f.sellPrice && !f.deletedAt
+      );
+
+      if (itemFlips.length === 0) {
+        return res.json(null);
+      }
+
+      const buyPrices = itemFlips.map(f => f.buyPrice);
+      const sellPrices = itemFlips.map(f => f.sellPrice!);
+      const traders = new Set(itemFlips.map(f => f.userId));
+      const latestTrade = itemFlips.reduce((latest, f) => {
+        const date = f.sellDate || f.buyDate;
+        return date > latest ? date : latest;
+      }, itemFlips[0].sellDate || itemFlips[0].buyDate);
+
+      const avgBuy = Math.round(buyPrices.reduce((a, b) => a + b, 0) / buyPrices.length);
+      const avgSell = Math.round(sellPrices.reduce((a, b) => a + b, 0) / sellPrices.length);
+      const tradeCount = itemFlips.length;
+      const uniqueTraders = traders.size;
+      const daysSinceLastTrade = Math.floor((Date.now() - latestTrade.getTime()) / (1000 * 60 * 60 * 24));
+
+      // Calculate confidence
+      let confidence: 'high' | 'medium' | 'low' = 'low';
+      if (tradeCount >= 10 && uniqueTraders >= 3 && daysSinceLastTrade <= 7) {
+        confidence = 'high';
+      } else if (tradeCount >= 5 && uniqueTraders >= 2 && daysSinceLastTrade <= 14) {
+        confidence = 'medium';
+      }
+
+      // Calculate profits and ROI
+      const profits = itemFlips.map(f => {
+        const gross = (f.sellPrice! - f.buyPrice) * f.quantity;
+        const tax = calculateFlipTax(f.itemName, f.sellPrice!, f.quantity);
+        return gross - tax;
+      });
+      const rois = itemFlips.map(f => {
+        const netProfit = (f.sellPrice! - f.buyPrice) * f.quantity - calculateFlipTax(f.itemName, f.sellPrice!, f.quantity);
+        return f.buyPrice > 0 ? (netProfit / (f.buyPrice * f.quantity)) * 100 : 0;
+      });
+
+      // Get GE price
+      let gePriceValue = 0;
+      try {
+        const geData = await getItemPrice(itemFlips[0].itemName);
+        if (geData) gePriceValue = geData.price;
+      } catch {}
+
+      res.json({
+        itemId,
+        itemName: itemFlips[0].itemName,
+        itemIcon: itemFlips[0].itemIcon,
+        gePriceValue,
+        communityBuyPrice: avgBuy,
+        communitySellPrice: avgSell,
+        tradeCount,
+        uniqueTraders,
+        lastTradeDate: latestTrade.toISOString(),
+        avgProfit: Math.round(profits.reduce((a, b) => a + b, 0) / profits.length),
+        avgRoi: Math.round((rois.reduce((a, b) => a + b, 0) / rois.length) * 100) / 100,
+        confidence,
+        priceAccuracy: 0,
+      });
+    } catch (error) {
+      console.error("Failed to lookup community price:", error);
+      res.status(500).json({ error: "Failed to lookup community price" });
+    }
+  });
+
   app.get("/api/alerts", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;

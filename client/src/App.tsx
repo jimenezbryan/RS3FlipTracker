@@ -10,7 +10,7 @@ import { AppSidebar } from "@/components/AppSidebar";
 import { Header } from "@/components/Header";
 import Home from "@/pages/Home";
 import Landing from "@/pages/Landing";
-import Watchlist from "@/pages/Watchlist";
+import MarketInsights from "@/pages/MarketInsights";
 import Alerts from "@/pages/Alerts";
 import Stats from "@/pages/Stats";
 import Portfolio from "@/pages/Portfolio";
@@ -72,7 +72,7 @@ function Router() {
         <Route path="/goals" component={Goals} />
         <Route path="/suggestions" component={Suggestions} />
         <Route path="/recipes" component={Recipes} />
-        <Route path="/watchlist" component={Watchlist} />
+        <Route path="/market" component={MarketInsights} />
         <Route path="/alerts" component={Alerts} />
         <Route path="/stats" component={Stats} />
         <Route path="/profile" component={Profile} />

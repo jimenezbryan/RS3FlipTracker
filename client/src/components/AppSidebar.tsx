@@ -1,4 +1,4 @@
-import { Home, BarChart3, Briefcase, Target, Sparkles, Eye, Bell, BookOpen, Shield, Users } from "lucide-react";
+import { Home, BarChart3, Briefcase, Target, Sparkles, TrendingUp, Bell, BookOpen, Shield, Users } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -25,7 +25,7 @@ const navItems = [
   { href: "/portfolio", label: "Portfolio", icon: Briefcase },
   { href: "/goals", label: "Goals", icon: Target },
   { href: "/suggestions", label: "AI Tips", icon: Sparkles },
-  { href: "/watchlist", label: "Watchlist", icon: Eye },
+  { href: "/market", label: "Market", icon: TrendingUp },
   { href: "/alerts", label: "Alerts", icon: Bell },
   { href: "/stats", label: "Stats", icon: BarChart3 },
 ];
