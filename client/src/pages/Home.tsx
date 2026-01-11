@@ -69,12 +69,26 @@ export default function Home() {
     }) => {
       return await apiRequest("POST", "/api/flips", flipData);
     },
-    onSuccess: () => {
+    onSuccess: (data: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/flips"] });
       toast({
         title: "Flip added",
         description: "Your flip has been logged successfully",
       });
+      
+      // Show celebration toasts for any achieved goals
+      if (data?.achievements?.length > 0) {
+        for (const achievement of data.achievements) {
+          const goalLabel = { daily: "Daily", weekly: "Weekly", monthly: "Monthly" }[achievement.goalType as string] || achievement.goalType;
+          setTimeout(() => {
+            toast({
+              title: `🎉 ${goalLabel} Goal Achieved!`,
+              description: `Congratulations! You've hit your ${goalLabel.toLowerCase()} profit target of ${(achievement.targetAmount / 1000000).toFixed(1)}M gp!`,
+              duration: 10000,
+            });
+          }, 500);
+        }
+      }
     },
     onError: () => {
       toast({
@@ -146,12 +160,26 @@ export default function Home() {
     }> }) => {
       return await apiRequest("PATCH", `/api/flips/${id}`, data);
     },
-    onSuccess: () => {
+    onSuccess: (responseData: any) => {
       queryClient.invalidateQueries({ queryKey: ["/api/flips"] });
       toast({
         title: "Flip updated",
         description: "Your flip has been updated successfully",
       });
+      
+      // Show celebration toasts for any achieved goals
+      if (responseData?.achievements?.length > 0) {
+        for (const achievement of responseData.achievements) {
+          const goalLabel = { daily: "Daily", weekly: "Weekly", monthly: "Monthly" }[achievement.goalType as string] || achievement.goalType;
+          setTimeout(() => {
+            toast({
+              title: `🎉 ${goalLabel} Goal Achieved!`,
+              description: `Congratulations! You've hit your ${goalLabel.toLowerCase()} profit target of ${(achievement.targetAmount / 1000000).toFixed(1)}M gp!`,
+              duration: 10000,
+            });
+          }, 500);
+        }
+      }
     },
     onError: () => {
       toast({
