@@ -741,14 +741,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/community-prices/lookup", isAuthenticated, async (req: any, res) => {
     try {
       const itemId = parseInt(req.query.itemId as string);
-      if (isNaN(itemId)) {
-        return res.status(400).json({ error: "Invalid item ID" });
+      const itemName = req.query.itemName as string;
+      
+      if (isNaN(itemId) && !itemName) {
+        return res.status(400).json({ error: "Invalid item ID or name" });
       }
 
       const allFlips = await storage.getAllFlips();
-      const itemFlips = allFlips.filter(f => 
-        f.itemId === itemId && f.sellPrice && !f.deletedAt
-      );
+      // Match by itemId OR by itemName (case-insensitive) to handle variations
+      const itemFlips = allFlips.filter(f => {
+        if (!f.sellPrice || f.deletedAt) return false;
+        if (f.itemId === itemId) return true;
+        if (itemName && f.itemName.toLowerCase() === itemName.toLowerCase()) return true;
+        return false;
+      });
 
       if (itemFlips.length === 0) {
         return res.json(null);

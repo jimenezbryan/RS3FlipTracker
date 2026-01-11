@@ -164,7 +164,16 @@ function QuickLookup() {
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   const { data: lookupData, isLoading: isLookupLoading } = useQuery<CommunityPriceData | null>({
-    queryKey: ["/api/community-prices/lookup", selectedItem?.id],
+    queryKey: ["/api/community-prices/lookup", selectedItem?.id, selectedItem?.name],
+    queryFn: async () => {
+      if (!selectedItem) return null;
+      const params = new URLSearchParams();
+      params.set("itemId", String(selectedItem.id));
+      params.set("itemName", selectedItem.name);
+      const response = await fetch(`/api/community-prices/lookup?${params.toString()}`);
+      if (!response.ok) throw new Error("Failed to lookup");
+      return response.json();
+    },
     enabled: !!selectedItem,
   });
 
