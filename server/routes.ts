@@ -24,8 +24,9 @@ function calculateFlipProfit(flip: any): number {
   const sellPrice = Number(flip.sellPrice);
   const quantity = flip.quantity ?? 1;
   const gross = (sellPrice - buyPrice) * quantity;
-  const tax = calculateFlipTax(flip.itemName, sellPrice, quantity);
-  return gross - tax;
+  // calculateFlipTax returns a TaxCalculation object, we need totalTax
+  const taxCalc = calculateFlipTax(sellPrice, buyPrice, quantity, flip.itemId, flip.itemName);
+  return gross - taxCalc.totalTax;
 }
 
 // Check for newly achieved goals after a flip is completed
