@@ -68,7 +68,8 @@ export default function Home() {
           // Skip if already notified today
           if (notifiedToday.has(goal.goalType)) continue;
           
-          const goalLabel = { daily: "Daily", weekly: "Weekly", monthly: "Monthly" }[goal.goalType] || goal.goalType;
+          const goalLabels: Record<string, string> = { daily: "Daily", weekly: "Weekly", monthly: "Monthly" };
+          const goalLabel = goalLabels[goal.goalType as string] || goal.goalType;
           const profitFormatted = (goal.currentProfit / 1000000).toFixed(1);
           const targetFormatted = (goal.targetAmount / 1000000).toFixed(1);
           
