@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { FlipForm } from "@/components/FlipForm";
 import { FlipCardGrid } from "@/components/FlipCardGrid";
 import { GoalsProgress } from "@/components/GoalsProgress";
@@ -12,11 +12,100 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Users } from "lucide-react";
 
+// Helper to get today's date key for localStorage tracking
+function getTodayKey(): string {
+  return new Date().toISOString().split('T')[0];
+}
+
+// Get notified goals for today from localStorage
+function getNotifiedGoalsToday(): Set<string> {
+  try {
+    const stored = localStorage.getItem('flipsync_notified_goals');
+    if (!stored) return new Set();
+    const data = JSON.parse(stored);
+    if (data.date !== getTodayKey()) return new Set(); // Reset for new day
+    return new Set(data.goals || []);
+  } catch {
+    return new Set();
+  }
+}
+
+// Mark a goal as notified for today
+function markGoalNotified(goalType: string): void {
+  try {
+    const notified = getNotifiedGoalsToday();
+    notified.add(goalType);
+    localStorage.setItem('flipsync_notified_goals', JSON.stringify({
+      date: getTodayKey(),
+      goals: Array.from(notified),
+    }));
+  } catch {
+    // Ignore localStorage errors
+  }
+}
+
 export default function Home() {
   const { toast } = useToast();
   const [selectedChart, setSelectedChart] = useState<{ itemId?: number; itemName: string } | null>(null);
   const [viewScope, setViewScope] = useState<'mine' | 'all'>('mine');
   const [filterUserId, setFilterUserId] = useState<string | null>(null);
+  const hasCheckedGoals = useRef(false);
+  
+  // Check for already-met goals on first page load (first-time-of-day celebration)
+  useEffect(() => {
+    if (hasCheckedGoals.current) return;
+    hasCheckedGoals.current = true;
+    
+    const checkMetGoals = async () => {
+      try {
+        const res = await fetch('/api/goals/check-met', { credentials: 'include' });
+        if (!res.ok) return;
+        
+        const data = await res.json();
+        const notifiedToday = getNotifiedGoalsToday();
+        
+        for (const goal of data.metGoals || []) {
+          // Skip if already notified today
+          if (notifiedToday.has(goal.goalType)) continue;
+          
+          const goalLabel = { daily: "Daily", weekly: "Weekly", monthly: "Monthly" }[goal.goalType] || goal.goalType;
+          const profitFormatted = (goal.currentProfit / 1000000).toFixed(1);
+          const targetFormatted = (goal.targetAmount / 1000000).toFixed(1);
+          
+          // Mark as notified
+          markGoalNotified(goal.goalType);
+          
+          // Show celebration toast
+          setTimeout(() => {
+            toast({
+              title: `🎉 ${goalLabel} Goal Already Met!`,
+              description: `You're at ${profitFormatted}M / ${targetFormatted}M target. Keep it up!`,
+              duration: 8000,
+            });
+          }, 1000);
+          
+          // Also send Discord notification for first-time detection today
+          fetch('/api/goals/notify-achievement', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({
+              goalType: goal.goalType,
+              targetAmount: goal.targetAmount,
+              currentProfit: goal.currentProfit,
+              username: goal.username,
+              isFirstLoad: true,
+            }),
+          }).catch(() => {/* ignore errors */});
+        }
+      } catch (error) {
+        console.error('[GoalCheck] Failed to check met goals:', error);
+      }
+    };
+    
+    // Small delay to ensure auth is ready
+    setTimeout(checkMetGoals, 500);
+  }, [toast]);
   
   // Check if current user is admin
   const { data: adminCheck } = useQuery<{ isAdmin: boolean }>({
