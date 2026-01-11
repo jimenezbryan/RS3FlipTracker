@@ -378,6 +378,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = await storage.getUser(userId);
       const validatedFlip = insertFlipSchema.parse(req.body);
       
+      // Auto-set sellDate to today if sellPrice is present but sellDate is missing
+      if (validatedFlip.sellPrice && !validatedFlip.sellDate) {
+        validatedFlip.sellDate = new Date();
+        console.log("[FlipCreate] Auto-setting sellDate to today since sellPrice was provided");
+      }
+      
       // Capture previous profits BEFORE creating the flip (for goal achievement detection)
       const previousProfits = await getCurrentProfits(userId);
       
@@ -480,6 +486,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const previousProfits = await getCurrentProfits(flipOwnerId);
       
       const validatedFlip = insertFlipSchema.partial().parse(req.body);
+      
+      // Auto-set sellDate to today if sellPrice is being added but sellDate is missing
+      if (validatedFlip.sellPrice && !validatedFlip.sellDate && !existingFlip?.sellDate) {
+        validatedFlip.sellDate = new Date();
+        console.log("[FlipUpdate] Auto-setting sellDate to today since sellPrice was provided");
+      }
       
       // Admins can edit any flip, regular users can only edit their own
       const updatedFlip = await storage.updateFlip(id, userId, validatedFlip, isAdminUser);
