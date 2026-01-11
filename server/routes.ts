@@ -34,6 +34,9 @@ async function checkGoalAchievements(
   username: string,
   previousProfits: { daily: number; weekly: number; monthly: number }
 ): Promise<GoalAchievement[]> {
+  console.log("[GoalCheck] Starting achievement check for user:", username);
+  console.log("[GoalCheck] Previous profits:", previousProfits);
+  
   const now = new Date();
   const dayStart = startOfDay(now);
   const weekStart = startOfWeek(now, { weekStartsOn: 1 });
@@ -61,8 +64,12 @@ async function checkGoalAchievements(
     }
   }
 
+  console.log("[GoalCheck] Current profits - Daily:", dailyProfit, "Weekly:", weeklyProfit, "Monthly:", monthlyProfit);
+
   // Get user's goals
   const goals = await storage.getProfitGoals(userId);
+  console.log("[GoalCheck] User has", goals.length, "goals configured");
+  
   const achievements: GoalAchievement[] = [];
 
   for (const goal of goals) {
@@ -87,8 +94,13 @@ async function checkGoalAchievements(
         break;
     }
 
+    console.log(`[GoalCheck] ${goalType} goal: target=${target}, previous=${previousProfit}, current=${currentProfit}`);
+    console.log(`[GoalCheck] Check: previousProfit(${previousProfit}) < target(${target}) = ${previousProfit < target}`);
+    console.log(`[GoalCheck] Check: currentProfit(${currentProfit}) >= target(${target}) = ${currentProfit >= target}`);
+
     // Check if we just crossed the goal threshold
     if (previousProfit < target && currentProfit >= target) {
+      console.log(`[GoalCheck] ACHIEVEMENT UNLOCKED: ${goalType} goal of ${target} reached!`);
       achievements.push({
         goalType,
         targetAmount: target,
@@ -98,6 +110,7 @@ async function checkGoalAchievements(
     }
   }
 
+  console.log("[GoalCheck] Total achievements found:", achievements.length);
   return achievements;
 }
 
@@ -426,7 +439,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Check for goal achievements if this is a completed flip
       let achievements: GoalAchievement[] = [];
+      console.log("[FlipCreate] Checking for completed flip - sellPrice:", newFlip.sellPrice, "sellDate:", newFlip.sellDate);
       if (newFlip.sellPrice && newFlip.sellDate && user) {
+        console.log("[FlipCreate] Flip is completed, running goal achievement check...");
         achievements = await checkGoalAchievements(userId, user.username || user.email || "Trader", previousProfits);
         
         // Send Discord notifications for each achievement
@@ -435,6 +450,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             console.error("[Discord] Failed to send goal achievement:", err);
           });
         }
+        console.log("[FlipCreate] Achievements returned:", achievements.length);
+      } else {
+        console.log("[FlipCreate] Flip is NOT completed (missing sellPrice or sellDate), skipping goal check");
       }
       
       res.status(201).json({ ...newFlip, achievements });
