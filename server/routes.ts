@@ -1161,6 +1161,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Check which goals are currently met (for first-load celebrations)
+  app.get("/api/goals/check-met", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const user = await storage.getUser(userId);
+      
+      // Get current profits
+      const currentProfits = await getCurrentProfits(userId);
+      
+      // Get user's goals
+      const goals = await storage.getProfitGoals(userId);
+      
+      // Check which goals are met
+      const metGoals: Array<{
+        goalType: string;
+        targetAmount: number;
+        currentProfit: number;
+        username: string;
+      }> = [];
+      
+      for (const goal of goals) {
+        const goalType = goal.goalType as "daily" | "weekly" | "monthly";
+        const target = Number(goal.targetAmount);
+        
+        let currentProfit = 0;
+        switch (goalType) {
+          case "daily":
+            currentProfit = currentProfits.daily;
+            break;
+          case "weekly":
+            currentProfit = currentProfits.weekly;
+            break;
+          case "monthly":
+            currentProfit = currentProfits.monthly;
+            break;
+        }
+        
+        if (currentProfit >= target) {
+          metGoals.push({
+            goalType,
+            targetAmount: target,
+            currentProfit,
+            username: user?.username || user?.email || "Trader",
+          });
+        }
+      }
+      
+      console.log("[GoalCheck] Goals currently met:", metGoals.length, "of", goals.length);
+      res.json({ metGoals, currentProfits });
+    } catch (error) {
+      console.error("[GoalCheck] Error checking met goals:", error);
+      res.status(500).json({ error: "Failed to check goals" });
+    }
+  });
+
   // Portfolio Categories
   app.get("/api/portfolio/categories", isAuthenticated, async (req: any, res) => {
     try {
