@@ -241,3 +241,93 @@ export async function sendFlipUpdateToDiscord(oldFlip: Flip, newFlip: Flip): Pro
     return false;
   }
 }
+
+export interface GoalAchievement {
+  goalType: "daily" | "weekly" | "monthly";
+  targetAmount: number;
+  currentProfit: number;
+  username: string;
+}
+
+export async function sendGoalAchievementToDiscord(achievement: GoalAchievement): Promise<boolean> {
+  const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
+  
+  if (!webhookUrl) {
+    console.log("[Discord] DISCORD_WEBHOOK_URL not configured, skipping goal notification");
+    return false;
+  }
+
+  try {
+    const goalTypeEmoji = {
+      daily: "🌅",
+      weekly: "📅", 
+      monthly: "🗓️"
+    };
+    
+    const goalTypeLabel = {
+      daily: "Daily",
+      weekly: "Weekly",
+      monthly: "Monthly"
+    };
+
+    const embed: DiscordEmbed = {
+      title: `🎉 Goal Achieved! ${goalTypeEmoji[achievement.goalType]}`,
+      color: 0xffd700, // Gold color for celebration
+      fields: [
+        {
+          name: "Trader",
+          value: achievement.username,
+          inline: true,
+        },
+        {
+          name: "Goal Type",
+          value: `${goalTypeLabel[achievement.goalType]} Goal`,
+          inline: true,
+        },
+        {
+          name: "Target",
+          value: `${formatGpShorthand(achievement.targetAmount)} gp`,
+          inline: true,
+        },
+        {
+          name: "Profit Achieved",
+          value: `${formatGpShorthand(achievement.currentProfit)} gp`,
+          inline: true,
+        },
+        {
+          name: "Progress",
+          value: `${Math.round((achievement.currentProfit / achievement.targetAmount) * 100)}%`,
+          inline: true,
+        },
+      ],
+      timestamp: new Date().toISOString(),
+      footer: {
+        text: "FlipSync - Congratulations! 🏆",
+      },
+    };
+
+    const payload: DiscordWebhookPayload = {
+      embeds: [embed],
+    };
+
+    const response = await fetch(webhookUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("[Discord] Goal achievement webhook failed:", response.status, errorText);
+      return false;
+    }
+
+    console.log("[Discord] Goal achievement shared:", achievement.goalType, achievement.username);
+    return true;
+  } catch (error) {
+    console.error("[Discord] Error sending goal achievement webhook:", error);
+    return false;
+  }
+}

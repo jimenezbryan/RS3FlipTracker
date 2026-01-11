@@ -9,12 +9,128 @@ import { processScreenshot, matchItemsToGE } from "./ocr";
 import { analyzeRS3Screenshot } from "./ai-vision";
 import { analyzeUserTradingProfile, getPersonalizedRecommendations } from "./ai-recommendations";
 import { calculateFlipTax } from "@shared/taxCalculator";
-import { sendFlipToDiscord, sendFlipUpdateToDiscord } from "./discord";
+import { sendFlipToDiscord, sendFlipUpdateToDiscord, sendGoalAchievementToDiscord, type GoalAchievement } from "./discord";
+import { startOfDay, startOfWeek, startOfMonth, isAfter } from "date-fns";
 
 const upload = multer({ 
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 } // 10MB max
 });
+
+// Helper to calculate profit for a flip
+function calculateFlipProfit(flip: any): number {
+  if (!flip.sellPrice) return 0;
+  const buyPrice = Number(flip.buyPrice);
+  const sellPrice = Number(flip.sellPrice);
+  const quantity = flip.quantity ?? 1;
+  const gross = (sellPrice - buyPrice) * quantity;
+  const tax = calculateFlipTax(flip.itemName, sellPrice, quantity);
+  return gross - tax;
+}
+
+// Check for newly achieved goals after a flip is completed
+async function checkGoalAchievements(
+  userId: string,
+  username: string,
+  previousProfits: { daily: number; weekly: number; monthly: number }
+): Promise<GoalAchievement[]> {
+  const now = new Date();
+  const dayStart = startOfDay(now);
+  const weekStart = startOfWeek(now, { weekStartsOn: 1 });
+  const monthStart = startOfMonth(now);
+
+  // Get user's flips and calculate current profits
+  const flips = await storage.getFlips(userId);
+  let dailyProfit = 0;
+  let weeklyProfit = 0;
+  let monthlyProfit = 0;
+
+  for (const flip of flips) {
+    if (!flip.sellDate || !flip.sellPrice || flip.deletedAt) continue;
+    const sellDate = new Date(flip.sellDate);
+    const profit = calculateFlipProfit(flip);
+
+    if (isAfter(sellDate, dayStart) || sellDate.getTime() === dayStart.getTime()) {
+      dailyProfit += profit;
+    }
+    if (isAfter(sellDate, weekStart) || sellDate.getTime() === weekStart.getTime()) {
+      weeklyProfit += profit;
+    }
+    if (isAfter(sellDate, monthStart) || sellDate.getTime() === monthStart.getTime()) {
+      monthlyProfit += profit;
+    }
+  }
+
+  // Get user's goals
+  const goals = await storage.getProfitGoals(userId);
+  const achievements: GoalAchievement[] = [];
+
+  for (const goal of goals) {
+    const goalType = goal.goalType as "daily" | "weekly" | "monthly";
+    const target = Number(goal.targetAmount);
+    
+    let currentProfit = 0;
+    let previousProfit = 0;
+    
+    switch (goalType) {
+      case "daily":
+        currentProfit = dailyProfit;
+        previousProfit = previousProfits.daily;
+        break;
+      case "weekly":
+        currentProfit = weeklyProfit;
+        previousProfit = previousProfits.weekly;
+        break;
+      case "monthly":
+        currentProfit = monthlyProfit;
+        previousProfit = previousProfits.monthly;
+        break;
+    }
+
+    // Check if we just crossed the goal threshold
+    if (previousProfit < target && currentProfit >= target) {
+      achievements.push({
+        goalType,
+        targetAmount: target,
+        currentProfit,
+        username,
+      });
+    }
+  }
+
+  return achievements;
+}
+
+// Calculate current profit totals for a user
+async function getCurrentProfits(userId: string): Promise<{ daily: number; weekly: number; monthly: number }> {
+  const now = new Date();
+  const dayStart = startOfDay(now);
+  const weekStart = startOfWeek(now, { weekStartsOn: 1 });
+  const monthStart = startOfMonth(now);
+
+  const flips = await storage.getFlips(userId);
+  let daily = 0;
+  let weekly = 0;
+  let monthly = 0;
+
+  for (const flip of flips) {
+    if (!flip.sellDate || !flip.sellPrice || flip.deletedAt) continue;
+    const sellDate = new Date(flip.sellDate);
+    const profit = calculateFlipProfit(flip);
+
+    if (isAfter(sellDate, dayStart) || sellDate.getTime() === dayStart.getTime()) {
+      daily += profit;
+    }
+    if (isAfter(sellDate, weekStart) || sellDate.getTime() === weekStart.getTime()) {
+      weekly += profit;
+    }
+    if (isAfter(sellDate, monthStart) || sellDate.getTime() === monthStart.getTime()) {
+      monthly += profit;
+    }
+  }
+
+  return { daily, weekly, monthly };
+}
 
 export async function registerRoutes(app: Express): Promise<Server> {
   await setupAuth(app);
@@ -246,7 +362,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post("/api/flips", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
+      const user = await storage.getUser(userId);
       const validatedFlip = insertFlipSchema.parse(req.body);
+      
+      // Capture previous profits BEFORE creating the flip (for goal achievement detection)
+      const previousProfits = await getCurrentProfits(userId);
+      
       const newFlip = await storage.createFlip(userId, validatedFlip);
       
       // Record buy transaction for analytics/LLM training
@@ -303,7 +424,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error("[Discord] Failed to send flip:", err);
       });
       
-      res.status(201).json(newFlip);
+      // Check for goal achievements if this is a completed flip
+      let achievements: GoalAchievement[] = [];
+      if (newFlip.sellPrice && newFlip.sellDate && user) {
+        achievements = await checkGoalAchievements(userId, user.username || user.email || "Trader", previousProfits);
+        
+        // Send Discord notifications for each achievement
+        for (const achievement of achievements) {
+          sendGoalAchievementToDiscord(achievement).catch(err => {
+            console.error("[Discord] Failed to send goal achievement:", err);
+          });
+        }
+      }
+      
+      res.status(201).json({ ...newFlip, achievements });
     } catch (error) {
       res.status(400).json({ error: "Invalid flip data" });
     }
@@ -320,6 +454,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       // Get the current flip before updating
       const existingFlip = await storage.getFlip(id);
+      
+      // Capture previous profits BEFORE updating (for goal achievement detection)
+      // Use the flip owner's userId, not the admin's
+      const flipOwnerId = existingFlip?.userId || userId;
+      const flipOwner = existingFlip?.userId ? await storage.getUser(existingFlip.userId) : user;
+      const previousProfits = await getCurrentProfits(flipOwnerId);
       
       const validatedFlip = insertFlipSchema.partial().parse(req.body);
       
@@ -365,7 +505,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
-      res.json(updatedFlip);
+      // Check for goal achievements if this flip is being completed (sellPrice added)
+      let achievements: GoalAchievement[] = [];
+      const isNewlyCompleted = updatedFlip.sellPrice && updatedFlip.sellDate && 
+        (!existingFlip?.sellPrice || existingFlip.sellPrice !== updatedFlip.sellPrice);
+      
+      if (isNewlyCompleted && flipOwner) {
+        achievements = await checkGoalAchievements(
+          flipOwnerId, 
+          flipOwner.username || flipOwner.email || "Trader", 
+          previousProfits
+        );
+        
+        // Send Discord notifications for each achievement
+        for (const achievement of achievements) {
+          sendGoalAchievementToDiscord(achievement).catch(err => {
+            console.error("[Discord] Failed to send goal achievement:", err);
+          });
+        }
+      }
+      
+      res.json({ ...updatedFlip, achievements });
     } catch (error) {
       res.status(400).json({ error: "Invalid flip data" });
     }
