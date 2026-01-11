@@ -1216,6 +1216,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Send Discord notification for goal achievement (first-load detection)
+  app.post("/api/goals/notify-achievement", isAuthenticated, async (req: any, res) => {
+    try {
+      const { goalType, targetAmount, currentProfit, username, isFirstLoad } = req.body;
+      
+      if (!goalType || !targetAmount) {
+        return res.status(400).json({ error: "Missing required fields" });
+      }
+      
+      const achievement: GoalAchievement = {
+        goalType: goalType as "daily" | "weekly" | "monthly",
+        targetAmount: Number(targetAmount),
+        currentProfit: Number(currentProfit),
+        username: username || "Trader",
+        isFirstLoad: isFirstLoad === true,
+      };
+      
+      console.log("[Discord] Sending first-load goal achievement:", achievement);
+      await sendGoalAchievementToDiscord(achievement);
+      
+      res.json({ success: true });
+    } catch (error) {
+      console.error("[Discord] Failed to send goal achievement:", error);
+      res.status(500).json({ error: "Failed to send notification" });
+    }
+  });
+
   // Portfolio Categories
   app.get("/api/portfolio/categories", isAuthenticated, async (req: any, res) => {
     try {

@@ -247,6 +247,7 @@ export interface GoalAchievement {
   targetAmount: number;
   currentProfit: number;
   username: string;
+  isFirstLoad?: boolean;
 }
 
 export async function sendGoalAchievementToDiscord(achievement: GoalAchievement): Promise<boolean> {
@@ -270,9 +271,17 @@ export async function sendGoalAchievementToDiscord(achievement: GoalAchievement)
       monthly: "Monthly"
     };
 
+    const title = achievement.isFirstLoad
+      ? `📊 ${goalTypeLabel[achievement.goalType]} Goal Status ${goalTypeEmoji[achievement.goalType]}`
+      : `🎉 Goal Achieved! ${goalTypeEmoji[achievement.goalType]}`;
+    
+    const footerText = achievement.isFirstLoad
+      ? "FlipSync - Already crushing it! 💪"
+      : "FlipSync - Congratulations! 🏆";
+
     const embed: DiscordEmbed = {
-      title: `🎉 Goal Achieved! ${goalTypeEmoji[achievement.goalType]}`,
-      color: 0xffd700, // Gold color for celebration
+      title,
+      color: achievement.isFirstLoad ? 0x3498db : 0xffd700, // Blue for status, Gold for real-time
       fields: [
         {
           name: "Trader",
@@ -290,7 +299,7 @@ export async function sendGoalAchievementToDiscord(achievement: GoalAchievement)
           inline: true,
         },
         {
-          name: "Profit Achieved",
+          name: "Current Profit",
           value: `${formatGpShorthand(achievement.currentProfit)} gp`,
           inline: true,
         },
@@ -302,7 +311,7 @@ export async function sendGoalAchievementToDiscord(achievement: GoalAchievement)
       ],
       timestamp: new Date().toISOString(),
       footer: {
-        text: "FlipSync - Congratulations! 🏆",
+        text: footerText,
       },
     };
 
