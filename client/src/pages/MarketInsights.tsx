@@ -141,7 +141,7 @@ function PriceComparisonCard({ data }: { data: CommunityPriceData }) {
         <div className="mt-4 pt-4 border-t border-border/50 flex items-center justify-between text-xs text-muted-foreground">
           <div className="flex items-center gap-1">
             <BarChart3 className="h-3 w-3" />
-            Avg ROI: <span className={data.avgRoi > 0 ? 'text-success' : 'text-destructive'}>{data.avgRoi.toFixed(1)}%</span>
+            Avg ROI: <span className={(data.avgRoi ?? 0) > 0 ? 'text-success' : 'text-destructive'}>{(data.avgRoi ?? 0).toFixed(1)}%</span>
           </div>
           {daysSinceLastTrade !== null && (
             <div className="flex items-center gap-1">
