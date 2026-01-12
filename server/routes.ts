@@ -146,8 +146,14 @@ async function getCurrentProfits(userId: string): Promise<{ daily: number; weekl
   return { daily, weekly, monthly };
 }
 
+const SERVER_START_TIME = Date.now().toString();
+
 export async function registerRoutes(app: Express): Promise<Server> {
   await setupAuth(app);
+
+  app.get('/api/version', (req, res) => {
+    res.json({ version: SERVER_START_TIME });
+  });
 
   app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
     try {

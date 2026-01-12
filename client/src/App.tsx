@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { useAuth } from "@/hooks/useAuth";
 import { useHeartbeat } from "@/hooks/useHeartbeat";
+import { useVersionCheck } from "@/hooks/useVersionCheck";
 import { AppSidebar } from "@/components/AppSidebar";
 import { Header } from "@/components/Header";
 import Home from "@/pages/Home";
@@ -62,6 +63,7 @@ function Router() {
   const { isAuthenticated, isLoading } = useAuth();
   
   useHeartbeat(30000);
+  useVersionCheck();
 
   if (isLoading) {
     return (
