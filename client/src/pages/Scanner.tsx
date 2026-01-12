@@ -47,6 +47,17 @@ interface Favorite {
 type SortKey = keyof ScannerItem;
 type SortDirection = "asc" | "desc";
 
+const BUY_LIMIT_OPTIONS = [1, 2, 5, 10, 100, 1000, 5000, 10000];
+
+const PRICE_RANGE_OPTIONS = [
+  { label: "Under 1K", min: 0, max: 999 },
+  { label: "1K-10K", min: 1000, max: 9999 },
+  { label: "10K-100K", min: 10000, max: 99999 },
+  { label: "100K-1M", min: 100000, max: 999999 },
+  { label: "1M-10M", min: 1000000, max: 9999999 },
+  { label: "10M+", min: 10000000, max: Infinity },
+];
+
 const columnDefinitions = [
   { key: "name" as const, label: "Name", sortable: true, defaultVisible: true },
   { key: "geLimit" as const, label: "Buy Limit", sortable: true, defaultVisible: true },
@@ -72,11 +83,9 @@ export default function Scanner() {
     Object.fromEntries(columnDefinitions.map(col => [col.key, col.defaultVisible]))
   );
   
+  const [selectedBuyLimit, setSelectedBuyLimit] = useState<number | null>(null);
+  const [selectedPriceRange, setSelectedPriceRange] = useState<number | null>(null);
   const [filters, setFilters] = useState({
-    minBuyLimit: "",
-    maxBuyLimit: "",
-    minBuyPrice: "",
-    maxBuyPrice: "",
     minMargin: "",
     maxMargin: "",
     minVolume: "",
@@ -146,11 +155,20 @@ export default function Scanner() {
       result = result.filter(item => !item.isMembers);
     }
 
+    // Buy limit filter (exact match)
+    if (selectedBuyLimit !== null) {
+      result = result.filter(item => item.geLimit === selectedBuyLimit);
+    }
+
+    // Price range filter
+    if (selectedPriceRange !== null) {
+      const range = PRICE_RANGE_OPTIONS[selectedPriceRange];
+      if (range) {
+        result = result.filter(item => item.buyPrice >= range.min && item.buyPrice <= range.max);
+      }
+    }
+
     const parseNum = (val: string) => val ? parseFloat(val) : null;
-    const minBuyLimit = parseNum(filters.minBuyLimit);
-    const maxBuyLimit = parseNum(filters.maxBuyLimit);
-    const minBuyPrice = parseNum(filters.minBuyPrice);
-    const maxBuyPrice = parseNum(filters.maxBuyPrice);
     const minMargin = parseNum(filters.minMargin);
     const maxMargin = parseNum(filters.maxMargin);
     const minVolume = parseNum(filters.minVolume);
@@ -159,10 +177,6 @@ export default function Scanner() {
     const maxPotentialProfit = parseNum(filters.maxPotentialProfit);
 
     result = result.filter(item => {
-      if (minBuyLimit !== null && item.geLimit < minBuyLimit) return false;
-      if (maxBuyLimit !== null && item.geLimit > maxBuyLimit) return false;
-      if (minBuyPrice !== null && item.buyPrice < minBuyPrice) return false;
-      if (maxBuyPrice !== null && item.buyPrice > maxBuyPrice) return false;
       if (minMargin !== null && item.margin < minMargin) return false;
       if (maxMargin !== null && item.margin > maxMargin) return false;
       if (minVolume !== null && item.volume < minVolume) return false;
@@ -194,7 +208,7 @@ export default function Scanner() {
     });
 
     return result;
-  }, [items, searchQuery, sortKey, sortDirection, f2pOnly, filters]);
+  }, [items, searchQuery, sortKey, sortDirection, f2pOnly, selectedBuyLimit, selectedPriceRange, filters]);
 
   const totalPages = Math.ceil(filteredAndSortedItems.length / ITEMS_PER_PAGE);
   const paginatedItems = filteredAndSortedItems.slice(
@@ -277,49 +291,46 @@ export default function Scanner() {
               </Button>
             </CollapsibleTrigger>
             <CollapsibleContent className="pt-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4 p-4 bg-muted/50 rounded-md">
+              <div className="grid grid-cols-1 gap-4 p-4 bg-muted/50 rounded-md">
                 <div className="space-y-2">
                   <Label className="text-xs">Buy Limit</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="Min"
-                      type="number"
-                      value={filters.minBuyLimit}
-                      onChange={(e) => setFilters(prev => ({ ...prev, minBuyLimit: e.target.value }))}
-                      className="h-8"
-                      data-testid="input-min-buy-limit"
-                    />
-                    <Input
-                      placeholder="Max"
-                      type="number"
-                      value={filters.maxBuyLimit}
-                      onChange={(e) => setFilters(prev => ({ ...prev, maxBuyLimit: e.target.value }))}
-                      className="h-8"
-                      data-testid="input-max-buy-limit"
-                    />
+                  <div className="flex flex-wrap gap-2">
+                    {BUY_LIMIT_OPTIONS.map((limit) => (
+                      <Button
+                        key={limit}
+                        variant={selectedBuyLimit === limit ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => {
+                          setSelectedBuyLimit(prev => prev === limit ? null : limit);
+                          setCurrentPage(1);
+                        }}
+                        data-testid={`button-buy-limit-${limit}`}
+                      >
+                        {limit >= 1000 ? `${limit / 1000}K` : limit}
+                      </Button>
+                    ))}
                   </div>
                 </div>
                 <div className="space-y-2">
                   <Label className="text-xs">Buy Price</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      placeholder="Min"
-                      type="number"
-                      value={filters.minBuyPrice}
-                      onChange={(e) => setFilters(prev => ({ ...prev, minBuyPrice: e.target.value }))}
-                      className="h-8"
-                      data-testid="input-min-buy-price"
-                    />
-                    <Input
-                      placeholder="Max"
-                      type="number"
-                      value={filters.maxBuyPrice}
-                      onChange={(e) => setFilters(prev => ({ ...prev, maxBuyPrice: e.target.value }))}
-                      className="h-8"
-                      data-testid="input-max-buy-price"
-                    />
+                  <div className="flex flex-wrap gap-2">
+                    {PRICE_RANGE_OPTIONS.map((range, index) => (
+                      <Button
+                        key={range.label}
+                        variant={selectedPriceRange === index ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => {
+                          setSelectedPriceRange(prev => prev === index ? null : index);
+                          setCurrentPage(1);
+                        }}
+                        data-testid={`button-price-range-${index}`}
+                      >
+                        {range.label}
+                      </Button>
+                    ))}
                   </div>
                 </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div className="space-y-2">
                   <Label className="text-xs">Margin</Label>
                   <div className="flex gap-2">
@@ -382,6 +393,7 @@ export default function Scanner() {
                       data-testid="input-max-potential-profit"
                     />
                   </div>
+                </div>
                 </div>
               </div>
 
