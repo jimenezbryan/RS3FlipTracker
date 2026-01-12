@@ -1,6 +1,6 @@
 import { Switch, Route, Redirect } from "wouter";
 import { queryClient } from "./lib/queryClient";
-import { QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
@@ -20,6 +20,22 @@ import Recipes from "@/pages/Recipes";
 import Admin from "@/pages/Admin";
 import Profile from "@/pages/Profile";
 import NotFound from "@/pages/not-found";
+
+function AdminRoute({ component: Component }: { component: React.ComponentType }) {
+  const { data: adminCheck, isLoading } = useQuery<{ isAdmin: boolean }>({
+    queryKey: ["/api/admin/check"],
+  });
+  
+  if (isLoading) {
+    return <div className="p-8 text-muted-foreground">Loading...</div>;
+  }
+  
+  if (!adminCheck?.isAdmin) {
+    return <Redirect to="/" />;
+  }
+  
+  return <Component />;
+}
 
 function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
   const style = {
@@ -72,11 +88,11 @@ function Router() {
         <Route path="/goals" component={Goals} />
         <Route path="/suggestions" component={Suggestions} />
         <Route path="/recipes" component={Recipes} />
-        <Route path="/market" component={MarketInsights} />
+        <Route path="/market">{() => <AdminRoute component={MarketInsights} />}</Route>
         <Route path="/alerts" component={Alerts} />
         <Route path="/stats" component={Stats} />
         <Route path="/profile" component={Profile} />
-        <Route path="/admin" component={Admin} />
+        <Route path="/admin">{() => <AdminRoute component={Admin} />}</Route>
         <Route component={NotFound} />
       </Switch>
     </AuthenticatedLayout>

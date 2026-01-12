@@ -25,9 +25,13 @@ const navItems = [
   { href: "/portfolio", label: "Portfolio", icon: Briefcase },
   { href: "/goals", label: "Goals", icon: Target },
   { href: "/suggestions", label: "AI Tips", icon: Sparkles },
-  { href: "/market", label: "Market", icon: TrendingUp },
   { href: "/alerts", label: "Alerts", icon: Bell },
   { href: "/stats", label: "Stats", icon: BarChart3 },
+];
+
+const adminOnlyItems = [
+  { href: "/market", label: "Market", icon: TrendingUp },
+  { href: "/admin", label: "Admin", icon: Shield },
 ];
 
 export function AppSidebar() {
@@ -43,7 +47,7 @@ export function AppSidebar() {
   });
 
   const allNavItems = adminCheck?.isAdmin 
-    ? [...navItems, { href: "/admin", label: "Admin", icon: Shield }]
+    ? [...navItems, ...adminOnlyItems]
     : navItems;
 
   return (
