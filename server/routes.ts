@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import multer from "multer";
 import { storage } from "./storage";
 import { insertFlipSchema, insertWatchlistSchema, insertPriceAlertSchema, insertFavoriteSchema, insertProfitGoalSchema, insertPortfolioCategorySchema, insertPortfolioHoldingSchema, updatePortfolioHoldingSchema, insertHoldingTransactionSchema, insertRsAccountSchema, insertRecipeSchema, insertRecipeComponentSchema, insertRecipeRunSchema, insertRecipeRunComponentSchema } from "@shared/schema";
-import { getItemPrice, searchItems, getItemTrend, getItemPriceHistory, getItemSuggestions } from "./ge-api";
+import { getItemPrice, searchItems, getItemTrend, getItemPriceHistory, getItemSuggestions, getAllItemsForScanner } from "./ge-api";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { processScreenshot, matchItemsToGE } from "./ocr";
 import { analyzeRS3Screenshot } from "./ai-vision";
@@ -1073,6 +1073,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(204).send();
     } catch (error) {
       res.status(500).json({ error: "Failed to delete price alert" });
+    }
+  });
+
+  // Scanner endpoint - admin only
+  app.get("/api/scanner/items", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const user = await storage.getUser(userId);
+      
+      // Check if user is an admin
+      const isAdminUser = user && (ADMIN_EMAILS.includes(user.email ?? "") || user.isAdmin === true);
+      
+      if (!isAdminUser) {
+        return res.status(403).json({ error: "Admin access required" });
+      }
+      
+      const items = await getAllItemsForScanner();
+      res.json(items);
+    } catch (error) {
+      console.error("Error fetching scanner items:", error);
+      res.status(500).json({ error: "Failed to fetch scanner items" });
     }
   });
 

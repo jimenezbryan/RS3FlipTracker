@@ -516,6 +516,58 @@ function formatPriceSimple(price: number): string {
   return price.toLocaleString();
 }
 
+export interface ScannerItem {
+  id: number;
+  name: string;
+  icon: string;
+  isMembers: boolean;
+  geLimit: number;
+  buyPrice: number;
+  sellPrice: number;
+  margin: number;
+  volume: number;
+  potentialProfit: number;
+  marginVolume: number;
+}
+
+export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
+  await refreshItemCache();
+  
+  const results: ScannerItem[] = [];
+  
+  for (const item of itemCache) {
+    const priceData = itemPriceCache.get(item.id);
+    if (!priceData || priceData.price <= 0) continue;
+    
+    const price = priceData.price;
+    const geLimit = item.geLimit ?? 0;
+    const volume = priceData.volume ?? 0;
+    
+    // Estimate margin as 1% of price (since we don't have instant buy/sell data)
+    const margin = Math.round(price * 0.01);
+    const buyPrice = price;
+    const sellPrice = price + margin;
+    const potentialProfit = margin * geLimit;
+    const marginVolume = margin * volume;
+    
+    results.push({
+      id: item.id,
+      name: item.name,
+      icon: `${RS_ITEMDB_BASE}/obj_sprite.gif?id=${item.id}`,
+      isMembers: item.isMembers ?? false,
+      geLimit,
+      buyPrice,
+      sellPrice,
+      margin,
+      volume,
+      potentialProfit,
+      marginVolume,
+    });
+  }
+  
+  return results;
+}
+
 export async function getItemById(itemId: number): Promise<GEItem | null> {
   try {
     const response = await fetch(
