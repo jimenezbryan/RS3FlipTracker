@@ -343,11 +343,29 @@ export async function getItemPriceHistory(itemId: number): Promise<PriceHistoryP
       (a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
     );
 
-    return sortedHistory.map((h: any) => ({
-      date: h.timestamp.split('T')[0],
-      price: h.price,
-      volume: h.volume,
-    }));
+    return sortedHistory.map((h: any) => {
+      let dateStr: string;
+      if (typeof h.timestamp === 'number') {
+        // Unix timestamp (seconds or milliseconds)
+        const ts = h.timestamp > 9999999999 ? h.timestamp : h.timestamp * 1000;
+        dateStr = new Date(ts).toISOString().split('T')[0];
+      } else if (typeof h.timestamp === 'string') {
+        // ISO string or other string format
+        if (h.timestamp.includes('T')) {
+          dateStr = h.timestamp.split('T')[0];
+        } else {
+          dateStr = new Date(h.timestamp).toISOString().split('T')[0];
+        }
+      } else {
+        // Fallback to current date
+        dateStr = new Date().toISOString().split('T')[0];
+      }
+      return {
+        date: dateStr,
+        price: h.price,
+        volume: h.volume,
+      };
+    });
   } catch (error) {
     console.error("Failed to fetch item price history:", error);
     return null;
