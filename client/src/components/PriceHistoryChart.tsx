@@ -296,7 +296,16 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
             <ChartTooltip
               content={
                 <ChartTooltipContent
-                  labelFormatter={(ts) => format(new Date(Number(ts)), "MMM d, yyyy")}
+                  labelFormatter={(ts) => {
+                    try {
+                      const numTs = Number(ts);
+                      const date = isNaN(numTs) ? new Date(ts as string) : new Date(numTs);
+                      if (isNaN(date.getTime())) return String(ts);
+                      return format(date, "MMM d, yyyy");
+                    } catch {
+                      return String(ts);
+                    }
+                  }}
                   formatter={(value, name, props) => {
                     if (name === "Your Buys") {
                       const label = props?.payload?.label || "";
