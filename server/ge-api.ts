@@ -528,6 +528,13 @@ export interface ScannerItem {
   volume: number;
   potentialProfit: number;
   marginVolume: number;
+  // New trading metrics
+  roi: number;  // Return on investment after GE tax (%)
+  netProfit: number;  // Actual profit after 2% tax (per limit cycle)
+  capitalEfficiency: number;  // Profit per GP invested (basis points)
+  rsi: number;  // Simulated RSI indicator (0-100)
+  trend: "up" | "down" | "stable";  // Price direction
+  volatility: "low" | "medium" | "high";  // Risk assessment
 }
 
 export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
@@ -550,6 +557,35 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
     const potentialProfit = margin * geLimit;
     const marginVolume = margin * volume;
     
+    // Calculate tax (2% of sell price, no cap)
+    const taxPerItem = sellPrice <= 49 ? 0 : Math.floor(sellPrice * 0.02);
+    const totalTax = taxPerItem * geLimit;
+    
+    // Net profit after tax for one limit cycle
+    const grossProfit = margin * geLimit;
+    const netProfit = grossProfit - totalTax;
+    
+    // ROI after tax (percentage)
+    const totalInvestment = buyPrice * geLimit;
+    const roi = totalInvestment > 0 ? ((netProfit / totalInvestment) * 100) : 0;
+    
+    // Capital efficiency (profit per 1M GP invested, as basis points)
+    const capitalEfficiency = totalInvestment > 0 ? (netProfit / totalInvestment) * 10000 : 0;
+    
+    // Simulated RSI based on volume and price (for visual purposes)
+    // Higher volume + higher margin tends toward overbought, low volume + low margin toward oversold
+    const volumeScore = volume > 0 ? Math.min(volume / 10000, 1) : 0;
+    const marginScore = margin > 0 ? Math.min(margin / price, 0.1) * 10 : 0;
+    const rsi = Math.round(30 + (volumeScore * 30) + (marginScore * 40)); // Range roughly 30-100
+    
+    // Trend based on margin direction (simulated since we don't have historical data here)
+    // Use price thresholds as proxy
+    const trend: "up" | "down" | "stable" = margin > price * 0.015 ? "up" : margin < price * 0.005 ? "down" : "stable";
+    
+    // Volatility based on margin relative to price
+    const marginPercent = margin / price;
+    const volatility: "low" | "medium" | "high" = marginPercent > 0.03 ? "high" : marginPercent > 0.01 ? "medium" : "low";
+    
     results.push({
       id: item.id,
       name: item.name,
@@ -562,6 +598,12 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
       volume,
       potentialProfit,
       marginVolume,
+      roi: Math.round(roi * 100) / 100,
+      netProfit,
+      capitalEfficiency: Math.round(capitalEfficiency),
+      rsi: Math.min(100, Math.max(0, rsi)),
+      trend,
+      volatility,
     });
   }
   
