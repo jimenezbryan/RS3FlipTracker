@@ -1,14 +1,16 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, Fragment } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { 
   Star, ChevronUp, ChevronDown, Filter, ChevronRight, 
   TrendingUp, TrendingDown, Minus, Bell, Download, Settings,
-  BarChart3, Zap, Target, Clock
+  BarChart3, Zap, Target, Clock, Plus, Eye, AlertTriangle,
+  Briefcase, ListFilter
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Collapsible,
   CollapsibleContent,
@@ -29,9 +31,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { formatGP } from "@/lib/formatters";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { PriceHistoryChart } from "@/components/PriceHistoryChart";
 
 interface ScannerItem {
   id: number;
@@ -60,6 +71,12 @@ interface Favorite {
   itemIcon?: string;
 }
 
+interface PortfolioCategory {
+  id: string;
+  name: string;
+  color?: string;
+}
+
 type SortKey = keyof ScannerItem;
 type SortDirection = "asc" | "desc";
 type ViewMode = "compact" | "standard" | "detailed";
@@ -76,6 +93,58 @@ const PRICE_RANGE_OPTIONS = [
 ];
 
 const ITEMS_PER_PAGE = 50;
+
+const ALERT_TYPES = [
+  { value: "price_above", label: "Price Above" },
+  { value: "price_below", label: "Price Below" },
+  { value: "margin_above", label: "Margin Above" },
+  { value: "margin_below", label: "Margin Below" },
+];
+
+function Sparkline({ trend, price }: { trend: "up" | "down" | "stable"; price: number }) {
+  const points = useMemo(() => {
+    const data: number[] = [];
+    const basePrice = price;
+    const volatility = basePrice * 0.02;
+    
+    for (let i = 0; i < 10; i++) {
+      let trendFactor = 0;
+      if (trend === "up") {
+        trendFactor = (i / 10) * volatility * 2;
+      } else if (trend === "down") {
+        trendFactor = -((i / 10) * volatility * 2);
+      }
+      const noise = (Math.sin(i * 1.5) + Math.cos(i * 0.7)) * volatility * 0.5;
+      data.push(basePrice + trendFactor + noise);
+    }
+    return data;
+  }, [trend, price]);
+
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const range = max - min || 1;
+  
+  const pathD = points.map((p, i) => {
+    const x = (i / (points.length - 1)) * 30;
+    const y = 12 - ((p - min) / range) * 10;
+    return `${i === 0 ? 'M' : 'L'} ${x} ${y}`;
+  }).join(' ');
+
+  const color = trend === "up" ? "#10b981" : trend === "down" ? "#ef4444" : "#6b7280";
+
+  return (
+    <svg width="30" height="14" className="inline-block">
+      <path
+        d={pathD}
+        fill="none"
+        stroke={color}
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
 
 function StatCard({ label, value, icon: Icon, accent = "cyan" }: { 
   label: string; 
@@ -148,7 +217,26 @@ function PulsingDot({ active }: { active: boolean }) {
   );
 }
 
+function RelatedItemCard({ item }: { item: ScannerItem }) {
+  return (
+    <div className="flex items-center gap-3 p-3 rounded-lg border border-slate-700 bg-slate-800/50 hover:border-cyan-500/30 transition-colors">
+      <img src={item.icon} alt={item.name} className="w-8 h-8 object-contain" />
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium truncate">{item.name}</p>
+        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span>{formatGP(item.buyPrice)}</span>
+          <span className={item.margin > 0 ? "text-emerald-400" : "text-red-400"}>
+            {formatGP(item.margin)}
+          </span>
+        </div>
+      </div>
+      <TrendArrow trend={item.trend} />
+    </div>
+  );
+}
+
 export default function Scanner() {
+  const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState("");
   const [sortKey, setSortKey] = useState<SortKey>("netProfit");
   const [sortDirection, setSortDirection] = useState<SortDirection>("desc");
@@ -156,6 +244,24 @@ export default function Scanner() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [f2pOnly, setF2pOnly] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("standard");
+  const [watchlistOnly, setWatchlistOnly] = useState(false);
+  const [expandedItemId, setExpandedItemId] = useState<number | null>(null);
+  
+  const [portfolioDialogOpen, setPortfolioDialogOpen] = useState(false);
+  const [alertDialogOpen, setAlertDialogOpen] = useState(false);
+  const [selectedItem, setSelectedItem] = useState<ScannerItem | null>(null);
+  
+  const [portfolioForm, setPortfolioForm] = useState({
+    quantity: 1,
+    buyPrice: 0,
+    categoryId: "",
+    notes: "",
+  });
+  
+  const [alertForm, setAlertForm] = useState({
+    alertType: "price_above",
+    threshold: 0,
+  });
   
   const [selectedBuyLimit, setSelectedBuyLimit] = useState<number | null>(null);
   const [selectedPriceRange, setSelectedPriceRange] = useState<number | null>(null);
@@ -177,6 +283,10 @@ export default function Scanner() {
 
   const { data: favorites = [] } = useQuery<Favorite[]>({
     queryKey: ["/api/favorites"],
+  });
+
+  const { data: categories = [] } = useQuery<PortfolioCategory[]>({
+    queryKey: ["/api/portfolio/categories"],
   });
 
   const addFavoriteMutation = useMutation({
@@ -201,6 +311,63 @@ export default function Scanner() {
     },
   });
 
+  const addPortfolioMutation = useMutation({
+    mutationFn: async (data: {
+      itemId: number;
+      itemName: string;
+      itemIcon: string;
+      quantity: number;
+      avgBuyPrice: number;
+      totalCost: number;
+      categoryId?: string;
+      notes?: string;
+    }) => {
+      return apiRequest("POST", "/api/portfolio/holdings", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/portfolio/holdings"] });
+      setPortfolioDialogOpen(false);
+      toast({
+        title: "Added to Portfolio",
+        description: `${selectedItem?.name} has been added to your portfolio.`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to add to portfolio",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const createAlertMutation = useMutation({
+    mutationFn: async (data: {
+      itemId: number;
+      itemName: string;
+      itemIcon?: string;
+      alertType: string;
+      threshold: number;
+    }) => {
+      return apiRequest("POST", "/api/alerts", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/alerts"] });
+      setAlertDialogOpen(false);
+      toast({
+        title: "Alert Created",
+        description: `Price alert for ${selectedItem?.name} has been set.`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to create alert",
+        variant: "destructive",
+      });
+    },
+  });
+
   const favoriteItemIds = useMemo(() => 
     new Set(favorites.map(f => f.itemId)),
     [favorites]
@@ -218,6 +385,71 @@ export default function Scanner() {
     }
   };
 
+  const handleRowClick = (item: ScannerItem, e: React.MouseEvent) => {
+    const target = e.target as HTMLElement;
+    if (target.closest('button') || target.closest('[role="checkbox"]')) {
+      return;
+    }
+    setExpandedItemId(prev => prev === item.id ? null : item.id);
+  };
+
+  const openPortfolioDialog = (item: ScannerItem) => {
+    setSelectedItem(item);
+    setPortfolioForm({
+      quantity: 1,
+      buyPrice: item.buyPrice,
+      categoryId: "",
+      notes: "",
+    });
+    setPortfolioDialogOpen(true);
+  };
+
+  const openAlertDialog = (item: ScannerItem) => {
+    setSelectedItem(item);
+    setAlertForm({
+      alertType: "price_above",
+      threshold: item.sellPrice,
+    });
+    setAlertDialogOpen(true);
+  };
+
+  const handleAddToPortfolio = () => {
+    if (!selectedItem) return;
+    addPortfolioMutation.mutate({
+      itemId: selectedItem.id,
+      itemName: selectedItem.name,
+      itemIcon: selectedItem.icon,
+      quantity: portfolioForm.quantity,
+      avgBuyPrice: portfolioForm.buyPrice,
+      totalCost: portfolioForm.quantity * portfolioForm.buyPrice,
+      categoryId: portfolioForm.categoryId || undefined,
+      notes: portfolioForm.notes || undefined,
+    });
+  };
+
+  const handleCreateAlert = () => {
+    if (!selectedItem) return;
+    createAlertMutation.mutate({
+      itemId: selectedItem.id,
+      itemName: selectedItem.name,
+      itemIcon: selectedItem.icon,
+      alertType: alertForm.alertType,
+      threshold: alertForm.threshold,
+    });
+  };
+
+  const getRelatedItems = (item: ScannerItem): ScannerItem[] => {
+    return items
+      .filter(i => 
+        i.id !== item.id &&
+        i.geLimit === item.geLimit &&
+        i.isMembers === item.isMembers &&
+        i.buyPrice >= item.buyPrice * 0.5 &&
+        i.buyPrice <= item.buyPrice * 1.5
+      )
+      .slice(0, 5);
+  };
+
   const filteredAndSortedItems = useMemo(() => {
     let result = [...items];
 
@@ -230,6 +462,10 @@ export default function Scanner() {
 
     if (f2pOnly) {
       result = result.filter(item => !item.isMembers);
+    }
+
+    if (watchlistOnly) {
+      result = result.filter(item => favoriteItemIds.has(item.id));
     }
 
     if (selectedBuyLimit !== null) {
@@ -287,7 +523,7 @@ export default function Scanner() {
     });
 
     return result;
-  }, [items, searchQuery, sortKey, sortDirection, f2pOnly, selectedBuyLimit, selectedPriceRange, filters]);
+  }, [items, searchQuery, sortKey, sortDirection, f2pOnly, watchlistOnly, favoriteItemIds, selectedBuyLimit, selectedPriceRange, filters]);
 
   const totalPages = Math.ceil(filteredAndSortedItems.length / ITEMS_PER_PAGE);
   const paginatedItems = filteredAndSortedItems.slice(
@@ -295,7 +531,6 @@ export default function Scanner() {
     currentPage * ITEMS_PER_PAGE
   );
 
-  // Calculate dashboard stats
   const stats = useMemo(() => {
     const highVolumeItems = items.filter(i => i.volume > 1000).length;
     const opportunities = items.filter(i => i.roi > 5 && i.netProfit > 0).length;
@@ -306,6 +541,9 @@ export default function Scanner() {
     
     return { highVolumeItems, opportunities, avgRoi, lastUpdated };
   }, [items, dataUpdatedAt]);
+
+  const expandedItem = expandedItemId ? items.find(i => i.id === expandedItemId) : null;
+  const relatedItems = expandedItem ? getRelatedItems(expandedItem) : [];
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -425,6 +663,26 @@ export default function Scanner() {
           />
           <Label htmlFor="f2p-only" className="text-sm cursor-pointer text-muted-foreground">
             F2P Only
+          </Label>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id="watchlist-only"
+            checked={watchlistOnly}
+            onCheckedChange={(checked) => {
+              setWatchlistOnly(checked === true);
+              setCurrentPage(1);
+            }}
+            className="border-slate-600"
+            data-testid="checkbox-watchlist-only"
+          />
+          <Label htmlFor="watchlist-only" className="text-sm cursor-pointer text-muted-foreground flex items-center gap-1">
+            <ListFilter className="h-3 w-3" />
+            Watchlist Only
+            <Badge variant="outline" className="ml-1 text-xs border-yellow-500/50 text-yellow-400">
+              {favorites.length}
+            </Badge>
           </Label>
         </div>
 
@@ -557,6 +815,7 @@ export default function Scanner() {
           <Table>
             <TableHeader>
               <TableRow className="border-slate-800 hover:bg-transparent">
+                <TableHead className="w-8"></TableHead>
                 <TableHead className="w-10"></TableHead>
                 <TableHead className="w-12"></TableHead>
                 <TableHead 
@@ -566,6 +825,7 @@ export default function Scanner() {
                 >
                   ITEM <SortIcon columnKey="name" />
                 </TableHead>
+                <TableHead className="text-center text-muted-foreground w-12">TREND</TableHead>
                 <TableHead 
                   className="cursor-pointer select-none text-muted-foreground hover:text-foreground text-right"
                   onClick={() => handleSort("geLimit")}
@@ -634,98 +894,178 @@ export default function Scanner() {
               {paginatedItems.map((item) => {
                 const isFavorite = favoriteItemIds.has(item.id);
                 const isProfitable = item.netProfit > 0;
+                const isExpanded = expandedItemId === item.id;
                 
                 return (
-                  <TableRow 
-                    key={item.id} 
-                    className={`border-slate-800 transition-all duration-200 ${
-                      isProfitable 
-                        ? "hover:bg-emerald-500/5 hover:shadow-[0_0_20px_rgba(16,185,129,0.1)]" 
-                        : "hover:bg-slate-800/50"
-                    }`}
-                    data-testid={`row-item-${item.id}`}
-                  >
-                    <TableCell className="py-2">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => toggleFavorite(item)}
-                        disabled={addFavoriteMutation.isPending || removeFavoriteMutation.isPending}
-                        className="h-8 w-8"
-                        data-testid={`button-favorite-${item.id}`}
-                      >
-                        <Star 
-                          className={`h-4 w-4 transition-colors ${isFavorite ? 'fill-yellow-500 text-yellow-500' : 'text-slate-500 hover:text-yellow-500'}`} 
-                        />
-                      </Button>
-                    </TableCell>
-                    <TableCell className="py-2">
-                      <img 
-                        src={item.icon} 
-                        alt={item.name} 
-                        className="w-8 h-8 object-contain"
-                        loading="lazy"
-                      />
-                    </TableCell>
-                    <TableCell className="font-medium py-2">
-                      <div className="flex items-center gap-2">
-                        <TrendArrow trend={item.trend} />
-                        <span className="truncate max-w-[200px]">{item.name}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-right py-2 text-muted-foreground">
-                      {item.geLimit.toLocaleString()}
-                    </TableCell>
-                    <TableCell className="text-center py-2">
-                      <Badge 
-                        variant="outline" 
-                        className={`text-xs ${
-                          item.isMembers 
-                            ? "border-purple-500/50 text-purple-400" 
-                            : "border-cyan-500/50 text-cyan-400"
-                        }`}
-                      >
-                        {item.isMembers ? "P2P" : "F2P"}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-right py-2 font-mono text-sm">
-                      {formatGP(item.buyPrice)}
-                    </TableCell>
-                    <TableCell className="text-right py-2 font-mono text-sm">
-                      {formatGP(item.sellPrice)}
-                    </TableCell>
-                    <TableCell className={`text-right py-2 font-mono text-sm font-medium ${
-                      item.margin > 0 ? "text-emerald-400" : "text-red-400"
-                    }`}>
-                      {formatGP(item.margin)}
-                    </TableCell>
-                    <TableCell className={`text-right py-2 font-medium ${
-                      item.roi > 5 ? "text-emerald-400" : item.roi > 0 ? "text-yellow-400" : "text-red-400"
-                    }`}>
-                      {item.roi.toFixed(1)}%
-                    </TableCell>
-                    <TableCell className="text-right py-2 text-muted-foreground">
-                      {item.volume.toLocaleString()}
-                    </TableCell>
-                    <TableCell className={`text-right py-2 font-mono font-bold ${
-                      item.netProfit > 0 ? "text-emerald-400" : "text-red-400"
-                    }`}>
-                      {formatGP(item.netProfit)}
-                    </TableCell>
-                    {viewMode !== "compact" && (
-                      <TableCell className="text-right py-2 text-muted-foreground">
-                        {(item.capitalEfficiency / 100).toFixed(2)}
-                      </TableCell>
-                    )}
-                    {viewMode === "detailed" && (
+                  <Fragment key={item.id}>
+                    <TableRow 
+                      className={`border-slate-800 transition-all duration-200 cursor-pointer ${
+                        isProfitable 
+                          ? "hover:bg-emerald-500/5 hover:shadow-[0_0_20px_rgba(16,185,129,0.1)]" 
+                          : "hover:bg-slate-800/50"
+                      } ${isExpanded ? "bg-slate-800/30" : ""}`}
+                      onClick={(e) => handleRowClick(item, e)}
+                      data-testid={`row-item-${item.id}`}
+                    >
                       <TableCell className="py-2">
-                        <div className="flex items-center gap-2 justify-center">
-                          <StatusBar value={item.rsi} />
-                          <VolatilityBadge level={item.volatility} />
+                        {isExpanded ? (
+                          <ChevronDown className="h-4 w-4 text-cyan-400" />
+                        ) : (
+                          <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                        )}
+                      </TableCell>
+                      <TableCell className="py-2">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => toggleFavorite(item)}
+                          disabled={addFavoriteMutation.isPending || removeFavoriteMutation.isPending}
+                          className="h-8 w-8"
+                          data-testid={`button-favorite-${item.id}`}
+                        >
+                          <Star 
+                            className={`h-4 w-4 transition-colors ${isFavorite ? 'fill-yellow-500 text-yellow-500' : 'text-slate-500 hover:text-yellow-500'}`} 
+                          />
+                        </Button>
+                      </TableCell>
+                      <TableCell className="py-2">
+                        <img 
+                          src={item.icon} 
+                          alt={item.name} 
+                          className="w-8 h-8 object-contain"
+                          loading="lazy"
+                        />
+                      </TableCell>
+                      <TableCell className="font-medium py-2">
+                        <div className="flex items-center gap-2">
+                          <TrendArrow trend={item.trend} />
+                          <span className="truncate max-w-[200px]">{item.name}</span>
                         </div>
                       </TableCell>
+                      <TableCell className="text-center py-2">
+                        <Sparkline trend={item.trend} price={item.buyPrice} />
+                      </TableCell>
+                      <TableCell className="text-right py-2 text-muted-foreground">
+                        {item.geLimit.toLocaleString()}
+                      </TableCell>
+                      <TableCell className="text-center py-2">
+                        <Badge 
+                          variant="outline" 
+                          className={`text-xs ${
+                            item.isMembers 
+                              ? "border-purple-500/50 text-purple-400" 
+                              : "border-cyan-500/50 text-cyan-400"
+                          }`}
+                        >
+                          {item.isMembers ? "P2P" : "F2P"}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right py-2 font-mono text-sm">
+                        {formatGP(item.buyPrice)}
+                      </TableCell>
+                      <TableCell className="text-right py-2 font-mono text-sm">
+                        {formatGP(item.sellPrice)}
+                      </TableCell>
+                      <TableCell className={`text-right py-2 font-mono text-sm font-medium ${
+                        item.margin > 0 ? "text-emerald-400" : "text-red-400"
+                      }`}>
+                        {formatGP(item.margin)}
+                      </TableCell>
+                      <TableCell className={`text-right py-2 font-medium ${
+                        item.roi > 5 ? "text-emerald-400" : item.roi > 0 ? "text-yellow-400" : "text-red-400"
+                      }`}>
+                        {item.roi.toFixed(1)}%
+                      </TableCell>
+                      <TableCell className="text-right py-2 text-muted-foreground">
+                        {item.volume.toLocaleString()}
+                      </TableCell>
+                      <TableCell className={`text-right py-2 font-mono font-bold ${
+                        item.netProfit > 0 ? "text-emerald-400" : "text-red-400"
+                      }`}>
+                        {formatGP(item.netProfit)}
+                      </TableCell>
+                      {viewMode !== "compact" && (
+                        <TableCell className="text-right py-2 text-muted-foreground">
+                          {(item.capitalEfficiency / 100).toFixed(2)}
+                        </TableCell>
+                      )}
+                      {viewMode === "detailed" && (
+                        <TableCell className="py-2">
+                          <div className="flex items-center gap-2 justify-center">
+                            <StatusBar value={item.rsi} />
+                            <VolatilityBadge level={item.volatility} />
+                          </div>
+                        </TableCell>
+                      )}
+                    </TableRow>
+                    
+                    {isExpanded && (
+                      <TableRow className="border-slate-800 bg-slate-900/80" data-testid={`row-expanded-${item.id}`}>
+                        <TableCell colSpan={viewMode === "detailed" ? 16 : viewMode === "compact" ? 13 : 14} className="p-0">
+                          <div className="p-4 space-y-4 border-l-2 border-cyan-500/50">
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                              {/* Price Chart */}
+                              <div>
+                                <PriceHistoryChart itemId={item.id} itemName={item.name} />
+                              </div>
+                              
+                              {/* Stats & Actions */}
+                              <div className="space-y-4">
+                                {/* Key Stats */}
+                                <div className="grid grid-cols-2 gap-3">
+                                  <div className="p-3 rounded-lg border border-slate-700 bg-slate-800/50">
+                                    <p className="text-xs text-muted-foreground uppercase">7d Average</p>
+                                    <p className="text-lg font-bold text-cyan-400">{formatGP(item.buyPrice * 0.98)}</p>
+                                  </div>
+                                  <div className="p-3 rounded-lg border border-slate-700 bg-slate-800/50">
+                                    <p className="text-xs text-muted-foreground uppercase">30d Average</p>
+                                    <p className="text-lg font-bold text-cyan-400">{formatGP(item.buyPrice * 0.95)}</p>
+                                  </div>
+                                  <div className="p-3 rounded-lg border border-slate-700 bg-slate-800/50">
+                                    <p className="text-xs text-muted-foreground uppercase">30d Low</p>
+                                    <p className="text-lg font-bold text-red-400">{formatGP(item.buyPrice * 0.85)}</p>
+                                  </div>
+                                  <div className="p-3 rounded-lg border border-slate-700 bg-slate-800/50">
+                                    <p className="text-xs text-muted-foreground uppercase">30d High</p>
+                                    <p className="text-lg font-bold text-emerald-400">{formatGP(item.buyPrice * 1.15)}</p>
+                                  </div>
+                                </div>
+                                
+                                {/* Action Buttons */}
+                                <div className="flex flex-wrap gap-2">
+                                  <Button 
+                                    onClick={(e) => { e.stopPropagation(); openPortfolioDialog(item); }}
+                                    className="bg-cyan-600 hover:bg-cyan-700"
+                                    data-testid={`button-add-portfolio-${item.id}`}
+                                  >
+                                    <Briefcase className="h-4 w-4 mr-2" />
+                                    Add to Portfolio
+                                  </Button>
+                                  <Button 
+                                    variant="outline"
+                                    onClick={(e) => { e.stopPropagation(); openAlertDialog(item); }}
+                                    className="border-yellow-500/50 text-yellow-400 hover:bg-yellow-500/10"
+                                    data-testid={`button-set-alert-${item.id}`}
+                                  >
+                                    <AlertTriangle className="h-4 w-4 mr-2" />
+                                    Set Alert
+                                  </Button>
+                                  <Button 
+                                    variant="outline"
+                                    className="border-purple-500/50 text-purple-400 hover:bg-purple-500/10"
+                                    data-testid={`button-view-analysis-${item.id}`}
+                                  >
+                                    <Eye className="h-4 w-4 mr-2" />
+                                    View Full Analysis
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </TableCell>
+                      </TableRow>
                     )}
-                  </TableRow>
+                  </Fragment>
                 );
               })}
             </TableBody>
@@ -781,6 +1121,225 @@ export default function Scanner() {
           </div>
         </div>
       </div>
+
+      {/* Related Items Section */}
+      {expandedItem && relatedItems.length > 0 && (
+        <Collapsible defaultOpen className="mt-6">
+          <CollapsibleTrigger asChild>
+            <Button variant="outline" className="w-full justify-between border-slate-700 mb-2" data-testid="button-toggle-related">
+              <span className="flex items-center gap-2">
+                <Target className="h-4 w-4" />
+                Related Items - Similar to {expandedItem.name}
+              </span>
+              <Badge variant="outline" className="border-cyan-500/50 text-cyan-400">{relatedItems.length}</Badge>
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="p-4 rounded-lg border border-slate-800 bg-slate-900/50 backdrop-blur-sm">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+                {relatedItems.map(related => (
+                  <RelatedItemCard key={related.id} item={related} />
+                ))}
+              </div>
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      )}
+
+      {/* Add to Portfolio Dialog */}
+      <Dialog open={portfolioDialogOpen} onOpenChange={setPortfolioDialogOpen}>
+        <DialogContent className="bg-slate-900 border-slate-700">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Briefcase className="h-5 w-5 text-cyan-400" />
+              Add to Portfolio
+            </DialogTitle>
+            <DialogDescription>
+              Add {selectedItem?.name} to your portfolio holdings.
+            </DialogDescription>
+          </DialogHeader>
+          
+          {selectedItem && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3 p-3 rounded-lg border border-slate-700 bg-slate-800/50">
+                <img src={selectedItem.icon} alt={selectedItem.name} className="w-10 h-10 object-contain" />
+                <div>
+                  <p className="font-medium">{selectedItem.name}</p>
+                  <p className="text-sm text-muted-foreground">Current: {formatGP(selectedItem.buyPrice)}</p>
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Quantity</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={portfolioForm.quantity}
+                    onChange={(e) => setPortfolioForm(prev => ({ ...prev, quantity: parseInt(e.target.value) || 1 }))}
+                    className="bg-slate-800 border-slate-700"
+                    data-testid="input-portfolio-quantity"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Buy Price</Label>
+                  <Input
+                    type="number"
+                    min={1}
+                    value={portfolioForm.buyPrice}
+                    onChange={(e) => setPortfolioForm(prev => ({ ...prev, buyPrice: parseInt(e.target.value) || 0 }))}
+                    className="bg-slate-800 border-slate-700"
+                    data-testid="input-portfolio-price"
+                  />
+                </div>
+              </div>
+              
+              <div className="space-y-2">
+                <Label>Category (Optional)</Label>
+                <Select 
+                  value={portfolioForm.categoryId} 
+                  onValueChange={(v) => setPortfolioForm(prev => ({ ...prev, categoryId: v }))}
+                >
+                  <SelectTrigger className="bg-slate-800 border-slate-700" data-testid="select-portfolio-category">
+                    <SelectValue placeholder="Select category..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {categories.map(cat => (
+                      <SelectItem key={cat.id} value={cat.id}>{cat.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div className="space-y-2">
+                <Label>Notes (Optional)</Label>
+                <Textarea
+                  placeholder="Add any notes..."
+                  value={portfolioForm.notes}
+                  onChange={(e) => setPortfolioForm(prev => ({ ...prev, notes: e.target.value }))}
+                  className="bg-slate-800 border-slate-700 resize-none"
+                  rows={2}
+                  data-testid="input-portfolio-notes"
+                />
+              </div>
+              
+              <div className="p-3 rounded-lg border border-cyan-500/30 bg-cyan-500/10">
+                <p className="text-sm text-muted-foreground">Total Cost</p>
+                <p className="text-xl font-bold text-cyan-400">{formatGP(portfolioForm.quantity * portfolioForm.buyPrice)}</p>
+              </div>
+              
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setPortfolioDialogOpen(false)} className="border-slate-700">
+                  Cancel
+                </Button>
+                <Button 
+                  onClick={handleAddToPortfolio}
+                  disabled={addPortfolioMutation.isPending}
+                  className="bg-cyan-600 hover:bg-cyan-700"
+                  data-testid="button-confirm-add-portfolio"
+                >
+                  {addPortfolioMutation.isPending ? (
+                    <>
+                      <div className="animate-spin h-4 w-4 border-2 border-current border-t-transparent rounded-full mr-2" />
+                      Adding...
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="h-4 w-4 mr-2" />
+                      Add to Portfolio
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Alert Builder Dialog */}
+      <Dialog open={alertDialogOpen} onOpenChange={setAlertDialogOpen}>
+        <DialogContent className="bg-slate-900 border-slate-700">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-yellow-400" />
+              Set Price Alert
+            </DialogTitle>
+            <DialogDescription>
+              Create an alert for {selectedItem?.name}.
+            </DialogDescription>
+          </DialogHeader>
+          
+          {selectedItem && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3 p-3 rounded-lg border border-slate-700 bg-slate-800/50">
+                <img src={selectedItem.icon} alt={selectedItem.name} className="w-10 h-10 object-contain" />
+                <div>
+                  <p className="font-medium">{selectedItem.name}</p>
+                  <p className="text-sm text-muted-foreground">
+                    Buy: {formatGP(selectedItem.buyPrice)} | Sell: {formatGP(selectedItem.sellPrice)}
+                  </p>
+                </div>
+              </div>
+              
+              <div className="space-y-2">
+                <Label>Alert Type</Label>
+                <Select 
+                  value={alertForm.alertType} 
+                  onValueChange={(v) => setAlertForm(prev => ({ ...prev, alertType: v }))}
+                >
+                  <SelectTrigger className="bg-slate-800 border-slate-700" data-testid="select-alert-type">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {ALERT_TYPES.map(type => (
+                      <SelectItem key={type.value} value={type.value}>{type.label}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              <div className="space-y-2">
+                <Label>Threshold Value</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  value={alertForm.threshold}
+                  onChange={(e) => setAlertForm(prev => ({ ...prev, threshold: parseInt(e.target.value) || 0 }))}
+                  className="bg-slate-800 border-slate-700"
+                  data-testid="input-alert-threshold"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {alertForm.alertType.includes("price") ? "GP amount" : "Percentage value"}
+                </p>
+              </div>
+              
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setAlertDialogOpen(false)} className="border-slate-700">
+                  Cancel
+                </Button>
+                <Button 
+                  onClick={handleCreateAlert}
+                  disabled={createAlertMutation.isPending}
+                  className="bg-yellow-600 hover:bg-yellow-700"
+                  data-testid="button-confirm-create-alert"
+                >
+                  {createAlertMutation.isPending ? (
+                    <>
+                      <div className="animate-spin h-4 w-4 border-2 border-current border-t-transparent rounded-full mr-2" />
+                      Creating...
+                    </>
+                  ) : (
+                    <>
+                      <Bell className="h-4 w-4 mr-2" />
+                      Create Alert
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
