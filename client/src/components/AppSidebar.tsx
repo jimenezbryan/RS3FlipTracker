@@ -1,4 +1,4 @@
-import { Home, BarChart3, Briefcase, Target, Sparkles, TrendingUp, Bell, BookOpen, Shield, Users, Search } from "lucide-react";
+import { Home, BarChart3, Briefcase, Target, Sparkles, TrendingUp, Bell, BookOpen, Shield, Users, Search, CalendarDays } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -27,6 +27,7 @@ const navItems = [
   { href: "/suggestions", label: "AI Tips", icon: Sparkles },
   { href: "/alerts", label: "Alerts", icon: Bell },
   { href: "/stats", label: "Stats", icon: BarChart3 },
+  { href: "/journal", label: "Journal", icon: CalendarDays },
 ];
 
 const adminOnlyItems = [

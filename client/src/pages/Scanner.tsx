@@ -4,7 +4,7 @@ import {
   Star, ChevronUp, ChevronDown, Filter, ChevronRight, 
   TrendingUp, TrendingDown, Minus, Bell, Download, Settings,
   BarChart3, Zap, Target, Clock, Plus, Eye, AlertTriangle,
-  Briefcase, ListFilter
+  Briefcase, ListFilter, Flame
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -62,6 +62,11 @@ interface ScannerItem {
   rsi: number;
   trend: "up" | "down" | "stable";
   volatility: "low" | "medium" | "high";
+}
+
+interface ProcessedScannerItem extends ScannerItem {
+  volumeRatio: number;
+  signals: string[];
 }
 
 interface Favorite {
@@ -245,6 +250,7 @@ export default function Scanner() {
   const [f2pOnly, setF2pOnly] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("standard");
   const [watchlistOnly, setWatchlistOnly] = useState(false);
+  const [signalsOnly, setSignalsOnly] = useState(false);
   const [expandedItemId, setExpandedItemId] = useState<number | null>(null);
   
   const [portfolioDialogOpen, setPortfolioDialogOpen] = useState(false);
@@ -373,6 +379,40 @@ export default function Scanner() {
     [favorites]
   );
 
+  const processedItems = useMemo((): ProcessedScannerItem[] => {
+    return items.map(item => {
+      const avgVolume = item.volume * 0.7;
+      const volumeRatio = avgVolume > 0 ? item.volume / avgVolume : 0;
+      const marginPercent = item.buyPrice > 0 ? (item.margin / item.buyPrice) * 100 : 0;
+      
+      const signals: string[] = [];
+      
+      if (marginPercent > 3 && item.volume > 10000) {
+        signals.push("Quick Flip");
+      }
+      if (volumeRatio > 2.0) {
+        signals.push("High Volume");
+      }
+      if (item.trend === "down" && item.margin > 0) {
+        signals.push("Undervalued");
+      }
+      if (item.roi > 5 && item.volume > 5000) {
+        signals.push("Hot Item");
+      }
+      
+      return {
+        ...item,
+        volumeRatio,
+        signals,
+      };
+    });
+  }, [items]);
+
+  const signalsCount = useMemo(() => 
+    processedItems.filter(i => i.signals.length > 0).length,
+    [processedItems]
+  );
+
   const getFavoriteId = (itemId: number) => 
     favorites.find(f => f.itemId === itemId)?.id;
 
@@ -450,8 +490,8 @@ export default function Scanner() {
       .slice(0, 5);
   };
 
-  const filteredAndSortedItems = useMemo(() => {
-    let result = [...items];
+  const filteredAndSortedItems = useMemo((): ProcessedScannerItem[] => {
+    let result = [...processedItems];
 
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
@@ -466,6 +506,10 @@ export default function Scanner() {
 
     if (watchlistOnly) {
       result = result.filter(item => favoriteItemIds.has(item.id));
+    }
+
+    if (signalsOnly) {
+      result = result.filter(item => item.signals.length > 0);
     }
 
     if (selectedBuyLimit !== null) {
@@ -523,7 +567,7 @@ export default function Scanner() {
     });
 
     return result;
-  }, [items, searchQuery, sortKey, sortDirection, f2pOnly, watchlistOnly, favoriteItemIds, selectedBuyLimit, selectedPriceRange, filters]);
+  }, [processedItems, searchQuery, sortKey, sortDirection, f2pOnly, watchlistOnly, signalsOnly, favoriteItemIds, selectedBuyLimit, selectedPriceRange, filters]);
 
   const totalPages = Math.ceil(filteredAndSortedItems.length / ITEMS_PER_PAGE);
   const paginatedItems = filteredAndSortedItems.slice(
@@ -682,6 +726,26 @@ export default function Scanner() {
             Watchlist Only
             <Badge variant="outline" className="ml-1 text-xs border-yellow-500/50 text-yellow-400">
               {favorites.length}
+            </Badge>
+          </Label>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id="signals-only"
+            checked={signalsOnly}
+            onCheckedChange={(checked) => {
+              setSignalsOnly(checked === true);
+              setCurrentPage(1);
+            }}
+            className="border-slate-600"
+            data-testid="checkbox-signals-only"
+          />
+          <Label htmlFor="signals-only" className="text-sm cursor-pointer text-muted-foreground flex items-center gap-1">
+            <Zap className="h-3 w-3" />
+            Show Signals Only
+            <Badge variant="outline" className="ml-1 text-xs border-emerald-500/50 text-emerald-400" data-testid="badge-signals-count">
+              {signalsCount}
             </Badge>
           </Label>
         </div>
@@ -888,6 +952,7 @@ export default function Scanner() {
                 {viewMode === "detailed" && (
                   <TableHead className="text-center text-muted-foreground">STATUS</TableHead>
                 )}
+                <TableHead className="text-center text-muted-foreground" data-testid="header-signals">SIGNALS</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -977,7 +1042,12 @@ export default function Scanner() {
                         {item.roi.toFixed(1)}%
                       </TableCell>
                       <TableCell className="text-right py-2 text-muted-foreground">
-                        {item.volume.toLocaleString()}
+                        <span className="flex items-center justify-end gap-1">
+                          {item.volumeRatio > 2.0 && (
+                            <Flame className="h-4 w-4 text-orange-400" data-testid={`icon-unusual-volume-${item.id}`} />
+                          )}
+                          {item.volume.toLocaleString()}
+                        </span>
                       </TableCell>
                       <TableCell className={`text-right py-2 font-mono font-bold ${
                         item.netProfit > 0 ? "text-emerald-400" : "text-red-400"
@@ -997,11 +1067,33 @@ export default function Scanner() {
                           </div>
                         </TableCell>
                       )}
+                      <TableCell className="py-2" data-testid={`cell-signals-${item.id}`}>
+                        <div className="flex flex-wrap gap-1 justify-center">
+                          {item.signals.map((signal) => {
+                            const signalStyles: Record<string, string> = {
+                              "Quick Flip": "bg-cyan-500/20 text-cyan-400 border-cyan-500/30",
+                              "High Volume": "bg-orange-500/20 text-orange-400 border-orange-500/30",
+                              "Undervalued": "bg-purple-500/20 text-purple-400 border-purple-500/30",
+                              "Hot Item": "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
+                            };
+                            return (
+                              <Badge 
+                                key={signal} 
+                                variant="outline" 
+                                className={`text-xs ${signalStyles[signal] || ""}`}
+                                data-testid={`badge-signal-${signal.toLowerCase().replace(/\s/g, '-')}-${item.id}`}
+                              >
+                                {signal}
+                              </Badge>
+                            );
+                          })}
+                        </div>
+                      </TableCell>
                     </TableRow>
                     
                     {isExpanded && (
                       <TableRow className="border-slate-800 bg-slate-900/80" data-testid={`row-expanded-${item.id}`}>
-                        <TableCell colSpan={viewMode === "detailed" ? 16 : viewMode === "compact" ? 13 : 14} className="p-0">
+                        <TableCell colSpan={viewMode === "detailed" ? 17 : viewMode === "compact" ? 14 : 15} className="p-0">
                           <div className="p-4 space-y-4 border-l-2 border-cyan-500/50">
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                               {/* Price Chart */}
