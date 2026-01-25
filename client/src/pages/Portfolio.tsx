@@ -17,7 +17,8 @@ import { formatDistanceToNow, format } from "date-fns";
 import { 
   Briefcase, TrendingUp, Package, Coins, Plus, 
   Trash2, FolderPlus, Loader2, X, RefreshCw, ChevronDown,
-  BarChart3, PieChart, TrendingDown, Edit2, Search, History, ArrowDownCircle, ArrowUpCircle
+  BarChart3, PieChart, TrendingDown, Edit2, Search, History, ArrowDownCircle, ArrowUpCircle,
+  Medal, Award, Target, Layers, Percent, DollarSign
 } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { PortfolioValueChart } from "@/components/PortfolioValueChart";
@@ -604,8 +605,8 @@ export default function Portfolio() {
           </div>
         </div>
 
-        {/* Summary Cards */}
-        <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {/* Summary Cards - 6 cards, 3 per row on desktop */}
+        <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Total Value</CardTitle>
@@ -617,29 +618,6 @@ export default function Portfolio() {
               </div>
               <p className="text-xs text-muted-foreground">
                 Cost: {formatPrice(summary?.totalCost || 0)} gp
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Total Profit</CardTitle>
-              {(summary?.totalProfit || 0) >= 0 ? (
-                <TrendingUp className="h-4 w-4 text-green-500" />
-              ) : (
-                <TrendingDown className="h-4 w-4 text-red-500" />
-              )}
-            </CardHeader>
-            <CardContent>
-              <div className={`font-mono text-2xl font-bold ${
-                (summary?.totalProfit || 0) >= 0 ? "text-green-500" : "text-red-500"
-              }`} data-testid="text-total-profit">
-                {(summary?.totalProfit || 0) >= 0 ? "+" : ""}{formatPrice(summary?.totalProfit || 0)} gp
-              </div>
-              <p className={`text-xs ${
-                (summary?.profitPercent || 0) >= 0 ? "text-green-500" : "text-red-500"
-              }`}>
-                {(summary?.profitPercent || 0) >= 0 ? "+" : ""}{(summary?.profitPercent || 0).toFixed(1)}% ROI
               </p>
             </CardContent>
           </Card>
@@ -673,6 +651,74 @@ export default function Portfolio() {
               </p>
             </CardContent>
           </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Unrealized P&L</CardTitle>
+              {(summary?.totalProfit || 0) >= 0 ? (
+                <TrendingUp className="h-4 w-4 text-green-500" />
+              ) : (
+                <TrendingDown className="h-4 w-4 text-red-500" />
+              )}
+            </CardHeader>
+            <CardContent>
+              <div className={`font-mono text-2xl font-bold ${
+                (summary?.totalProfit || 0) >= 0 ? "text-green-500" : "text-red-500"
+              }`} data-testid="text-unrealized-pnl">
+                {(summary?.totalProfit || 0) >= 0 ? "+" : ""}{formatPrice(summary?.totalProfit || 0)} gp
+              </div>
+              <p className={`text-xs ${
+                (summary?.profitPercent || 0) >= 0 ? "text-green-500" : "text-red-500"
+              }`}>
+                {(summary?.profitPercent || 0) >= 0 ? "+" : ""}{(summary?.profitPercent || 0).toFixed(1)}% ROI
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Realized P&L</CardTitle>
+              {(summary?.netRealizedProfit || 0) >= 0 ? (
+                <DollarSign className="h-4 w-4 text-green-500" />
+              ) : (
+                <DollarSign className="h-4 w-4 text-red-500" />
+              )}
+            </CardHeader>
+            <CardContent>
+              <div className={`font-mono text-2xl font-bold ${
+                (summary?.netRealizedProfit || 0) >= 0 ? "text-green-500" : "text-red-500"
+              }`} data-testid="text-realized-pnl">
+                {(summary?.netRealizedProfit || 0) >= 0 ? "+" : ""}{formatPrice(summary?.netRealizedProfit || 0)} gp
+              </div>
+              <p className="text-xs text-muted-foreground">
+                <span className="text-green-500">+{formatPrice(summary?.totalRealizedProfit || 0)}</span>
+                {" / "}
+                <span className="text-red-500">-{formatPrice(summary?.totalRealizedLoss || 0)}</span>
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">Total P&L</CardTitle>
+              {((summary?.totalProfit || 0) + (summary?.netRealizedProfit || 0)) >= 0 ? (
+                <TrendingUp className="h-4 w-4 text-green-500" />
+              ) : (
+                <TrendingDown className="h-4 w-4 text-red-500" />
+              )}
+            </CardHeader>
+            <CardContent>
+              <div className={`font-mono text-2xl font-bold ${
+                ((summary?.totalProfit || 0) + (summary?.netRealizedProfit || 0)) >= 0 ? "text-green-500" : "text-red-500"
+              }`} data-testid="text-total-pnl">
+                {((summary?.totalProfit || 0) + (summary?.netRealizedProfit || 0)) >= 0 ? "+" : ""}
+                {formatPrice((summary?.totalProfit || 0) + (summary?.netRealizedProfit || 0))} gp
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Unrealized + Realized
+              </p>
+            </CardContent>
+          </Card>
         </div>
 
         {/* Portfolio Value Chart */}
@@ -683,6 +729,271 @@ export default function Portfolio() {
             isCreatingSnapshot={createSnapshotMutation.isPending}
           />
         </div>
+
+        {/* Top Performers / Worst Performers Section */}
+        {(summary?.holdingCount || 0) > 0 && (
+          <div className="mb-8 grid gap-6 lg:grid-cols-2" data-testid="section-performers">
+            {/* Top Performers */}
+            <Card className="relative overflow-hidden border-green-500/20 bg-gradient-to-br from-green-500/5 via-transparent to-transparent">
+              <div className="absolute inset-0 bg-gradient-to-r from-green-500/5 to-transparent pointer-events-none" />
+              <CardHeader className="relative flex flex-row items-center gap-3 flex-wrap">
+                <Medal className="h-5 w-5 text-green-500" />
+                <CardTitle className="text-lg">Top Performers</CardTitle>
+              </CardHeader>
+              <CardContent className="relative">
+                {(() => {
+                  const topPerformers = [...(summary?.holdings || [])]
+                    .filter(h => h.profitPercent > 0)
+                    .sort((a, b) => b.profitPercent - a.profitPercent)
+                    .slice(0, 5);
+                  
+                  if (topPerformers.length === 0) {
+                    return (
+                      <div className="text-center py-6 text-muted-foreground">
+                        No profitable holdings yet
+                      </div>
+                    );
+                  }
+                  
+                  return (
+                    <div className="space-y-3">
+                      {topPerformers.map((holding, idx) => (
+                        <div 
+                          key={holding.id}
+                          className="flex items-center gap-3 rounded-lg bg-card/50 border border-green-500/10 p-3"
+                          data-testid={`top-performer-${idx}`}
+                        >
+                          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-green-500/20 text-xs font-bold text-green-500">
+                            {idx + 1}
+                          </div>
+                          <ItemIcon
+                            itemName={holding.itemName}
+                            itemIcon={holding.itemIcon ?? undefined}
+                            size="sm"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium truncate">{holding.itemName}</div>
+                          </div>
+                          <div className="text-right">
+                            <div className="font-mono font-semibold text-green-500">
+                              +{holding.profitPercent.toFixed(1)}%
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              +{formatPrice(holding.profit)} gp
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </CardContent>
+            </Card>
+
+            {/* Worst Performers */}
+            <Card className="relative overflow-hidden border-red-500/20 bg-gradient-to-br from-red-500/5 via-transparent to-transparent">
+              <div className="absolute inset-0 bg-gradient-to-r from-red-500/5 to-transparent pointer-events-none" />
+              <CardHeader className="relative flex flex-row items-center gap-3 flex-wrap">
+                <TrendingDown className="h-5 w-5 text-red-500" />
+                <CardTitle className="text-lg">Worst Performers</CardTitle>
+              </CardHeader>
+              <CardContent className="relative">
+                {(() => {
+                  const worstPerformers = [...(summary?.holdings || [])]
+                    .filter(h => h.profitPercent < 0)
+                    .sort((a, b) => a.profitPercent - b.profitPercent)
+                    .slice(0, 5);
+                  
+                  if (worstPerformers.length === 0) {
+                    return (
+                      <div className="text-center py-6 text-muted-foreground">
+                        No losing holdings
+                      </div>
+                    );
+                  }
+                  
+                  return (
+                    <div className="space-y-3">
+                      {worstPerformers.map((holding, idx) => (
+                        <div 
+                          key={holding.id}
+                          className="flex items-center gap-3 rounded-lg bg-card/50 border border-red-500/10 p-3"
+                          data-testid={`worst-performer-${idx}`}
+                        >
+                          <div className="flex h-6 w-6 items-center justify-center rounded-full bg-red-500/20 text-xs font-bold text-red-500">
+                            {idx + 1}
+                          </div>
+                          <ItemIcon
+                            itemName={holding.itemName}
+                            itemIcon={holding.itemIcon ?? undefined}
+                            size="sm"
+                          />
+                          <div className="flex-1 min-w-0">
+                            <div className="font-medium truncate">{holding.itemName}</div>
+                          </div>
+                          <div className="text-right">
+                            <div className="font-mono font-semibold text-red-500">
+                              {holding.profitPercent.toFixed(1)}%
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                              {formatPrice(holding.profit)} gp
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })()}
+              </CardContent>
+            </Card>
+          </div>
+        )}
+
+        {/* Allocation Overview */}
+        {(summary?.holdingCount || 0) > 0 && (
+          <Card className="mb-8" data-testid="section-allocation">
+            <CardHeader className="flex flex-row items-center gap-3 flex-wrap">
+              <PieChart className="h-5 w-5 text-muted-foreground" />
+              <CardTitle className="text-lg">Allocation by Category</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {(() => {
+                const categoryAllocation: Record<string, { name: string; color: string; value: number; allocation: number }> = {};
+                
+                summary?.holdings.forEach(holding => {
+                  const catId = holding.categoryId || "uncategorized";
+                  const cat = categories.find(c => c.id === catId);
+                  const catName = cat?.name || "Uncategorized";
+                  const catColor = cat?.color || "#6b7280";
+                  
+                  if (!categoryAllocation[catId]) {
+                    categoryAllocation[catId] = { name: catName, color: catColor, value: 0, allocation: 0 };
+                  }
+                  categoryAllocation[catId].value += holding.value;
+                  categoryAllocation[catId].allocation += holding.allocation;
+                });
+                
+                const sortedCategories = Object.entries(categoryAllocation)
+                  .map(([id, data]) => ({ id, ...data }))
+                  .sort((a, b) => b.allocation - a.allocation);
+                
+                return (
+                  <div className="space-y-4">
+                    {sortedCategories.map(cat => (
+                      <div key={cat.id} className="space-y-1" data-testid={`allocation-${cat.id}`}>
+                        <div className="flex items-center justify-between text-sm">
+                          <div className="flex items-center gap-2">
+                            <span className="h-3 w-3 rounded-full" style={{ backgroundColor: cat.color }} />
+                            <span className="font-medium">{cat.name}</span>
+                          </div>
+                          <div className="flex items-center gap-4 text-muted-foreground">
+                            <span className="font-mono">{formatPrice(cat.value)} gp</span>
+                            <span className="font-mono w-16 text-right">{cat.allocation.toFixed(1)}%</span>
+                          </div>
+                        </div>
+                        <div className="h-2 w-full rounded-full bg-muted overflow-hidden">
+                          <div 
+                            className="h-full rounded-full transition-all duration-500"
+                            style={{ 
+                              width: `${Math.max(cat.allocation, 0.5)}%`, 
+                              backgroundColor: cat.color 
+                            }}
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Investment Stats Row */}
+        {(summary?.holdingCount || 0) > 0 && (
+          <div className="mb-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4" data-testid="section-investment-stats">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Average Position</CardTitle>
+                <Target className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="font-mono text-xl font-bold" data-testid="text-avg-position">
+                  {formatPrice(Math.round((summary?.totalValue || 0) / (summary?.holdingCount || 1)))} gp
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Per holding
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Largest Position</CardTitle>
+                <Award className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                {(() => {
+                  const largest = summary?.holdings.reduce((max, h) => h.allocation > max.allocation ? h : max, summary?.holdings[0]);
+                  return (
+                    <>
+                      <div className="font-mono text-xl font-bold" data-testid="text-largest-position">
+                        {largest?.allocation.toFixed(1)}%
+                      </div>
+                      <p className="text-xs text-muted-foreground truncate" title={largest?.itemName}>
+                        {largest?.itemName || "N/A"}
+                      </p>
+                    </>
+                  );
+                })()}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Total Categories</CardTitle>
+                <Layers className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-xl font-bold" data-testid="text-total-categories">
+                  {categories.length}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Portfolio groups
+                </p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium text-muted-foreground">Diversification</CardTitle>
+                <Percent className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                {(() => {
+                  const holdings = summary?.holdings || [];
+                  const sumOfSquares = holdings.reduce((sum, h) => sum + Math.pow(h.allocation / 100, 2), 0);
+                  const herfindahlIndex = sumOfSquares;
+                  const normalizedScore = holdings.length > 0 
+                    ? Math.round((1 - herfindahlIndex) / (1 - 1 / holdings.length) * 100) || 0
+                    : 0;
+                  const clampedScore = Math.max(0, Math.min(100, normalizedScore));
+                  
+                  return (
+                    <>
+                      <div className="text-xl font-bold" data-testid="text-diversification-score">
+                        {clampedScore}%
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {clampedScore >= 70 ? "Well diversified" : clampedScore >= 40 ? "Moderately diversified" : "Concentrated"}
+                      </p>
+                    </>
+                  );
+                })()}
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
         {/* Category Filter */}
         {categories.length > 0 && (
