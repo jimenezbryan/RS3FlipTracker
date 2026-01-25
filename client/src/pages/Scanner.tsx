@@ -66,8 +66,40 @@ interface ScannerItem {
 
 interface ProcessedScannerItem extends ScannerItem {
   volumeRatio: number;
+  volumeScore: number;
+  momentumScore: number;
+  valueScore: number;
+  riskScore: number;
+  riskRewardRatio: number;
+  tradeScore: number;
   signals: string[];
 }
+
+const SIGNAL_PRIORITY: Record<string, number> = {
+  "Smart Money": 1,
+  "Deep Value": 1,
+  "Favorable R/R": 1,
+  "Accumulation": 2,
+  "Oversold": 2,
+  "Strong Trend": 2,
+  "Good Value": 3,
+  "High Reward": 3,
+  "Overbought": 3,
+  "Distribution": 3,
+};
+
+const SIGNAL_STYLES: Record<string, string> = {
+  "Smart Money": "bg-amber-500/20 text-amber-400 border-amber-500/30",
+  "Deep Value": "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
+  "Favorable R/R": "bg-cyan-500/20 text-cyan-400 border-cyan-500/30",
+  "Accumulation": "bg-purple-500/20 text-purple-400 border-purple-500/30",
+  "Oversold": "bg-blue-500/20 text-blue-400 border-blue-500/30",
+  "Overbought": "bg-orange-500/20 text-orange-400 border-orange-500/30",
+  "Strong Trend": "bg-green-500/20 text-green-400 border-green-500/30",
+  "Good Value": "bg-teal-500/20 text-teal-400 border-teal-500/30",
+  "High Reward": "bg-lime-500/20 text-lime-400 border-lime-500/30",
+  "Distribution": "bg-red-500/20 text-red-400 border-red-500/30",
+};
 
 interface Favorite {
   id: string;
@@ -82,7 +114,7 @@ interface PortfolioCategory {
   color?: string;
 }
 
-type SortKey = keyof ScannerItem;
+type SortKey = keyof ScannerItem | "tradeScore" | "volumeScore" | "momentumScore" | "valueScore" | "riskScore";
 type SortDirection = "asc" | "desc";
 type ViewMode = "compact" | "standard" | "detailed";
 
@@ -251,6 +283,7 @@ export default function Scanner() {
   const [viewMode, setViewMode] = useState<ViewMode>("standard");
   const [watchlistOnly, setWatchlistOnly] = useState(false);
   const [signalsOnly, setSignalsOnly] = useState(false);
+  const [highScoreOnly, setHighScoreOnly] = useState(false);
   const [expandedItemId, setExpandedItemId] = useState<number | null>(null);
   
   const [portfolioDialogOpen, setPortfolioDialogOpen] = useState(false);
@@ -380,30 +413,119 @@ export default function Scanner() {
   );
 
   const processedItems = useMemo((): ProcessedScannerItem[] => {
+    if (items.length === 0) return [];
+    
+    // Calculate global average volume ONCE as baseline
+    const totalVolume = items.reduce((sum, item) => sum + item.volume, 0);
+    const globalAvgVolume = totalVolume / items.length;
+    
     return items.map(item => {
-      const avgVolume = item.volume * 0.7;
-      const volumeRatio = avgVolume > 0 ? item.volume / avgVolume : 0;
       const marginPercent = item.buyPrice > 0 ? (item.margin / item.buyPrice) * 100 : 0;
       
+      // 1. VOLUME ANALYSIS (Institutional Detection)
+      const volumeRatio = globalAvgVolume > 0 ? item.volume / globalAvgVolume : 0;
+      // Score: 0-100 based on how volume compares to average
+      // 2x average = 100, 1x average = 50, 0.5x average = 25
+      const volumeScore = Math.min(100, Math.round(volumeRatio * 50));
+      
+      // 2. MOMENTUM INDICATORS
+      // RSI scoring: Best between 30-70 (healthy), penalize extremes
+      let rsiScore = 0;
+      if (item.rsi >= 30 && item.rsi <= 70) {
+        // Perfect healthy range
+        rsiScore = 100;
+      } else if (item.rsi < 30) {
+        // Oversold - still tradeable but risky
+        rsiScore = Math.max(30, 100 - (30 - item.rsi) * 2);
+      } else {
+        // Overbought - caution
+        rsiScore = Math.max(20, 100 - (item.rsi - 70) * 2);
+      }
+      // Trend weight: up = +20, stable = +10, down = -10
+      const trendWeight = item.trend === "up" ? 20 : item.trend === "stable" ? 10 : -10;
+      const momentumScore = Math.min(100, Math.max(0, Math.round((rsiScore * 0.8) + trendWeight)));
+      
+      // 3. VALUE METRICS
+      let valueScore = 0;
+      if (marginPercent > 5 || item.roi > 8) {
+        valueScore = 100; // Deep Value
+      } else if (marginPercent > 2 || item.roi > 4) {
+        valueScore = 75; // Good Value
+      } else if (marginPercent > 0) {
+        valueScore = 50; // Fair Value
+      } else {
+        valueScore = Math.max(0, 30 + marginPercent * 5); // Negative margin
+      }
+      
+      // 4. RISK/REWARD ANALYSIS
+      const stopLossAmount = item.buyPrice * 0.02; // 2% stop loss assumption
+      const riskRewardRatio = stopLossAmount > 0 ? item.potentialProfit / stopLossAmount : 0;
+      // R/R scoring: ratio > 3 = 100, ratio > 2 = 75, ratio > 1 = 50
+      const riskScore = Math.min(100, Math.max(0, Math.round(riskRewardRatio * 25)));
+      
+      // 5. COMPOSITE TRADE SCORE (weighted average)
+      const tradeScore = Math.round(
+        volumeScore * 0.25 +      // 25% weight on volume
+        momentumScore * 0.25 +    // 25% weight on momentum
+        valueScore * 0.30 +       // 30% weight on value (most important)
+        riskScore * 0.20          // 20% weight on risk/reward
+      );
+      
+      // 6. SIGNAL GENERATION with priority system
       const signals: string[] = [];
       
-      if (marginPercent > 3 && item.volume > 10000) {
-        signals.push("Quick Flip");
-      }
+      // Volume signals (Priority 1-2)
       if (volumeRatio > 2.0) {
-        signals.push("High Volume");
+        signals.push("Smart Money"); // Priority 1 - institutions moving
       }
-      if (item.trend === "down" && item.margin > 0) {
-        signals.push("Undervalued");
+      if (volumeRatio > 1.5 && marginPercent > 0 && (item.trend === "stable" || item.trend === "down")) {
+        signals.push("Accumulation"); // Priority 2 - quiet buying
       }
-      if (item.roi > 5 && item.volume > 5000) {
-        signals.push("Hot Item");
+      if (volumeRatio > 1.5 && marginPercent < 0) {
+        signals.push("Distribution"); // Priority 3 - selling pressure
       }
+      
+      // Momentum signals (Priority 2-3)
+      if (item.rsi < 35) {
+        signals.push("Oversold"); // Priority 2 - buying opportunity
+      }
+      if (item.rsi > 75) {
+        signals.push("Overbought"); // Priority 3 - take profits
+      }
+      if (item.trend === "up" && marginPercent > 2) {
+        signals.push("Strong Trend"); // Priority 2
+      }
+      
+      // Value signals (Priority 1-3)
+      if (marginPercent > 5 || item.roi > 8) {
+        signals.push("Deep Value"); // Priority 1 - exceptional
+      } else if (marginPercent > 2 || item.roi > 4) {
+        signals.push("Good Value"); // Priority 3
+      }
+      
+      // Risk/Reward signals (Priority 1, 3)
+      if (riskRewardRatio > 2) {
+        signals.push("Favorable R/R"); // Priority 1
+      }
+      if (riskRewardRatio > 3) {
+        signals.push("High Reward"); // Priority 3
+      }
+      
+      // Sort signals by priority and take top 3
+      const sortedSignals = signals
+        .sort((a, b) => (SIGNAL_PRIORITY[a] || 99) - (SIGNAL_PRIORITY[b] || 99))
+        .slice(0, 3);
       
       return {
         ...item,
         volumeRatio,
-        signals,
+        volumeScore,
+        momentumScore,
+        valueScore,
+        riskScore,
+        riskRewardRatio,
+        tradeScore,
+        signals: sortedSignals,
       };
     });
   }, [items]);
@@ -512,6 +634,10 @@ export default function Scanner() {
       result = result.filter(item => item.signals.length > 0);
     }
 
+    if (highScoreOnly) {
+      result = result.filter(item => item.tradeScore >= 60);
+    }
+
     if (selectedBuyLimit !== null) {
       result = result.filter(item => item.geLimit === selectedBuyLimit);
     }
@@ -567,7 +693,7 @@ export default function Scanner() {
     });
 
     return result;
-  }, [processedItems, searchQuery, sortKey, sortDirection, f2pOnly, watchlistOnly, signalsOnly, favoriteItemIds, selectedBuyLimit, selectedPriceRange, filters]);
+  }, [processedItems, searchQuery, sortKey, sortDirection, f2pOnly, watchlistOnly, signalsOnly, highScoreOnly, favoriteItemIds, selectedBuyLimit, selectedPriceRange, filters]);
 
   const totalPages = Math.ceil(filteredAndSortedItems.length / ITEMS_PER_PAGE);
   const paginatedItems = filteredAndSortedItems.slice(
@@ -576,15 +702,23 @@ export default function Scanner() {
   );
 
   const stats = useMemo(() => {
-    const highVolumeItems = items.filter(i => i.volume > 1000).length;
-    const opportunities = items.filter(i => i.roi > 5 && i.netProfit > 0).length;
-    const avgRoi = items.length > 0 
-      ? items.reduce((sum, i) => sum + i.roi, 0) / items.length 
+    const highScoreItems = processedItems.filter(i => i.tradeScore > 70).length;
+    const opportunities = processedItems.filter(i => i.roi > 5 && i.netProfit > 0).length;
+    const avgTradeScore = processedItems.length > 0 
+      ? processedItems.reduce((sum, i) => sum + i.tradeScore, 0) / processedItems.length 
+      : 0;
+    const avgRoi = processedItems.length > 0 
+      ? processedItems.reduce((sum, i) => sum + i.roi, 0) / processedItems.length 
       : 0;
     const lastUpdated = dataUpdatedAt ? Math.round((Date.now() - dataUpdatedAt) / 60000) : 0;
     
-    return { highVolumeItems, opportunities, avgRoi, lastUpdated };
-  }, [items, dataUpdatedAt]);
+    return { highScoreItems, opportunities, avgTradeScore, avgRoi, lastUpdated };
+  }, [processedItems, dataUpdatedAt]);
+
+  const highScoreCount = useMemo(() => 
+    processedItems.filter(i => i.tradeScore >= 60).length,
+    [processedItems]
+  );
 
   const expandedItem = expandedItemId ? items.find(i => i.id === expandedItemId) : null;
   const relatedItems = expandedItem ? getRelatedItems(expandedItem) : [];
@@ -671,11 +805,11 @@ export default function Scanner() {
       </div>
 
       {/* Stats Dashboard */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6" data-testid="stats-dashboard">
         <StatCard label="Total Items" value={items.length.toLocaleString()} icon={BarChart3} accent="cyan" />
-        <StatCard label="High Volume" value={stats.highVolumeItems} icon={TrendingUp} accent="purple" />
+        <StatCard label="Trade Signals" value={stats.highScoreItems} icon={TrendingUp} accent="purple" />
         <StatCard label="Opportunities" value={stats.opportunities} icon={Target} accent="green" />
-        <StatCard label="Avg ROI" value={`${stats.avgRoi.toFixed(1)}%`} icon={Zap} accent="yellow" />
+        <StatCard label="Avg Score" value={Math.round(stats.avgTradeScore)} icon={Zap} accent="yellow" />
         <StatCard label="Last Updated" value={`${stats.lastUpdated}m ago`} icon={Clock} accent="cyan" />
       </div>
 
@@ -746,6 +880,26 @@ export default function Scanner() {
             Show Signals Only
             <Badge variant="outline" className="ml-1 text-xs border-emerald-500/50 text-emerald-400" data-testid="badge-signals-count">
               {signalsCount}
+            </Badge>
+          </Label>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id="high-score-only"
+            checked={highScoreOnly}
+            onCheckedChange={(checked) => {
+              setHighScoreOnly(checked === true);
+              setCurrentPage(1);
+            }}
+            className="border-slate-600"
+            data-testid="checkbox-high-score-only"
+          />
+          <Label htmlFor="high-score-only" className="text-sm cursor-pointer text-muted-foreground flex items-center gap-1">
+            <Target className="h-3 w-3" />
+            High Score Only
+            <Badge variant="outline" className="ml-1 text-xs border-cyan-500/50 text-cyan-400" data-testid="badge-high-score-count">
+              {highScoreCount}
             </Badge>
           </Label>
         </div>
@@ -889,6 +1043,13 @@ export default function Scanner() {
                 >
                   ITEM <SortIcon columnKey="name" />
                 </TableHead>
+                <TableHead 
+                  className="cursor-pointer select-none text-muted-foreground hover:text-foreground text-center"
+                  onClick={() => handleSort("tradeScore" as SortKey)}
+                  data-testid="header-score"
+                >
+                  SCORE <SortIcon columnKey={"tradeScore" as SortKey} />
+                </TableHead>
                 <TableHead className="text-center text-muted-foreground w-12">TREND</TableHead>
                 <TableHead 
                   className="cursor-pointer select-none text-muted-foreground hover:text-foreground text-right"
@@ -1007,6 +1168,36 @@ export default function Scanner() {
                           <span className="truncate max-w-[200px]">{item.name}</span>
                         </div>
                       </TableCell>
+                      <TableCell className="text-center py-2" data-testid={`cell-score-${item.id}`}>
+                        <div 
+                          className="relative group inline-block"
+                          title={`Vol: ${item.volumeScore} | Mom: ${item.momentumScore} | Val: ${item.valueScore} | Risk: ${item.riskScore}`}
+                        >
+                          <div 
+                            className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold border-2 ${
+                              item.tradeScore >= 80 
+                                ? "bg-emerald-500/20 border-emerald-500/50 text-emerald-400" 
+                                : item.tradeScore >= 60 
+                                  ? "bg-cyan-500/20 border-cyan-500/50 text-cyan-400"
+                                  : item.tradeScore >= 40
+                                    ? "bg-yellow-500/20 border-yellow-500/50 text-yellow-400"
+                                    : "bg-red-500/20 border-red-500/50 text-red-400"
+                            }`}
+                            data-testid={`badge-score-${item.id}`}
+                          >
+                            {item.tradeScore}
+                          </div>
+                          <div className="invisible group-hover:visible absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 text-xs bg-slate-800 border border-slate-700 rounded-lg shadow-xl whitespace-nowrap">
+                            <div className="text-muted-foreground mb-1">Score Breakdown:</div>
+                            <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
+                              <span>Volume:</span><span className="text-cyan-400">{item.volumeScore}</span>
+                              <span>Momentum:</span><span className="text-purple-400">{item.momentumScore}</span>
+                              <span>Value:</span><span className="text-emerald-400">{item.valueScore}</span>
+                              <span>Risk/Reward:</span><span className="text-yellow-400">{item.riskScore}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </TableCell>
                       <TableCell className="text-center py-2">
                         <Sparkline trend={item.trend} price={item.buyPrice} />
                       </TableCell>
@@ -1069,31 +1260,23 @@ export default function Scanner() {
                       )}
                       <TableCell className="py-2" data-testid={`cell-signals-${item.id}`}>
                         <div className="flex flex-wrap gap-1 justify-center">
-                          {item.signals.map((signal) => {
-                            const signalStyles: Record<string, string> = {
-                              "Quick Flip": "bg-cyan-500/20 text-cyan-400 border-cyan-500/30",
-                              "High Volume": "bg-orange-500/20 text-orange-400 border-orange-500/30",
-                              "Undervalued": "bg-purple-500/20 text-purple-400 border-purple-500/30",
-                              "Hot Item": "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
-                            };
-                            return (
-                              <Badge 
-                                key={signal} 
-                                variant="outline" 
-                                className={`text-xs ${signalStyles[signal] || ""}`}
-                                data-testid={`badge-signal-${signal.toLowerCase().replace(/\s/g, '-')}-${item.id}`}
-                              >
-                                {signal}
-                              </Badge>
-                            );
-                          })}
+                          {item.signals.map((signal) => (
+                            <Badge 
+                              key={signal} 
+                              variant="outline" 
+                              className={`text-xs ${SIGNAL_STYLES[signal] || "bg-slate-500/20 text-slate-400 border-slate-500/30"}`}
+                              data-testid={`badge-signal-${signal.toLowerCase().replace(/\s/g, '-')}-${item.id}`}
+                            >
+                              {signal}
+                            </Badge>
+                          ))}
                         </div>
                       </TableCell>
                     </TableRow>
                     
                     {isExpanded && (
                       <TableRow className="border-slate-800 bg-slate-900/80" data-testid={`row-expanded-${item.id}`}>
-                        <TableCell colSpan={viewMode === "detailed" ? 17 : viewMode === "compact" ? 14 : 15} className="p-0">
+                        <TableCell colSpan={viewMode === "detailed" ? 18 : viewMode === "compact" ? 15 : 16} className="p-0">
                           <div className="p-4 space-y-4 border-l-2 border-cyan-500/50">
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                               {/* Price Chart */}
