@@ -9,7 +9,7 @@ import { processScreenshot, matchItemsToGE } from "./ocr";
 import { analyzeRS3Screenshot } from "./ai-vision";
 import { analyzeUserTradingProfile, getPersonalizedRecommendations } from "./ai-recommendations";
 import { calculateFlipTax } from "@shared/taxCalculator";
-import { sendFlipToDiscord, sendFlipUpdateToDiscord, sendGoalAchievementToDiscord, type GoalAchievement } from "./discord";
+import { sendFlipToDiscord, sendFlipUpdateToDiscord, sendGoalAchievementToDiscord, sendDailySummaryToDiscord, type GoalAchievement } from "./discord";
 import { startOfDay, startOfWeek, startOfMonth, isAfter } from "date-fns";
 
 const upload = multer({ 
@@ -455,7 +455,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.log("[FlipCreate] Checking for completed flip - sellPrice:", newFlip.sellPrice, "sellDate:", newFlip.sellDate);
       if (newFlip.sellPrice && newFlip.sellDate && user) {
         console.log("[FlipCreate] Flip is completed, running goal achievement check...");
-        achievements = await checkGoalAchievements(userId, user.username || user.email || "Trader", previousProfits);
+        achievements = await checkGoalAchievements(userId, user.firstName || user.email || "Trader", previousProfits);
         
         // Send Discord notifications for each achievement
         for (const achievement of achievements) {
@@ -550,7 +550,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (isNewlyCompleted && flipOwner) {
         achievements = await checkGoalAchievements(
           flipOwnerId, 
-          flipOwner.username || flipOwner.email || "Trader", 
+          flipOwner.firstName || flipOwner.email || "Trader", 
           previousProfits
         );
         
@@ -793,8 +793,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const buyPrice = Number(flip.buyPrice);
         const sellPrice = Number(flip.sellPrice!);
         const profit = (sellPrice - buyPrice) * flip.quantity;
-        const tax = calculateFlipTax(flip.itemName, sellPrice, flip.quantity);
-        const netProfit = profit - tax;
+        const taxDetails = calculateFlipTax(sellPrice, buyPrice, flip.quantity, flip.itemId ? Number(flip.itemId) : undefined, flip.itemName);
+        const netProfit = taxDetails.profit;
         const roi = buyPrice > 0 ? (netProfit / (buyPrice * flip.quantity)) * 100 : 0;
         const tradeDate = flip.sellDate || flip.buyDate;
 
@@ -983,15 +983,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const profits = itemFlips.map(f => {
         const buyPrice = Number(f.buyPrice);
         const sellPrice = Number(f.sellPrice!);
-        const gross = (sellPrice - buyPrice) * f.quantity;
-        const tax = calculateFlipTax(f.itemName, sellPrice, f.quantity);
-        return gross - tax;
+        const td = calculateFlipTax(sellPrice, buyPrice, f.quantity, f.itemId ? Number(f.itemId) : undefined, f.itemName);
+        return td.profit;
       });
       const rois = itemFlips.map(f => {
         const buyPrice = Number(f.buyPrice);
         const sellPrice = Number(f.sellPrice!);
-        const netProfit = (sellPrice - buyPrice) * f.quantity - calculateFlipTax(f.itemName, sellPrice, f.quantity);
-        return buyPrice > 0 ? (netProfit / (buyPrice * f.quantity)) * 100 : 0;
+        const td = calculateFlipTax(sellPrice, buyPrice, f.quantity, f.itemId ? Number(f.itemId) : undefined, f.itemName);
+        return buyPrice > 0 ? (td.profit / (buyPrice * f.quantity)) * 100 : 0;
       });
 
       // Get GE price
@@ -1230,7 +1229,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             goalType,
             targetAmount: target,
             currentProfit,
-            username: user?.username || user?.email || "Trader",
+            username: user?.firstName || user?.email || "Trader",
           });
         }
       }
@@ -2562,6 +2561,147 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Error completing run:", error);
       res.status(500).json({ error: "Failed to complete run" });
     }
+  });
+
+  // Market Movers cache
+  let marketMoversCache: any = null;
+  let marketMoversCacheTime = 0;
+  const MARKET_MOVERS_CACHE_TTL = 5 * 60 * 1000;
+
+  app.get("/api/market-movers", isAuthenticated, async (req: any, res) => {
+    try {
+      const now = Date.now();
+      if (marketMoversCache && now - marketMoversCacheTime < MARKET_MOVERS_CACHE_TTL) {
+        return res.json(marketMoversCache);
+      }
+
+      const dumpResponse = await fetch("https://chisel.weirdgloop.org/gazproj/gazbot/rs_dump.json", {
+        headers: { "User-Agent": "RS3FlipTracker/1.0 (Replit App; contact@replit.com)" },
+      });
+      if (!dumpResponse.ok) {
+        return res.status(502).json({ error: "Failed to fetch GE dump" });
+      }
+      const dump = await dumpResponse.json();
+
+      const items: Array<{ itemId: number; itemName: string; currentPrice: number; volume: number; members: boolean }> = [];
+      for (const [key, value] of Object.entries(dump)) {
+        if (key.startsWith("%")) continue;
+        const itemData = value as any;
+        const id = parseInt(key);
+        if (isNaN(id) || !itemData.name || !itemData.price || itemData.price < 100) continue;
+        items.push({
+          itemId: id,
+          itemName: itemData.name,
+          currentPrice: itemData.price,
+          volume: itemData.volume || 0,
+          members: !!itemData.members,
+        });
+      }
+
+      items.sort((a, b) => (b.volume || 0) - (a.volume || 0));
+      const topItems = items.slice(0, 100);
+
+      const historyResults = await Promise.allSettled(
+        topItems.map(async (item) => {
+          const resp = await fetch(
+            `https://api.weirdgloop.org/exchange/history/rs/last90d?id=${item.itemId}`,
+            { headers: { "User-Agent": "RS3FlipTracker/1.0 (Replit App; contact@replit.com)" } }
+          );
+          if (!resp.ok) return { itemId: item.itemId, history: [] };
+          const data = await resp.json();
+          const history = data[item.itemId.toString()] || [];
+          return { itemId: item.itemId, history };
+        })
+      );
+
+      const historyMap = new Map<number, any[]>();
+      for (const result of historyResults) {
+        if (result.status === "fulfilled") {
+          historyMap.set(result.value.itemId, result.value.history);
+        }
+      }
+
+      const movers = topItems.map((item) => {
+        const rawHistory = historyMap.get(item.itemId) || [];
+        const sortedHistory = [...rawHistory].sort(
+          (a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+        );
+
+        let price24h = item.currentPrice;
+        let price7d = item.currentPrice;
+
+        if (sortedHistory.length > 0) {
+          const nowMs = Date.now();
+          const day1Ago = nowMs - 86400000;
+          const day7Ago = nowMs - 7 * 86400000;
+
+          let closest24h = Infinity;
+          let closest7d = Infinity;
+
+          for (const entry of sortedHistory) {
+            const ts = new Date(entry.timestamp).getTime();
+            const price = entry.price;
+            if (!ts || !price) continue;
+
+            const diff24h = Math.abs(ts - day1Ago);
+            if (diff24h < closest24h) {
+              closest24h = diff24h;
+              price24h = price;
+            }
+
+            const diff7d = Math.abs(ts - day7Ago);
+            if (diff7d < closest7d) {
+              closest7d = diff7d;
+              price7d = price;
+            }
+          }
+        }
+
+        const change24h = item.currentPrice - price24h;
+        const change7d = item.currentPrice - price7d;
+
+        return {
+          ...item,
+          price24hAgo: price24h,
+          price7dAgo: price7d,
+          change24h,
+          change7d,
+          changePercent24h: price24h > 0 ? ((change24h / price24h) * 100) : 0,
+          changePercent7d: price7d > 0 ? ((change7d / price7d) * 100) : 0,
+        };
+      });
+
+      const gainers = [...movers]
+        .filter((m) => m.changePercent24h > 0)
+        .sort((a, b) => b.changePercent24h - a.changePercent24h)
+        .slice(0, 20);
+      const losers = [...movers]
+        .filter((m) => m.changePercent24h < 0)
+        .sort((a, b) => a.changePercent24h - b.changePercent24h)
+        .slice(0, 20);
+      const mostActive = [...movers]
+        .sort((a, b) => (b.volume || 0) - (a.volume || 0))
+        .slice(0, 20);
+
+      const result = { gainers, losers, mostActive, timestamp: Date.now() };
+      marketMoversCache = result;
+      marketMoversCacheTime = now;
+
+      res.json(result);
+    } catch (error) {
+      console.error("Market movers error:", error);
+      res.status(500).json({ error: "Failed to fetch market movers" });
+    }
+  });
+
+  app.post("/api/discord/daily-summary", isAuthenticated, async (req: any, res) => {
+    const userId = req.user.claims.sub;
+    const result = await sendDailySummaryToDiscord(userId, storage);
+    res.json({ success: result });
+  });
+
+  app.get("/api/discord/status", isAuthenticated, async (req: any, res) => {
+    res.json({ configured: !!process.env.DISCORD_WEBHOOK_URL });
   });
 
   const httpServer = createServer(app);

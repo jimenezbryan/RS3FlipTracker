@@ -1,8 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import type { Flip } from "@shared/schema";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { TrendingUp, TrendingDown, DollarSign, Package, Percent, Calendar, BarChart3 } from "lucide-react";
-import { useMemo } from "react";
+import { Button } from "@/components/ui/button";
+import { TrendingUp, TrendingDown, DollarSign, Package, Percent, Calendar, BarChart3, MessageSquare } from "lucide-react";
+import { useMemo, useState } from "react";
+import { apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { 
   AreaChart, 
   Area, 
@@ -15,7 +18,10 @@ import {
   CartesianGrid,
   PieChart,
   Pie,
-  Cell
+  Cell,
+  LineChart,
+  Line,
+  ReferenceLine
 } from "recharts";
 import { format, subDays, startOfDay, addDays } from "date-fns";
 import { calculateFlipTax } from "@shared/taxCalculator";
@@ -43,6 +49,29 @@ export default function Stats() {
   const { data: flips = [], isLoading } = useQuery<Flip[]>({
     queryKey: ["/api/flips"],
   });
+
+  const { data: discordStatus } = useQuery<{ configured: boolean }>({
+    queryKey: ["/api/discord/status"],
+  });
+
+  const [sendingDiscord, setSendingDiscord] = useState(false);
+  const { toast } = useToast();
+
+  const handleSendSummary = async () => {
+    setSendingDiscord(true);
+    try {
+      const res = await apiRequest("POST", "/api/discord/daily-summary");
+      const data = await res.json();
+      if (data.success) {
+        toast({ title: "Summary sent to Discord!" });
+      } else {
+        toast({ title: "Failed to send", description: "Discord webhook may not be configured", variant: "destructive" });
+      }
+    } catch (e) {
+      toast({ title: "Error sending summary", variant: "destructive" });
+    }
+    setSendingDiscord(false);
+  };
 
   const stats = useMemo(() => {
     const completedFlips = flips.filter(f => f.sellDate !== null && f.sellDate !== undefined);
@@ -155,6 +184,48 @@ export default function Stats() {
     });
 
     return ranges.filter(r => r.count > 0);
+  }, [stats.completedFlips]);
+
+  const historicalPerformance = useMemo(() => {
+    const sorted = stats.completedFlips
+      .filter(f => f.sellDate)
+      .sort((a, b) => new Date(a.sellDate!).getTime() - new Date(b.sellDate!).getTime());
+
+    let cumProfit = 0;
+    const equityCurve = sorted.map((f, i) => {
+      const profit = calculateProfit(f) ?? 0;
+      cumProfit += profit;
+      return {
+        trade: i + 1,
+        date: format(new Date(f.sellDate!), "MMM d"),
+        cumProfit,
+      };
+    });
+
+    const winRateTrend: { trade: number; date: string; winRate: number }[] = [];
+    const roiEvolution: { trade: number; date: string; avgROI: number }[] = [];
+
+    for (let i = 0; i < sorted.length; i++) {
+      const windowStart = Math.max(0, i - 9);
+      const window = sorted.slice(windowStart, i + 1);
+      const wins = window.filter(f => (calculateProfit(f) ?? 0) > 0).length;
+      const winRate = (wins / window.length) * 100;
+      const avgROI = window.reduce((sum, f) => sum + (calculateROI(f) ?? 0), 0) / window.length;
+
+      winRateTrend.push({
+        trade: i + 1,
+        date: format(new Date(sorted[i].sellDate!), "MMM d"),
+        winRate: Math.round(winRate * 10) / 10,
+      });
+
+      roiEvolution.push({
+        trade: i + 1,
+        date: format(new Date(sorted[i].sellDate!), "MMM d"),
+        avgROI: Math.round(avgROI * 100) / 100,
+      });
+    }
+
+    return { equityCurve, winRateTrend, roiEvolution };
   }, [stats.completedFlips]);
 
   const formatPrice = (price: number) => {
@@ -511,6 +582,207 @@ export default function Stats() {
                   </tbody>
                 </table>
               </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <div className="mt-8 mb-8">
+          <h2 className="text-xl font-bold mb-4 flex items-center gap-2">
+            <TrendingUp className="h-5 w-5" />
+            Historical Performance
+          </h2>
+          <div className="grid gap-6 lg:grid-cols-1 mb-6">
+            <Card data-testid="chart-equity-curve">
+              <CardHeader className="pb-4">
+                <CardTitle>Equity Curve (Cumulative Profit)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {historicalPerformance.equityCurve.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    No completed flips yet
+                  </div>
+                ) : (
+                  <div className="h-72">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={historicalPerformance.equityCurve}>
+                        <defs>
+                          <linearGradient id="equityGradientGreen" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="hsl(140 70% 50%)" stopOpacity={0.4}/>
+                            <stop offset="95%" stopColor="hsl(140 70% 50%)" stopOpacity={0.05}/>
+                          </linearGradient>
+                          <linearGradient id="equityGradientRed" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="hsl(0 70% 50%)" stopOpacity={0.4}/>
+                            <stop offset="95%" stopColor="hsl(0 70% 50%)" stopOpacity={0.05}/>
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                        <XAxis
+                          dataKey="date"
+                          tick={{ fontSize: 10 }}
+                          tickLine={false}
+                          axisLine={false}
+                          interval="preserveStartEnd"
+                        />
+                        <YAxis
+                          tick={{ fontSize: 10 }}
+                          tickLine={false}
+                          axisLine={false}
+                          tickFormatter={(v) => formatPrice(v)}
+                        />
+                        <Tooltip
+                          formatter={(value: number) => [`${formatPrice(value)} gp`, "Cumulative Profit"]}
+                          contentStyle={{
+                            backgroundColor: "hsl(var(--card))",
+                            border: "1px solid hsl(var(--border))",
+                            borderRadius: "8px",
+                          }}
+                        />
+                        <ReferenceLine y={0} stroke="hsl(var(--muted-foreground))" strokeDasharray="3 3" />
+                        <Area
+                          type="monotone"
+                          dataKey="cumProfit"
+                          stroke={historicalPerformance.equityCurve[historicalPerformance.equityCurve.length - 1]?.cumProfit >= 0 ? "hsl(140 70% 50%)" : "hsl(0 70% 50%)"}
+                          fill={historicalPerformance.equityCurve[historicalPerformance.equityCurve.length - 1]?.cumProfit >= 0 ? "url(#equityGradientGreen)" : "url(#equityGradientRed)"}
+                          strokeWidth={2}
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+
+          <div className="grid gap-6 lg:grid-cols-2 mb-6">
+            <Card data-testid="chart-win-rate-trend">
+              <CardHeader className="pb-4">
+                <CardTitle>Win Rate Trend (Rolling 10-Trade)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {historicalPerformance.winRateTrend.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    No completed flips yet
+                  </div>
+                ) : (
+                  <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={historicalPerformance.winRateTrend}>
+                        <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                        <XAxis
+                          dataKey="date"
+                          tick={{ fontSize: 10 }}
+                          tickLine={false}
+                          axisLine={false}
+                          interval="preserveStartEnd"
+                        />
+                        <YAxis
+                          tick={{ fontSize: 10 }}
+                          tickLine={false}
+                          axisLine={false}
+                          domain={[0, 100]}
+                          tickFormatter={(v) => `${v}%`}
+                        />
+                        <Tooltip
+                          formatter={(value: number) => [`${value}%`, "Win Rate"]}
+                          contentStyle={{
+                            backgroundColor: "hsl(var(--card))",
+                            border: "1px solid hsl(var(--border))",
+                            borderRadius: "8px",
+                          }}
+                        />
+                        <ReferenceLine y={50} stroke="hsl(var(--muted-foreground))" strokeDasharray="3 3" label={{ value: "50%", position: "right", fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
+                        <Line
+                          type="monotone"
+                          dataKey="winRate"
+                          stroke="hsl(185 70% 50%)"
+                          strokeWidth={2}
+                          dot={false}
+                          activeDot={{ r: 4, fill: "hsl(185 70% 50%)" }}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card data-testid="chart-roi-evolution">
+              <CardHeader className="pb-4">
+                <CardTitle>ROI Evolution (Rolling 10-Trade Avg)</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {historicalPerformance.roiEvolution.length === 0 ? (
+                  <div className="text-center py-8 text-muted-foreground">
+                    No completed flips yet
+                  </div>
+                ) : (
+                  <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={historicalPerformance.roiEvolution}>
+                        <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                        <XAxis
+                          dataKey="date"
+                          tick={{ fontSize: 10 }}
+                          tickLine={false}
+                          axisLine={false}
+                          interval="preserveStartEnd"
+                        />
+                        <YAxis
+                          tick={{ fontSize: 10 }}
+                          tickLine={false}
+                          axisLine={false}
+                          tickFormatter={(v) => `${v}%`}
+                        />
+                        <Tooltip
+                          formatter={(value: number) => [`${value}%`, "Avg ROI"]}
+                          contentStyle={{
+                            backgroundColor: "hsl(var(--card))",
+                            border: "1px solid hsl(var(--border))",
+                            borderRadius: "8px",
+                          }}
+                        />
+                        <ReferenceLine y={0} stroke="hsl(var(--muted-foreground))" strokeDasharray="3 3" label={{ value: "0%", position: "right", fontSize: 10, fill: "hsl(var(--muted-foreground))" }} />
+                        <Line
+                          type="monotone"
+                          dataKey="avgROI"
+                          stroke="hsl(270 70% 60%)"
+                          strokeWidth={2}
+                          dot={false}
+                          activeDot={{ r: 4, fill: "hsl(270 70% 60%)" }}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+
+        <Card className="mb-8" data-testid="card-discord-summary">
+          <CardHeader className="pb-4">
+            <CardTitle className="flex items-center gap-2">
+              <MessageSquare className="h-5 w-5" />
+              Discord Integration
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-center gap-4 flex-wrap">
+              <p className="text-sm text-muted-foreground">
+                Send today's trading summary to your Discord channel
+              </p>
+              <Button
+                onClick={handleSendSummary}
+                disabled={sendingDiscord}
+                data-testid="button-send-discord-summary"
+              >
+                {sendingDiscord ? "Sending..." : "Send Daily Summary"}
+              </Button>
+            </div>
+            {discordStatus?.configured === false && (
+              <p className="text-xs text-amber-500 mt-2">
+                Discord webhook not configured. Add DISCORD_WEBHOOK_URL to your secrets.
+              </p>
             )}
           </CardContent>
         </Card>

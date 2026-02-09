@@ -1,5 +1,6 @@
 import type { Flip } from "@shared/schema";
 import { formatGpShorthand } from "@shared/gpParser";
+import type { IStorage } from "./storage";
 
 interface DiscordEmbed {
   title: string;
@@ -238,6 +239,84 @@ export async function sendFlipUpdateToDiscord(oldFlip: Flip, newFlip: Flip): Pro
     return true;
   } catch (error) {
     console.error("[Discord] Error sending webhook:", error);
+    return false;
+  }
+}
+
+export async function sendDailySummaryToDiscord(userId: string, storage: IStorage): Promise<boolean> {
+  const webhookUrl = process.env.DISCORD_WEBHOOK_URL;
+  if (!webhookUrl) return false;
+
+  try {
+    const flips = await storage.getFlips(userId);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const todaysFlips = flips.filter(f => {
+      if (!f.sellDate) return false;
+      const sellDate = new Date(f.sellDate);
+      sellDate.setHours(0, 0, 0, 0);
+      return sellDate.getTime() === today.getTime();
+    });
+
+    const todaysOpened = flips.filter(f => {
+      const buyDate = new Date(f.buyDate);
+      buyDate.setHours(0, 0, 0, 0);
+      return buyDate.getTime() === today.getTime();
+    });
+
+    let totalProfit = 0;
+    let wins = 0;
+    let losses = 0;
+    let bestTrade: { name: string; profit: number } | null = null;
+    let worstTrade: { name: string; profit: number } | null = null;
+
+    for (const flip of todaysFlips) {
+      if (flip.sellPrice) {
+        const taxPerItem = flip.sellPrice > 49 ? Math.floor(Number(flip.sellPrice) * 0.02) : 0;
+        const totalTax = taxPerItem * flip.quantity;
+        const profit = (Number(flip.sellPrice) * flip.quantity) - (Number(flip.buyPrice) * flip.quantity) - totalTax;
+        totalProfit += profit;
+
+        if (profit > 0) wins++;
+        else losses++;
+
+        if (!bestTrade || profit > bestTrade.profit) {
+          bestTrade = { name: flip.itemName, profit };
+        }
+        if (!worstTrade || profit < worstTrade.profit) {
+          worstTrade = { name: flip.itemName, profit };
+        }
+      }
+    }
+
+    const winRate = todaysFlips.length > 0 ? (wins / todaysFlips.length * 100) : 0;
+
+    const embed: DiscordEmbed = {
+      title: "Daily Trading Summary",
+      color: totalProfit >= 0 ? 0x10b981 : 0xef4444,
+      fields: [
+        { name: "Net P&L", value: `${totalProfit >= 0 ? '+' : ''}${formatGpShorthand(totalProfit)} gp`, inline: true },
+        { name: "Trades Completed", value: `${todaysFlips.length}`, inline: true },
+        { name: "Win Rate", value: `${winRate.toFixed(0)}%`, inline: true },
+        { name: "Wins / Losses", value: `${wins}W / ${losses}L`, inline: true },
+        { name: "Positions Opened", value: `${todaysOpened.length}`, inline: true },
+        ...(bestTrade ? [{ name: "Best Trade", value: `${bestTrade.name}: +${formatGpShorthand(bestTrade.profit)} gp`, inline: false }] : []),
+        ...(worstTrade && worstTrade.profit < 0 ? [{ name: "Worst Trade", value: `${worstTrade.name}: ${formatGpShorthand(worstTrade.profit)} gp`, inline: false }] : []),
+      ],
+      footer: { text: `FlipSync Daily Summary - ${new Date().toLocaleDateString()}` },
+      timestamp: new Date().toISOString(),
+    };
+
+    await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ embeds: [embed] }),
+    });
+
+    return true;
+  } catch (error) {
+    console.error("[Discord] Daily summary error:", error);
     return false;
   }
 }

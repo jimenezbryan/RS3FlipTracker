@@ -22,6 +22,7 @@ import Admin from "@/pages/Admin";
 import Profile from "@/pages/Profile";
 import Scanner from "@/pages/Scanner";
 import TradingJournal from "@/pages/TradingJournal";
+import MarketMovers from "@/pages/MarketMovers";
 import NotFound from "@/pages/not-found";
 
 function AdminRoute({ component: Component }: { component: React.ComponentType }) {
@@ -97,6 +98,7 @@ function Router() {
         <Route path="/alerts" component={Alerts} />
         <Route path="/stats" component={Stats} />
         <Route path="/journal" component={TradingJournal} />
+        <Route path="/movers" component={MarketMovers} />
         <Route path="/profile" component={Profile} />
         <Route path="/admin">{() => <AdminRoute component={Admin} />}</Route>
         <Route component={NotFound} />
