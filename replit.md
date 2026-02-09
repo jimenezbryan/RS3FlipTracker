@@ -61,6 +61,11 @@ Database tables:
 - `recipeRunComponents` - Logged component purchases per run with RS account tracking
 
 ### Recent Updates
+- **Historical Performance Charts**: Equity curve (cumulative profit over time), rolling 10-trade win rate trend, and ROI evolution charts added to Stats page using recharts LineChart/AreaChart with reference lines
+- **Market Movers Page**: Stock ticker-style dashboard showing top gainers, losers, and most active items with 24h/7d price changes, volume data, mini sparklines. Backend fetches GE dump + history data with 5-minute cache. Route: `/movers`, nav item with Activity icon
+- **Smart Discord Notifications**: Daily trading summary sent to Discord via webhook - includes Net P&L, trade count, win rate, best/worst trades. New `sendDailySummaryToDiscord()` in `server/discord.ts`, endpoints: `POST /api/discord/daily-summary`, `GET /api/discord/status`. UI card on Stats page
+- **Trade Replay**: Click any day in Trading Journal calendar to see chronological trade timeline with vertical timeline design, BUY/SELL entries, item icons, running P&L bar, day summary header. Selected day highlighted with cyan glow
+- **Wall Street-Level Trading Analytics**: Scanner refactored with professional composite Trade Score (0-100) combining volumeScore (25%), momentumScore (25%), valueScore (30%), riskScore (20%). Priority-based signals: Smart Money, Deep Value, Favorable R/R, Accumulation, Oversold, Strong Trend. Score column with color-coded circular badges. High Score Only filter
 - **Recipe/Set Crafting Tracker**: Track multi-component item crafting across RS accounts
   - Create recipe templates (define output item + required components with quantities)
   - Start crafting runs from templates
