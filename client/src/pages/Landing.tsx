@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { GPStackLogo } from "@/components/GPStackLogo";
 import { 
   TrendingUp, 
@@ -13,16 +14,24 @@ import {
   Zap,
   Shield,
   LineChart,
-  ClipboardList,
   PieChart,
-  Rocket,
-  Quote
+  Activity,
+  Users,
+  BookOpen,
+  ChevronRight,
+  Calculator,
+  Brain,
+  Layers,
+  MessageSquare,
+  Globe,
+  Crosshair,
+  Percent
 } from "lucide-react";
 import dashboardPreview from "@assets/image_1768017836449.png";
 
 function LoadingSkeleton() {
   return (
-    <div className="min-h-screen bg-gradient-to-b from-[#0f1419] via-[#131a22] to-[#0f1419] flex items-center justify-center">
+    <div className="min-h-screen bg-gradient-to-b from-[#0a0e14] via-[#0f1419] to-[#0a0e14] flex items-center justify-center">
       <div className="text-center space-y-6 animate-pulse">
         <div className="w-16 h-16 rounded-xl bg-success/20 mx-auto animate-logo-glow" />
         <div className="h-8 w-48 bg-white/10 rounded-lg mx-auto" />
@@ -39,15 +48,13 @@ function LoadingSkeleton() {
 function AnimatedBackground() {
   return (
     <div className="fixed inset-0 overflow-hidden pointer-events-none">
-      <div className="absolute inset-0 bg-grid-pattern opacity-[0.03]" />
-      
-      <div className="absolute top-1/4 -left-32 w-96 h-96 bg-success/20 rounded-full blur-[128px] animate-orb-float" />
-      <div className="absolute top-1/2 -right-32 w-80 h-80 bg-blue-500/15 rounded-full blur-[100px] animate-orb-float-delayed" />
-      <div className="absolute bottom-1/4 left-1/3 w-64 h-64 bg-purple-500/10 rounded-full blur-[80px] animate-orb-pulse" />
-      <div className="absolute top-3/4 right-1/4 w-72 h-72 bg-cyan-500/10 rounded-full blur-[90px] animate-orb-float-slow" />
+      <div className="absolute top-1/4 -left-32 w-96 h-96 bg-success/15 rounded-full blur-[128px] animate-orb-float" />
+      <div className="absolute top-1/2 -right-32 w-80 h-80 bg-blue-500/10 rounded-full blur-[100px] animate-orb-float-delayed" />
+      <div className="absolute bottom-1/4 left-1/3 w-64 h-64 bg-purple-500/8 rounded-full blur-[80px] animate-orb-pulse" />
+      <div className="absolute top-3/4 right-1/4 w-72 h-72 bg-cyan-500/8 rounded-full blur-[90px] animate-orb-float-slow" />
       
       <div className="absolute inset-0">
-        {[...Array(50)].map((_, i) => (
+        {[...Array(30)].map((_, i) => (
           <div
             key={i}
             className="absolute w-1 h-1 bg-white rounded-full animate-twinkle"
@@ -56,13 +63,13 @@ function AnimatedBackground() {
               top: `${Math.random() * 100}%`,
               animationDelay: `${Math.random() * 5}s`,
               animationDuration: `${2 + Math.random() * 3}s`,
-              opacity: 0.1 + Math.random() * 0.4,
+              opacity: 0.1 + Math.random() * 0.3,
             }}
           />
         ))}
       </div>
       
-      <svg className="absolute inset-0 w-full h-full opacity-[0.15]" xmlns="http://www.w3.org/2000/svg">
+      <svg className="absolute inset-0 w-full h-full opacity-[0.08]" xmlns="http://www.w3.org/2000/svg">
         <defs>
           <pattern id="grid" width="60" height="60" patternUnits="userSpaceOnUse">
             <path d="M 60 0 L 0 0 0 60" fill="none" stroke="currentColor" strokeWidth="0.5" className="text-border" />
@@ -77,59 +84,151 @@ function AnimatedBackground() {
         </defs>
         <rect width="100%" height="100%" fill="url(#grid)" mask="url(#grid-mask)" />
       </svg>
-      
-      <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[600px] h-[600px] rounded-full animate-grid-pulse" 
-           style={{ 
-             background: 'radial-gradient(circle, rgba(34,197,94,0.08) 0%, transparent 70%)',
-           }} 
-      />
     </div>
   );
 }
 
-const testimonials = [
+const metrics = [
   {
-    quote: "Made over 500M in my first month using FlipSync. The profit tracking and AI tips are game-changers!",
-    author: "DragonSlayer99",
-    profit: "+523M",
-    avatar: "D"
+    icon: DollarSign,
+    label: "Profit / Loss",
+    description: "Per-flip and cumulative P&L with accurate GE tax calculation",
+    color: "text-success",
+    bgColor: "bg-success/10",
   },
   {
-    quote: "Finally a tracker that calculates GE tax correctly. My ROI analytics helped me double down on winning strategies.",
-    author: "MerchantKing",
-    profit: "+1.2B",
-    avatar: "M"
+    icon: Percent,
+    label: "ROI",
+    description: "Return on investment per flip, per strategy, and overall",
+    color: "text-blue-400",
+    bgColor: "bg-blue-500/10",
   },
   {
-    quote: "The price alerts saved me so many times. Got notified right when rare items dropped - instant profit.",
-    author: "FlipMaster_RS",
-    profit: "+890M",
-    avatar: "F"
-  }
+    icon: Target,
+    label: "Win Rate",
+    description: "Track how often your trades are profitable with rolling trends",
+    color: "text-amber-400",
+    bgColor: "bg-amber-500/10",
+  },
+  {
+    icon: Activity,
+    label: "Hold Time",
+    description: "Average time between buy and sell to optimize flip speed",
+    color: "text-cyan-400",
+    bgColor: "bg-cyan-500/10",
+  },
+  {
+    icon: PieChart,
+    label: "Portfolio Value",
+    description: "Total investment, unrealized gains, and allocation breakdown",
+    color: "text-purple-400",
+    bgColor: "bg-purple-500/10",
+  },
+  {
+    icon: TrendingUp,
+    label: "Equity Curve",
+    description: "Cumulative profit growth over time with historical charts",
+    color: "text-emerald-400",
+    bgColor: "bg-emerald-500/10",
+  },
 ];
 
-const howItWorks = [
+const features = [
   {
-    step: 1,
-    title: "Log Your Trades",
-    description: "Add your buy and sell transactions. FlipSync auto-fetches item data and calculates GE tax.",
-    icon: ClipboardList,
-    color: "text-success"
+    icon: Calculator,
+    title: "Flip Logging & Tax Calc",
+    description: "Log buys and sells with auto GE tax (2%, no cap). Item autocomplete with live prices, membership status, and GE limits.",
   },
   {
-    step: 2,
-    title: "Track Performance",
-    description: "See real-time profits, ROI, and performance by strategy. Set goals and watch your progress.",
-    icon: PieChart,
-    color: "text-blue-400"
+    icon: LineChart,
+    title: "90-Day Price Charts",
+    description: "View historical price trends with your actual trades overlaid. Spot patterns and time your entries.",
   },
   {
-    step: 3,
-    title: "Optimize & Profit",
-    description: "Get AI recommendations based on your trading history. Find your next winning flip.",
-    icon: Rocket,
-    color: "text-purple-400"
-  }
+    icon: Brain,
+    title: "AI-Powered Insights",
+    description: "Get personalized item recommendations and smart buy/sell price suggestions based on your trading history.",
+  },
+  {
+    icon: BarChart3,
+    title: "Strategy Analytics",
+    description: "Tag flips by strategy (Fast Flip, Bulk, High Margin, etc.) and compare performance across each approach.",
+  },
+  {
+    icon: Bell,
+    title: "Price Alerts & Notifications",
+    description: "Set price targets and get browser push notifications when items hit your buy or sell zones.",
+  },
+  {
+    icon: Layers,
+    title: "Recipe Crafting Tracker",
+    description: "Track multi-component crafts across RS accounts. Log component buys, track progress, and calculate crafting profit.",
+  },
+  {
+    icon: BookOpen,
+    title: "Trading Journal",
+    description: "Calendar heat map of daily trades with trade replay timeline. Review every buy and sell in chronological order.",
+  },
+  {
+    icon: Globe,
+    title: "Market Movers",
+    description: "Live dashboard showing top gainers, losers, and most active items with 24h/7d price changes and sparklines.",
+  },
+  {
+    icon: Crosshair,
+    title: "Trading Terminal (Scanner)",
+    description: "Wall Street-level analytics with composite Trade Score, momentum indicators, volume analysis, and risk/reward signals.",
+  },
+  {
+    icon: MessageSquare,
+    title: "Discord Integration",
+    description: "Push daily trading summaries to Discord. Net P&L, trade count, win rate, and best/worst trades at a glance.",
+  },
+  {
+    icon: Target,
+    title: "Profit Goals",
+    description: "Set daily, weekly, and monthly profit targets. Visual progress bars keep you accountable.",
+  },
+  {
+    icon: Sparkles,
+    title: "Portfolio Management",
+    description: "Full portfolio tracking with categories, snapshots, transaction history, and weighted average cost basis.",
+  },
+];
+
+const audiences = [
+  {
+    title: "GE Flippers",
+    description: "You buy low, sell high on the Grand Exchange. You want to know exactly how much you're making after tax and which items are your best performers.",
+    gradient: "from-success/20 to-success/5",
+    borderColor: "border-success/30",
+    icon: DollarSign,
+    iconColor: "text-success",
+  },
+  {
+    title: "Bulk Merchers",
+    description: "You move thousands of items at tight margins. You need volume tracking, hold time analytics, and strategy tagging to optimize your operations.",
+    gradient: "from-blue-500/20 to-blue-500/5",
+    borderColor: "border-blue-500/30",
+    icon: Layers,
+    iconColor: "text-blue-400",
+  },
+  {
+    title: "Long-Term Investors",
+    description: "You hold items for days or weeks waiting for price movements. Portfolio snapshots, equity curves, and price alerts are your best friends.",
+    gradient: "from-purple-500/20 to-purple-500/5",
+    borderColor: "border-purple-500/30",
+    icon: TrendingUp,
+    iconColor: "text-purple-400",
+  },
+  {
+    title: "Set Crafters",
+    description: "You assemble multi-component items for profit. Track component purchases across RS accounts, monitor progress, and calculate crafting margins.",
+    gradient: "from-amber-500/20 to-amber-500/5",
+    borderColor: "border-amber-500/30",
+    icon: Target,
+    iconColor: "text-amber-400",
+  },
 ];
 
 function smoothScrollTo(elementId: string) {
@@ -143,7 +242,7 @@ export default function Landing() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const timer = setTimeout(() => setIsLoading(false), 800);
+    const timer = setTimeout(() => setIsLoading(false), 600);
     return () => clearTimeout(timer);
   }, []);
 
@@ -152,7 +251,7 @@ export default function Landing() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-[#0f1419] via-[#131a22] to-[#0f1419] text-foreground relative">
+    <div className="min-h-screen bg-gradient-to-b from-[#0a0e14] via-[#0f1419] to-[#0a0e14] text-foreground relative">
       <style>{`
         @keyframes orb-float {
           0%, 100% { transform: translateY(0) translateX(0); }
@@ -178,55 +277,59 @@ export default function Landing() {
           0%, 100% { opacity: 0.1; transform: scale(0.8); }
           50% { opacity: 0.8; transform: scale(1.2); }
         }
-        @keyframes grid-pulse {
-          0%, 100% { opacity: 0.3; transform: translate(-50%, 0) scale(1); }
-          50% { opacity: 0.6; transform: translate(-50%, 0) scale(1.1); }
-        }
         @keyframes logo-glow {
           0%, 100% { box-shadow: 0 0 20px rgba(34, 197, 94, 0.3), 0 0 40px rgba(34, 197, 94, 0.1); }
           50% { box-shadow: 0 0 30px rgba(34, 197, 94, 0.5), 0 0 60px rgba(34, 197, 94, 0.2); }
+        }
+        @keyframes fade-up {
+          from { opacity: 0; transform: translateY(20px); }
+          to { opacity: 1; transform: translateY(0); }
         }
         .animate-orb-float { animation: orb-float 20s ease-in-out infinite; }
         .animate-orb-float-delayed { animation: orb-float-delayed 25s ease-in-out infinite; }
         .animate-orb-float-slow { animation: orb-float-slow 30s ease-in-out infinite; }
         .animate-orb-pulse { animation: orb-pulse 8s ease-in-out infinite; }
         .animate-twinkle { animation: twinkle 3s ease-in-out infinite; }
-        .animate-grid-pulse { animation: grid-pulse 6s ease-in-out infinite; }
         .animate-logo-glow { animation: logo-glow 3s ease-in-out infinite; }
+        .animate-fade-up { animation: fade-up 0.6s ease-out forwards; }
+        .animate-fade-up-delay-1 { animation: fade-up 0.6s ease-out 0.1s forwards; opacity: 0; }
+        .animate-fade-up-delay-2 { animation: fade-up 0.6s ease-out 0.2s forwards; opacity: 0; }
+        .animate-fade-up-delay-3 { animation: fade-up 0.6s ease-out 0.3s forwards; opacity: 0; }
         html { scroll-behavior: smooth; }
       `}</style>
       
       <AnimatedBackground />
       
-      <header className="border-b border-border/40 backdrop-blur-sm bg-[#0f1419]/80 sticky top-0 z-50 relative">
-        <div className="mx-auto max-w-7xl px-4 py-4 flex items-center justify-between">
+      <header className="border-b border-border/30 backdrop-blur-md bg-[#0a0e14]/70 sticky top-0 z-50 relative">
+        <div className="mx-auto max-w-7xl px-4 py-3 flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="animate-logo-glow rounded-lg">
-              <GPStackLogo size={36} />
+              <GPStackLogo size={32} />
             </div>
-            <span className="text-xl font-bold text-white">FlipSync</span>
+            <span className="text-lg font-bold text-white">FlipSync</span>
+            <Badge variant="secondary" className="text-[10px] font-mono tracking-wider uppercase">Beta</Badge>
           </div>
           <nav className="hidden md:flex items-center gap-6">
             <button 
-              onClick={() => smoothScrollTo('features')} 
+              onClick={() => smoothScrollTo('what-it-does')} 
               className="text-sm text-muted-foreground hover:text-white transition-colors"
-              data-testid="nav-features"
+              data-testid="nav-what-it-does"
             >
               Features
             </button>
             <button 
-              onClick={() => smoothScrollTo('how-it-works')} 
+              onClick={() => smoothScrollTo('metrics')} 
               className="text-sm text-muted-foreground hover:text-white transition-colors"
-              data-testid="nav-how-it-works"
+              data-testid="nav-metrics"
             >
-              How It Works
+              Metrics
             </button>
             <button 
-              onClick={() => smoothScrollTo('testimonials')} 
+              onClick={() => smoothScrollTo('who-its-for')} 
               className="text-sm text-muted-foreground hover:text-white transition-colors"
-              data-testid="nav-testimonials"
+              data-testid="nav-who-its-for"
             >
-              Testimonials
+              Who It's For
             </button>
           </nav>
           <Button variant="default" asChild data-testid="button-login">
@@ -239,240 +342,258 @@ export default function Landing() {
       </header>
 
       <main className="relative">
-        <section className="relative mx-auto max-w-7xl px-4 py-24 sm:py-32">
+        {/* HERO */}
+        <section className="relative mx-auto max-w-7xl px-4 pt-20 pb-16 sm:pt-28 sm:pb-24">
           <div className="text-center max-w-4xl mx-auto">
-            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-success/10 border border-success/20 text-success text-sm font-medium mb-8">
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-success/10 border border-success/20 text-success text-sm font-medium mb-8 animate-fade-up">
               <Zap className="h-4 w-4" />
-              Live GE price tracking
+              Real-time GE price tracking & analytics
             </div>
             
-            <h1 className="text-5xl sm:text-6xl lg:text-7xl font-bold mb-6 bg-gradient-to-b from-white via-white to-gray-400 bg-clip-text text-transparent leading-tight">
-              Master the Grand Exchange
+            <h1 className="text-5xl sm:text-6xl lg:text-7xl font-bold mb-6 bg-gradient-to-b from-white via-white to-gray-500 bg-clip-text text-transparent leading-tight animate-fade-up-delay-1">
+              Your RS3 Grand Exchange
+              <br />
+              <span className="bg-gradient-to-r from-success via-emerald-400 to-cyan-400 bg-clip-text text-transparent">
+                Trading Edge
+              </span>
             </h1>
             
-            <p className="text-xl sm:text-2xl text-muted-foreground mb-10 max-w-3xl mx-auto leading-relaxed">
-              Track flips, analyze profits, and optimize your trading strategy with 
-              <span className="text-success font-medium"> AI-powered insights</span> and live RS3 market data.
+            <p className="text-lg sm:text-xl text-muted-foreground mb-10 max-w-3xl mx-auto leading-relaxed animate-fade-up-delay-2">
+              FlipSync tracks every flip, calculates profit after GE tax, and gives you AI-powered insights to find your next winning trade. Built by RS3 merchers, for RS3 merchers.
             </p>
             
-            <div className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-16">
-              <Button size="lg" className="text-lg px-8 py-6 h-auto" asChild data-testid="button-get-started">
+            <div className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-16 animate-fade-up-delay-3">
+              <Button size="lg" className="text-base px-8" asChild data-testid="button-apply-beta">
                 <a href="/api/login" className="flex items-center gap-2">
-                  Start Tracking Free
-                  <ArrowRight className="h-5 w-5" />
+                  Apply for Beta Access
+                  <ChevronRight className="h-5 w-5" />
                 </a>
               </Button>
-              <div className="flex items-center gap-2 text-muted-foreground text-sm">
-                <Shield className="h-4 w-4" />
-                <span>Free forever. No credit card required.</span>
-              </div>
+              <Button size="lg" variant="outline" className="text-base px-8 backdrop-blur-sm" asChild data-testid="button-dm-x">
+                <a href="https://x.com" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2">
+                  <MessageSquare className="h-4 w-4" />
+                  DM on X
+                </a>
+              </Button>
             </div>
 
-            <div className="grid grid-cols-3 gap-8 max-w-2xl mx-auto text-center">
-              <div>
-                <div className="text-3xl sm:text-4xl font-bold text-success font-mono">1.5B+</div>
-                <div className="text-sm text-muted-foreground mt-1">GP Tracked</div>
-              </div>
-              <div>
-                <div className="text-3xl sm:text-4xl font-bold text-white font-mono">500+</div>
-                <div className="text-sm text-muted-foreground mt-1">Active Traders</div>
-              </div>
-              <div>
-                <div className="text-3xl sm:text-4xl font-bold text-white font-mono">10K+</div>
-                <div className="text-sm text-muted-foreground mt-1">Flips Logged</div>
-              </div>
+            <div className="flex items-center justify-center gap-2 text-muted-foreground text-sm mb-4">
+              <Shield className="h-4 w-4" />
+              <span>Free during beta. No credit card required.</span>
             </div>
           </div>
         </section>
 
-        <section className="relative mx-auto max-w-7xl px-4 py-16">
-          <div className="text-center mb-12">
-            <h2 className="text-2xl sm:text-3xl font-bold text-white mb-4">
-              See Your Dashboard in Action
-            </h2>
-            <p className="text-muted-foreground max-w-xl mx-auto">
-              Track flips, monitor goals, and analyze your trading performance all in one place.
-            </p>
-          </div>
-          <div className="relative max-w-5xl mx-auto">
-            <div className="absolute -inset-4 bg-gradient-to-r from-success/20 via-blue-500/20 to-purple-500/20 rounded-2xl blur-xl opacity-50" />
-            <Card className="relative bg-[#1a2332]/90 border-border/50 p-2 overflow-hidden backdrop-blur-sm">
+        {/* DASHBOARD PREVIEW */}
+        <section className="relative mx-auto max-w-6xl px-4 pb-20">
+          <div className="relative">
+            <div className="absolute -inset-4 bg-gradient-to-r from-success/20 via-blue-500/15 to-purple-500/20 rounded-2xl blur-2xl opacity-40" />
+            <Card className="relative bg-[#131a22]/90 border-border/40 p-2 overflow-hidden backdrop-blur-sm">
               <img 
                 src={dashboardPreview} 
-                alt="FlipSync Dashboard Preview" 
-                className="w-full rounded-lg shadow-2xl"
+                alt="FlipSync Dashboard" 
+                className="w-full rounded-lg"
                 data-testid="img-dashboard-preview"
               />
             </Card>
           </div>
         </section>
 
-        <section id="how-it-works" className="relative mx-auto max-w-7xl px-4 py-20">
+        {/* WHAT IT DOES */}
+        <section id="what-it-does" className="relative mx-auto max-w-7xl px-4 py-20">
           <div className="text-center mb-16">
-            <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">
-              How It Works
-            </h2>
-            <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-              Get started in minutes. No complicated setup required.
-            </p>
-          </div>
-
-          <div className="grid gap-8 md:grid-cols-3">
-            {howItWorks.map((item) => (
-              <div key={item.step} className="relative text-center">
-                <div className="absolute top-0 left-1/2 -translate-x-1/2 w-12 h-12 rounded-full bg-[#1a2332] border-2 border-border/50 flex items-center justify-center text-lg font-bold text-white z-10">
-                  {item.step}
-                </div>
-                <Card className="bg-[#1a2332]/80 border-border/50 pt-16 pb-8 px-6 mt-6 backdrop-blur-sm">
-                  <div className={`h-14 w-14 rounded-xl bg-[#0f1419] flex items-center justify-center mx-auto mb-4`}>
-                    <item.icon className={`h-7 w-7 ${item.color}`} />
-                  </div>
-                  <h3 className="text-xl font-semibold text-white mb-3">{item.title}</h3>
-                  <p className="text-muted-foreground">{item.description}</p>
-                </Card>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section id="features" className="relative mx-auto max-w-7xl px-4 py-16">
-          <div className="text-center mb-16">
+            <Badge variant="secondary" className="mb-4 text-xs font-mono tracking-wider uppercase">What FlipSync Does</Badge>
             <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">
               Everything you need to flip smarter
             </h2>
             <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-              From profit tracking to AI recommendations, FlipSync gives you the edge in the Grand Exchange.
+              From logging your first flip to running a full trading operation, FlipSync covers every angle.
             </p>
           </div>
 
-          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            <Card className="bg-[#1a2332]/80 border-border/50 p-6 hover-elevate transition-all duration-300 backdrop-blur-sm">
-              <div className="h-12 w-12 rounded-lg bg-success/10 flex items-center justify-center mb-4">
-                <DollarSign className="h-6 w-6 text-success" />
-              </div>
-              <h3 className="text-lg font-semibold text-white mb-2">Profit Tracking</h3>
-              <p className="text-muted-foreground">
-                Log buys and sells, auto-calculate profits with 2% GE tax included. See your total gains at a glance.
-              </p>
-            </Card>
-
-            <Card className="bg-[#1a2332]/80 border-border/50 p-6 hover-elevate transition-all duration-300 backdrop-blur-sm">
-              <div className="h-12 w-12 rounded-lg bg-blue-500/10 flex items-center justify-center mb-4">
-                <LineChart className="h-6 w-6 text-blue-400" />
-              </div>
-              <h3 className="text-lg font-semibold text-white mb-2">Price Charts</h3>
-              <p className="text-muted-foreground">
-                View 90-day price history with your trades overlaid. Identify patterns and optimize timing.
-              </p>
-            </Card>
-
-            <Card className="bg-[#1a2332]/80 border-border/50 p-6 hover-elevate transition-all duration-300 backdrop-blur-sm">
-              <div className="h-12 w-12 rounded-lg bg-purple-500/10 flex items-center justify-center mb-4">
-                <Sparkles className="h-6 w-6 text-purple-400" />
-              </div>
-              <h3 className="text-lg font-semibold text-white mb-2">AI Recommendations</h3>
-              <p className="text-muted-foreground">
-                Get personalized trade suggestions based on your history, strategy, and past performance.
-              </p>
-            </Card>
-
-            <Card className="bg-[#1a2332]/80 border-border/50 p-6 hover-elevate transition-all duration-300 backdrop-blur-sm">
-              <div className="h-12 w-12 rounded-lg bg-amber-500/10 flex items-center justify-center mb-4">
-                <Target className="h-6 w-6 text-amber-400" />
-              </div>
-              <h3 className="text-lg font-semibold text-white mb-2">Profit Goals</h3>
-              <p className="text-muted-foreground">
-                Set daily, weekly, and monthly targets. Track your progress with visual indicators.
-              </p>
-            </Card>
-
-            <Card className="bg-[#1a2332]/80 border-border/50 p-6 hover-elevate transition-all duration-300 backdrop-blur-sm">
-              <div className="h-12 w-12 rounded-lg bg-rose-500/10 flex items-center justify-center mb-4">
-                <Bell className="h-6 w-6 text-rose-400" />
-              </div>
-              <h3 className="text-lg font-semibold text-white mb-2">Price Alerts</h3>
-              <p className="text-muted-foreground">
-                Get browser notifications when items hit your target prices. Never miss an opportunity.
-              </p>
-            </Card>
-
-            <Card className="bg-[#1a2332]/80 border-border/50 p-6 hover-elevate transition-all duration-300 backdrop-blur-sm">
-              <div className="h-12 w-12 rounded-lg bg-cyan-500/10 flex items-center justify-center mb-4">
-                <BarChart3 className="h-6 w-6 text-cyan-400" />
-              </div>
-              <h3 className="text-lg font-semibold text-white mb-2">Strategy Analytics</h3>
-              <p className="text-muted-foreground">
-                Compare performance across strategies. See which approach yields the best ROI.
-              </p>
-            </Card>
-          </div>
-        </section>
-
-        <section id="testimonials" className="relative mx-auto max-w-7xl px-4 py-20">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">
-              Trusted by RS3 Traders
-            </h2>
-            <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-              See what our community is saying about FlipSync.
-            </p>
-          </div>
-
-          <div className="grid gap-6 md:grid-cols-3">
-            {testimonials.map((testimonial, index) => (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {features.map((feature, index) => (
               <Card 
                 key={index} 
-                className="bg-[#1a2332]/80 border-border/50 p-6 backdrop-blur-sm relative"
-                data-testid={`testimonial-card-${index}`}
+                className="bg-[#131a22]/80 border-border/30 p-5 hover-elevate transition-all duration-300 backdrop-blur-sm group"
+                data-testid={`feature-card-${index}`}
               >
-                <Quote className="absolute top-4 right-4 h-8 w-8 text-success/20" />
-                <div className="flex items-center gap-3 mb-4">
-                  <div className="h-10 w-10 rounded-full bg-gradient-to-br from-success/30 to-blue-500/30 flex items-center justify-center text-white font-bold">
-                    {testimonial.avatar}
+                <div className="flex items-start gap-4">
+                  <div className="h-10 w-10 rounded-lg bg-white/5 flex items-center justify-center shrink-0 group-hover:bg-white/10 transition-colors">
+                    <feature.icon className="h-5 w-5 text-muted-foreground group-hover:text-white transition-colors" />
                   </div>
-                  <div>
-                    <div className="font-semibold text-white">{testimonial.author}</div>
-                    <div className="text-sm text-success font-mono">{testimonial.profit}</div>
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-semibold text-white mb-1">{feature.title}</h3>
+                    <p className="text-sm text-muted-foreground leading-relaxed">{feature.description}</p>
                   </div>
                 </div>
-                <p className="text-muted-foreground italic">"{testimonial.quote}"</p>
               </Card>
             ))}
           </div>
         </section>
 
-        <section className="relative mx-auto max-w-7xl px-4 py-16">
-          <Card className="bg-gradient-to-r from-[#1a2332] to-[#1e2a3a] border-border/50 p-8 sm:p-12 backdrop-blur-sm">
-            <div className="flex flex-col lg:flex-row items-center justify-between gap-8">
-              <div className="text-center lg:text-left">
-                <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">
-                  Ready to maximize your profits?
-                </h2>
-                <p className="text-lg text-muted-foreground max-w-xl">
-                  Join hundreds of traders already using FlipSync to track their Grand Exchange success.
-                </p>
+        {/* KEY METRICS */}
+        <section id="metrics" className="relative mx-auto max-w-7xl px-4 py-20">
+          <div className="text-center mb-16">
+            <Badge variant="secondary" className="mb-4 text-xs font-mono tracking-wider uppercase">Key Metrics</Badge>
+            <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">
+              Numbers that matter
+            </h2>
+            <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+              FlipSync tracks the metrics that actually help you make better trading decisions.
+            </p>
+          </div>
+
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 max-w-5xl mx-auto">
+            {metrics.map((metric, index) => (
+              <div 
+                key={index}
+                className="relative group"
+                data-testid={`metric-card-${index}`}
+              >
+                <Card className="bg-[#131a22]/80 border-border/30 p-6 backdrop-blur-sm h-full hover-elevate transition-all duration-300">
+                  <div className={`h-12 w-12 rounded-xl ${metric.bgColor} flex items-center justify-center mb-4`}>
+                    <metric.icon className={`h-6 w-6 ${metric.color}`} />
+                  </div>
+                  <h3 className="text-lg font-bold text-white mb-2 font-mono">{metric.label}</h3>
+                  <p className="text-sm text-muted-foreground leading-relaxed">{metric.description}</p>
+                </Card>
               </div>
-              <Button size="lg" className="text-lg px-8 py-6 h-auto whitespace-nowrap" asChild>
+            ))}
+          </div>
+
+          <div className="mt-16 grid grid-cols-2 sm:grid-cols-4 gap-6 max-w-4xl mx-auto text-center">
+            <div>
+              <div className="text-3xl sm:text-4xl font-bold text-success font-mono">2%</div>
+              <div className="text-sm text-muted-foreground mt-1">GE Tax Accuracy</div>
+            </div>
+            <div>
+              <div className="text-3xl sm:text-4xl font-bold text-white font-mono">90d</div>
+              <div className="text-sm text-muted-foreground mt-1">Price History</div>
+            </div>
+            <div>
+              <div className="text-3xl sm:text-4xl font-bold text-white font-mono">6</div>
+              <div className="text-sm text-muted-foreground mt-1">Strategy Types</div>
+            </div>
+            <div>
+              <div className="text-3xl sm:text-4xl font-bold text-white font-mono">0-100</div>
+              <div className="text-sm text-muted-foreground mt-1">Trade Score</div>
+            </div>
+          </div>
+        </section>
+
+        {/* WHO IT'S FOR */}
+        <section id="who-its-for" className="relative mx-auto max-w-7xl px-4 py-20">
+          <div className="text-center mb-16">
+            <Badge variant="secondary" className="mb-4 text-xs font-mono tracking-wider uppercase">Who It's For</Badge>
+            <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">
+              Built for serious RS3 traders
+            </h2>
+            <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+              Whether you flip for fun or run a merching empire, FlipSync scales with your ambitions.
+            </p>
+          </div>
+
+          <div className="grid gap-6 sm:grid-cols-2 max-w-5xl mx-auto">
+            {audiences.map((audience, index) => (
+              <Card 
+                key={index}
+                className={`bg-gradient-to-br ${audience.gradient} border ${audience.borderColor} p-6 backdrop-blur-sm hover-elevate transition-all duration-300`}
+                data-testid={`audience-card-${index}`}
+              >
+                <div className="flex items-center gap-3 mb-4">
+                  <div className="h-10 w-10 rounded-lg bg-white/10 flex items-center justify-center">
+                    <audience.icon className={`h-5 w-5 ${audience.iconColor}`} />
+                  </div>
+                  <h3 className="text-xl font-bold text-white">{audience.title}</h3>
+                </div>
+                <p className="text-muted-foreground leading-relaxed">{audience.description}</p>
+              </Card>
+            ))}
+          </div>
+        </section>
+
+        {/* HOW IT WORKS */}
+        <section className="relative mx-auto max-w-7xl px-4 py-20">
+          <div className="text-center mb-16">
+            <Badge variant="secondary" className="mb-4 text-xs font-mono tracking-wider uppercase">How It Works</Badge>
+            <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">
+              Start tracking in under a minute
+            </h2>
+          </div>
+
+          <div className="grid gap-8 md:grid-cols-3 max-w-4xl mx-auto">
+            {[
+              { step: 1, title: "Sign In", desc: "Log in with your Replit account. No separate registration needed.", color: "text-success", borderColor: "border-success/40" },
+              { step: 2, title: "Log Flips", desc: "Search any GE item, enter buy/sell prices. Tax and profit calculated automatically.", color: "text-blue-400", borderColor: "border-blue-500/40" },
+              { step: 3, title: "Analyze & Grow", desc: "Review stats, set goals, get AI tips, and watch your equity curve climb.", color: "text-purple-400", borderColor: "border-purple-500/40" },
+            ].map((item) => (
+              <div key={item.step} className="text-center">
+                <div className={`w-14 h-14 rounded-full border-2 ${item.borderColor} bg-[#131a22] flex items-center justify-center mx-auto mb-5`}>
+                  <span className={`text-xl font-bold font-mono ${item.color}`}>{item.step}</span>
+                </div>
+                <h3 className="text-lg font-semibold text-white mb-2">{item.title}</h3>
+                <p className="text-sm text-muted-foreground leading-relaxed">{item.desc}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* FINAL CTA */}
+        <section className="relative mx-auto max-w-7xl px-4 py-16 pb-24">
+          <Card className="bg-gradient-to-br from-[#131a22] via-[#162030] to-[#131a22] border-border/30 p-10 sm:p-14 backdrop-blur-sm text-center relative overflow-visible">
+            <div className="absolute -top-px left-1/4 right-1/4 h-px bg-gradient-to-r from-transparent via-success/50 to-transparent" />
+            
+            <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4">
+              Ready to track your profits?
+            </h2>
+            <p className="text-lg text-muted-foreground max-w-2xl mx-auto mb-8">
+              FlipSync is currently in closed beta. Apply now to get early access and help shape the future of RS3 trading tools.
+            </p>
+            
+            <div className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-6">
+              <Button size="lg" className="text-base px-8" asChild data-testid="button-apply-beta-footer">
                 <a href="/api/login" className="flex items-center gap-2">
-                  Get Started Now
-                  <ArrowRight className="h-5 w-5" />
+                  Apply for Beta Access
+                  <ChevronRight className="h-5 w-5" />
                 </a>
               </Button>
+              <Button size="lg" variant="outline" className="text-base px-8 backdrop-blur-sm" asChild data-testid="button-dm-x-footer">
+                <a href="https://x.com" target="_blank" rel="noopener noreferrer" className="flex items-center gap-2">
+                  <MessageSquare className="h-4 w-4" />
+                  DM on X
+                </a>
+              </Button>
+            </div>
+            
+            <div className="flex items-center justify-center gap-4 flex-wrap text-sm text-muted-foreground">
+              <span className="flex items-center gap-1.5">
+                <Shield className="h-3.5 w-3.5 text-success" />
+                Free during beta
+              </span>
+              <span className="text-border">|</span>
+              <span className="flex items-center gap-1.5">
+                <Users className="h-3.5 w-3.5 text-blue-400" />
+                Limited spots
+              </span>
+              <span className="text-border">|</span>
+              <span className="flex items-center gap-1.5">
+                <Zap className="h-3.5 w-3.5 text-amber-400" />
+                Instant setup
+              </span>
             </div>
           </Card>
         </section>
       </main>
 
-      <footer className="border-t border-border/40 bg-[#0f1419]/80 py-8 relative">
+      <footer className="border-t border-border/30 bg-[#0a0e14]/80 py-8 relative">
         <div className="mx-auto max-w-7xl px-4 flex flex-col sm:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3">
-            <div className="animate-logo-glow rounded-lg">
-              <GPStackLogo size={28} />
-            </div>
-            <span className="font-semibold text-white">FlipSync</span>
+            <GPStackLogo size={24} />
+            <span className="font-semibold text-white text-sm">FlipSync</span>
           </div>
-          <div className="text-sm text-muted-foreground">
-            Track your Grand Exchange profits with confidence
+          <div className="text-xs text-muted-foreground">
+            Built for the RS3 trading community
           </div>
         </div>
       </footer>
