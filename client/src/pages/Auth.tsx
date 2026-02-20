@@ -129,17 +129,23 @@ export default function Auth() {
         <Card className="bg-[#131a22]/90 border-border/40 p-6 backdrop-blur-sm">
           <div className="space-y-4">
             {providers?.replit && (
-              <Button
-                variant="outline"
-                className="w-full justify-center gap-3 backdrop-blur-sm"
-                asChild
-                data-testid="button-login-replit"
-              >
-                <a href="/api/login">
-                  <ReplitIcon className="h-5 w-5" />
-                  Continue with Replit
-                </a>
-              </Button>
+              <div className="space-y-2">
+                <Button
+                  variant="default"
+                  size="lg"
+                  className="w-full justify-center gap-3 text-base"
+                  asChild
+                  data-testid="button-login-replit"
+                >
+                  <a href="/api/login">
+                    <ReplitIcon className="h-5 w-5" />
+                    Continue with Replit
+                  </a>
+                </Button>
+                <p className="text-center text-xs text-muted-foreground">
+                  Supports Google, GitHub, Apple & more
+                </p>
+              </div>
             )}
 
             {providers?.discord && (
