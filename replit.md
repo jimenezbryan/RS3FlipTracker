@@ -61,6 +61,15 @@ Database tables:
 - `recipeRunComponents` - Logged component purchases per run with RS account tracking
 
 ### Recent Updates
+- **Multi-Auth System**: Three login methods - Replit OAuth (OIDC), email/password (bcrypt), and Discord OAuth
+  - Auth page at `/auth` with provider buttons and email form (login/register toggle)
+  - `server/replitAuth.ts` handles all three flows with unified session structure
+  - `POST /api/auth/register`, `POST /api/auth/login`, `GET /api/auth/discord`, `GET /api/auth/discord/callback`, `GET /api/auth/providers`
+  - Users table: `password`, `authProvider` (replit|email|discord), `discordId` columns
+  - Storage: `getUserByDiscordId()`, `linkDiscordId()` for Discord account linking
+  - `isAuthenticated` middleware handles token refresh for Replit, simple expiry for email/discord (7-day sessions)
+  - Discord OAuth requires `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET` env vars
+  - Landing page CTAs point to `/auth` instead of `/api/login`
 - **Historical Performance Charts**: Equity curve (cumulative profit over time), rolling 10-trade win rate trend, and ROI evolution charts added to Stats page using recharts LineChart/AreaChart with reference lines
 - **Market Movers Page**: Stock ticker-style dashboard showing top gainers, losers, and most active items with 24h/7d price changes, volume data, mini sparklines. Backend fetches GE dump + history data with 5-minute cache. Route: `/movers`, nav item with Activity icon
 - **Smart Discord Notifications**: Daily trading summary sent to Discord via webhook - includes Net P&L, trade count, win rate, best/worst trades. New `sendDailySummaryToDiscord()` in `server/discord.ts`, endpoints: `POST /api/discord/daily-summary`, `GET /api/discord/status`. UI card on Stats page
