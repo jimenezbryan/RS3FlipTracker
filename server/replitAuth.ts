@@ -6,7 +6,9 @@ import session from "express-session";
 import type { Express, RequestHandler } from "express";
 import memoize from "memoizee";
 import connectPg from "connect-pg-simple";
+import bcrypt from "bcryptjs";
 import { storage } from "./storage";
+import { z } from "zod";
 
 const getOidcConfig = memoize(
   async () => {
@@ -48,9 +50,10 @@ function updateUserSession(
   user.access_token = tokens.access_token;
   user.refresh_token = tokens.refresh_token;
   user.expires_at = user.claims?.exp;
+  user.authProvider = "replit";
 }
 
-async function upsertUser(
+async function upsertReplitUser(
   claims: any,
 ): Promise<{ id: string }> {
   const user = await storage.upsertUser({
@@ -62,6 +65,18 @@ async function upsertUser(
   });
   return { id: user.id };
 }
+
+const registerSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(6),
+  firstName: z.string().min(1).optional(),
+  lastName: z.string().min(1).optional(),
+});
+
+const loginSchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(1),
+});
 
 export async function setupAuth(app: Express) {
   app.set("trust proxy", 1);
@@ -77,10 +92,7 @@ export async function setupAuth(app: Express) {
   ) => {
     const user: any = {};
     updateUserSession(user, tokens);
-    // upsertUser may return an existing user with a different ID (if email matches)
-    // so we need to use the actual database user ID for lookups
-    const dbUser = await upsertUser(tokens.claims());
-    // Override claims.sub with the actual database user ID
+    const dbUser = await upsertReplitUser(tokens.claims());
     user.claims.sub = dbUser.id;
     verified(null, user);
   };
@@ -107,6 +119,7 @@ export async function setupAuth(app: Express) {
   passport.serializeUser((user: Express.User, cb) => cb(null, user));
   passport.deserializeUser((user: Express.User, cb) => cb(null, user));
 
+  // ──── Replit OAuth routes ────
   app.get("/api/login", (req, res, next) => {
     ensureStrategy(req.hostname);
     passport.authenticate(`replitauth:${req.hostname}`, {
@@ -124,13 +137,218 @@ export async function setupAuth(app: Express) {
   });
 
   app.get("/api/logout", (req, res) => {
+    const user = req.user as any;
+    const isReplitUser = user?.authProvider === "replit" && user?.claims;
+    
     req.logout(() => {
-      res.redirect(
-        client.buildEndSessionUrl(config, {
-          client_id: process.env.REPL_ID!,
-          post_logout_redirect_uri: `${req.protocol}://${req.hostname}`,
-        }).href
-      );
+      if (isReplitUser) {
+        try {
+          res.redirect(
+            client.buildEndSessionUrl(config, {
+              client_id: process.env.REPL_ID!,
+              post_logout_redirect_uri: `${req.protocol}://${req.hostname}`,
+            }).href
+          );
+        } catch {
+          res.redirect("/");
+        }
+      } else {
+        res.redirect("/");
+      }
+    });
+  });
+
+  app.post("/api/logout", (req, res) => {
+    req.logout(() => {
+      res.json({ success: true });
+    });
+  });
+
+  // ──── Email/Password Registration ────
+  app.post("/api/auth/register", async (req, res) => {
+    try {
+      const parsed = registerSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.errors[0].message });
+      }
+
+      const { email, password, firstName, lastName } = parsed.data;
+
+      const existingUser = await storage.getUserByEmail(email);
+      if (existingUser) {
+        return res.status(409).json({ message: "An account with this email already exists. Try signing in instead." });
+      }
+
+      const hashedPassword = await bcrypt.hash(password, 12);
+
+      const user = await storage.upsertUser({
+        email,
+        firstName: firstName || null,
+        lastName: lastName || null,
+        password: hashedPassword,
+        authProvider: "email",
+      } as any);
+
+      const sessionUser: any = {
+        claims: { sub: user.id },
+        authProvider: "email",
+        expires_at: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
+      };
+
+      req.login(sessionUser, (err) => {
+        if (err) {
+          return res.status(500).json({ message: "Registration succeeded but login failed" });
+        }
+        res.json({ success: true, user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName } });
+      });
+    } catch (error) {
+      console.error("Registration error:", error);
+      res.status(500).json({ message: "Registration failed" });
+    }
+  });
+
+  // ──── Email/Password Login ────
+  app.post("/api/auth/login", async (req, res) => {
+    try {
+      const parsed = loginSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.errors[0].message });
+      }
+
+      const { email, password } = parsed.data;
+
+      const user = await storage.getUserByEmail(email);
+      if (!user || !user.password) {
+        return res.status(401).json({ message: "Invalid email or password" });
+      }
+
+      const isValid = await bcrypt.compare(password, user.password);
+      if (!isValid) {
+        return res.status(401).json({ message: "Invalid email or password" });
+      }
+
+      const sessionUser: any = {
+        claims: { sub: user.id },
+        authProvider: "email",
+        expires_at: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
+      };
+
+      req.login(sessionUser, (err) => {
+        if (err) {
+          return res.status(500).json({ message: "Login failed" });
+        }
+        res.json({ success: true, user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName } });
+      });
+    } catch (error) {
+      console.error("Login error:", error);
+      res.status(500).json({ message: "Login failed" });
+    }
+  });
+
+  // ──── Discord OAuth ────
+  const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID;
+  const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET;
+
+  if (DISCORD_CLIENT_ID && DISCORD_CLIENT_SECRET) {
+    app.get("/api/auth/discord", (req, res) => {
+      const redirectUri = `https://${req.hostname}/api/auth/discord/callback`;
+      const params = new URLSearchParams({
+        client_id: DISCORD_CLIENT_ID,
+        redirect_uri: redirectUri,
+        response_type: "code",
+        scope: "identify email",
+      });
+      res.redirect(`https://discord.com/api/oauth2/authorize?${params.toString()}`);
+    });
+
+    app.get("/api/auth/discord/callback", async (req, res) => {
+      try {
+        const { code } = req.query;
+        if (!code || typeof code !== "string") {
+          return res.redirect("/?error=discord_auth_failed");
+        }
+
+        const redirectUri = `https://${req.hostname}/api/auth/discord/callback`;
+
+        const tokenResponse = await fetch("https://discord.com/api/oauth2/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_id: DISCORD_CLIENT_ID,
+            client_secret: DISCORD_CLIENT_SECRET,
+            grant_type: "authorization_code",
+            code,
+            redirect_uri: redirectUri,
+          }),
+        });
+
+        if (!tokenResponse.ok) {
+          console.error("Discord token exchange failed:", await tokenResponse.text());
+          return res.redirect("/?error=discord_auth_failed");
+        }
+
+        const tokens = await tokenResponse.json();
+
+        const userResponse = await fetch("https://discord.com/api/users/@me", {
+          headers: { Authorization: `Bearer ${tokens.access_token}` },
+        });
+
+        if (!userResponse.ok) {
+          return res.redirect("/?error=discord_auth_failed");
+        }
+
+        const discordUser = await userResponse.json() as any;
+
+        let user = await storage.getUserByDiscordId(discordUser.id);
+
+        if (!user) {
+          if (discordUser.email) {
+            const existingByEmail = await storage.getUserByEmail(discordUser.email);
+            if (existingByEmail) {
+              await storage.linkDiscordId(existingByEmail.id, discordUser.id);
+              user = existingByEmail;
+            }
+          }
+        }
+
+        if (!user) {
+          user = await storage.upsertUser({
+            email: discordUser.email || null,
+            firstName: discordUser.global_name || discordUser.username,
+            lastName: null,
+            profileImageUrl: discordUser.avatar
+              ? `https://cdn.discordapp.com/avatars/${discordUser.id}/${discordUser.avatar}.png`
+              : null,
+            discordId: discordUser.id,
+            authProvider: "discord",
+          } as any);
+        }
+
+        const sessionUser: any = {
+          claims: { sub: user.id },
+          authProvider: "discord",
+          expires_at: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
+        };
+
+        req.login(sessionUser, (err) => {
+          if (err) {
+            console.error("Discord login session error:", err);
+            return res.redirect("/?error=discord_auth_failed");
+          }
+          res.redirect("/");
+        });
+      } catch (error) {
+        console.error("Discord auth error:", error);
+        res.redirect("/?error=discord_auth_failed");
+      }
+    });
+  }
+
+  app.get("/api/auth/providers", (_req, res) => {
+    res.json({
+      replit: true,
+      email: true,
+      discord: !!(DISCORD_CLIENT_ID && DISCORD_CLIENT_SECRET),
     });
   });
 }
@@ -138,11 +356,19 @@ export async function setupAuth(app: Express) {
 export const isAuthenticated: RequestHandler = async (req, res, next) => {
   const user = req.user as any;
 
-  if (!req.isAuthenticated() || !user.expires_at) {
+  if (!req.isAuthenticated() || !user?.expires_at) {
     return res.status(401).json({ message: "Unauthorized" });
   }
 
   const now = Math.floor(Date.now() / 1000);
+
+  if (user.authProvider === "email" || user.authProvider === "discord") {
+    if (now <= user.expires_at) {
+      return next();
+    }
+    return res.status(401).json({ message: "Unauthorized" });
+  }
+
   if (now <= user.expires_at) {
     return next();
   }

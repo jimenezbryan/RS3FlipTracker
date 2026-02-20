@@ -94,6 +94,8 @@ export interface IStorage {
   getAllUsers(): Promise<User[]>;
   setUserAdmin(userId: string, isAdmin: boolean): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
+  getUserByDiscordId(discordId: string): Promise<User | undefined>;
+  linkDiscordId(userId: string, discordId: string): Promise<void>;
   
   // RS Accounts (Alt management)
   createRsAccount(userId: string, account: InsertRsAccount): Promise<RsAccount>;
@@ -167,6 +169,9 @@ export class MemStorage implements IStorage {
       firstName: userData.firstName ?? null,
       lastName: userData.lastName ?? null,
       profileImageUrl: userData.profileImageUrl ?? null,
+      password: (userData as any).password ?? null,
+      authProvider: (userData as any).authProvider ?? "replit",
+      discordId: (userData as any).discordId ?? null,
       isAdmin: userData.isAdmin ?? false,
       lastSeenAt: null,
       createdAt: new Date(),
@@ -740,6 +745,18 @@ export class MemStorage implements IStorage {
 
   async getUserByEmail(email: string): Promise<User | undefined> {
     return Array.from(this.users.values()).find(u => u.email === email);
+  }
+
+  async getUserByDiscordId(discordId: string): Promise<User | undefined> {
+    return Array.from(this.users.values()).find(u => u.discordId === discordId);
+  }
+
+  async linkDiscordId(userId: string, discordId: string): Promise<void> {
+    const user = this.users.get(userId);
+    if (user) {
+      user.discordId = discordId;
+      this.users.set(userId, user);
+    }
   }
 
   // RS Accounts (Alt management) - MemStorage
@@ -1412,6 +1429,15 @@ export class DatabaseStorage implements IStorage {
   async getUserByEmail(email: string): Promise<User | undefined> {
     const [user] = await db.select().from(users).where(eq(users.email, email));
     return user || undefined;
+  }
+
+  async getUserByDiscordId(discordId: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.discordId, discordId));
+    return user || undefined;
+  }
+
+  async linkDiscordId(userId: string, discordId: string): Promise<void> {
+    await db.update(users).set({ discordId, updatedAt: new Date() }).where(eq(users.id, userId));
   }
 
   // RS Accounts (Alt management) - DatabaseStorage
