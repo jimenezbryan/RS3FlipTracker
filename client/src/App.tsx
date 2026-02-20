@@ -23,6 +23,7 @@ import Profile from "@/pages/Profile";
 import Scanner from "@/pages/Scanner";
 import TradingJournal from "@/pages/TradingJournal";
 import MarketMovers from "@/pages/MarketMovers";
+import Auth from "@/pages/Auth";
 import NotFound from "@/pages/not-found";
 
 function AdminRoute({ component: Component }: { component: React.ComponentType }) {
@@ -80,6 +81,7 @@ function Router() {
     return (
       <Switch>
         <Route path="/" component={Landing} />
+        <Route path="/auth" component={Auth} />
         <Route>{() => <Redirect to="/" />}</Route>
       </Switch>
     );

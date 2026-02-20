@@ -333,7 +333,7 @@ export default function Landing() {
             </button>
           </nav>
           <Button variant="default" asChild data-testid="button-login">
-            <a href="/api/login" className="flex items-center gap-2">
+            <a href="/auth" className="flex items-center gap-2">
               Sign In
               <ArrowRight className="h-4 w-4" />
             </a>
@@ -364,7 +364,7 @@ export default function Landing() {
             
             <div className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-16 animate-fade-up-delay-3">
               <Button size="lg" className="text-base px-8" asChild data-testid="button-apply-beta">
-                <a href="/api/login" className="flex items-center gap-2">
+                <a href="/auth" className="flex items-center gap-2">
                   Apply for Beta Access
                   <ChevronRight className="h-5 w-5" />
                 </a>
@@ -524,7 +524,7 @@ export default function Landing() {
 
           <div className="grid gap-8 md:grid-cols-3 max-w-4xl mx-auto">
             {[
-              { step: 1, title: "Sign In", desc: "Log in with your Replit account. No separate registration needed.", color: "text-success", borderColor: "border-success/40" },
+              { step: 1, title: "Sign In", desc: "Log in with your email, Discord, or Replit account. Takes seconds.", color: "text-success", borderColor: "border-success/40" },
               { step: 2, title: "Log Flips", desc: "Search any GE item, enter buy/sell prices. Tax and profit calculated automatically.", color: "text-blue-400", borderColor: "border-blue-500/40" },
               { step: 3, title: "Analyze & Grow", desc: "Review stats, set goals, get AI tips, and watch your equity curve climb.", color: "text-purple-400", borderColor: "border-purple-500/40" },
             ].map((item) => (
@@ -553,7 +553,7 @@ export default function Landing() {
             
             <div className="flex flex-col sm:flex-row gap-4 justify-center items-center mb-6">
               <Button size="lg" className="text-base px-8" asChild data-testid="button-apply-beta-footer">
-                <a href="/api/login" className="flex items-center gap-2">
+                <a href="/auth" className="flex items-center gap-2">
                   Apply for Beta Access
                   <ChevronRight className="h-5 w-5" />
                 </a>
