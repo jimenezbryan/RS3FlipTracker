@@ -3,8 +3,8 @@ import { createServer, type Server } from "http";
 import multer from "multer";
 import { storage } from "./storage";
 import { insertFlipSchema, insertWatchlistSchema, insertPriceAlertSchema, insertFavoriteSchema, insertProfitGoalSchema, insertPortfolioCategorySchema, insertPortfolioHoldingSchema, updatePortfolioHoldingSchema, insertHoldingTransactionSchema, insertRsAccountSchema, insertRecipeSchema, insertRecipeComponentSchema, insertRecipeRunSchema, insertRecipeRunComponentSchema } from "@shared/schema";
-import { getItemPrice, searchItems, getItemTrend, getItemPriceHistory, getItemSuggestions, getAllItemsForScanner, type ScannerItem } from "./ge-api";
-import { calculateTechnicalIndicators, calculateSmartPricing, calculateTradeHistoryStats, type TechnicalIndicators, type SmartPricing, type TradeHistoryStats } from "./technical-indicators";
+import { getItemPrice, searchItems, getItemTrend, getItemPriceHistory, getItemSuggestions, getAllItemsForScanner, type ScannerItem, type ChartPeriod } from "./ge-api";
+import { calculateTechnicalIndicators, calculateSmartPricing, calculateTradeHistoryStats, type TechnicalIndicators, type SmartPricing, type TradeHistoryStats, type ValueGapAnalysis } from "./technical-indicators";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { processScreenshot, matchItemsToGE } from "./ocr";
 import { analyzeRS3Screenshot } from "./ai-vision";
@@ -227,8 +227,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (isNaN(itemId)) {
         return res.status(400).json({ error: "Invalid item ID" });
       }
+
+      const period = (req.query.period as ChartPeriod) || "daily";
+      const validPeriods: ChartPeriod[] = ["daily", "weekly", "monthly", "yearly"];
+      if (!validPeriods.includes(period)) {
+        return res.status(400).json({ error: "Invalid period. Use: daily, weekly, monthly, yearly" });
+      }
       
-      const history = await getItemPriceHistory(itemId);
+      const history = await getItemPriceHistory(itemId, period);
       if (!history) {
         return res.status(404).json({ error: "Price history not found" });
       }

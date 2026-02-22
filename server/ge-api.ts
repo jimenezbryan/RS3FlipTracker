@@ -323,10 +323,28 @@ export interface PriceHistoryPoint {
   volume?: number;
 }
 
-export async function getItemPriceHistory(itemId: number): Promise<PriceHistoryPoint[] | null> {
+function parseTimestamp(h: any): string {
+  if (typeof h.timestamp === 'number') {
+    const ts = h.timestamp > 9999999999 ? h.timestamp : h.timestamp * 1000;
+    return new Date(ts).toISOString().split('T')[0];
+  } else if (typeof h.timestamp === 'string') {
+    if (h.timestamp.includes('T')) {
+      return h.timestamp.split('T')[0];
+    }
+    return new Date(h.timestamp).toISOString().split('T')[0];
+  }
+  return new Date().toISOString().split('T')[0];
+}
+
+export type ChartPeriod = "daily" | "weekly" | "monthly" | "yearly";
+
+export async function getItemPriceHistory(itemId: number, period: ChartPeriod = "daily"): Promise<PriceHistoryPoint[] | null> {
   try {
+    const useAllHistory = period === "weekly" || period === "monthly" || period === "yearly";
+    const endpoint = useAllHistory ? "all" : "last90d";
+    
     const response = await fetch(
-      `${GE_API_BASE}/last90d?id=${itemId}`,
+      `${GE_API_BASE}/${endpoint}?id=${itemId}`,
       {
         headers: {
           "User-Agent": USER_AGENT,
@@ -342,36 +360,90 @@ export async function getItemPriceHistory(itemId: number): Promise<PriceHistoryP
     if (!history || history.length === 0) return null;
 
     const sortedHistory = [...history].sort(
-      (a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+      (a: any, b: any) => {
+        const tsA = typeof a.timestamp === 'number' ? (a.timestamp > 9999999999 ? a.timestamp : a.timestamp * 1000) : new Date(a.timestamp).getTime();
+        const tsB = typeof b.timestamp === 'number' ? (b.timestamp > 9999999999 ? b.timestamp : b.timestamp * 1000) : new Date(b.timestamp).getTime();
+        return tsA - tsB;
+      }
     );
 
-    return sortedHistory.map((h: any) => {
-      let dateStr: string;
-      if (typeof h.timestamp === 'number') {
-        // Unix timestamp (seconds or milliseconds)
-        const ts = h.timestamp > 9999999999 ? h.timestamp : h.timestamp * 1000;
-        dateStr = new Date(ts).toISOString().split('T')[0];
-      } else if (typeof h.timestamp === 'string') {
-        // ISO string or other string format
-        if (h.timestamp.includes('T')) {
-          dateStr = h.timestamp.split('T')[0];
-        } else {
-          dateStr = new Date(h.timestamp).toISOString().split('T')[0];
-        }
-      } else {
-        // Fallback to current date
-        dateStr = new Date().toISOString().split('T')[0];
-      }
-      return {
-        date: dateStr,
-        price: h.price,
-        volume: h.volume,
-      };
-    });
+    const allPoints: PriceHistoryPoint[] = sortedHistory.map((h: any) => ({
+      date: parseTimestamp(h),
+      price: h.price,
+      volume: h.volume,
+    }));
+
+    const now = new Date();
+    let cutoffDate: Date;
+    switch (period) {
+      case "daily":
+        cutoffDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+        break;
+      case "weekly":
+        cutoffDate = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000);
+        break;
+      case "monthly":
+        cutoffDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+        break;
+      case "yearly":
+        cutoffDate = new Date(0);
+        break;
+    }
+
+    const filteredPoints = allPoints.filter(p => new Date(p.date) >= cutoffDate);
+
+    if (period === "weekly") {
+      return aggregateToWeekly(filteredPoints);
+    } else if (period === "monthly") {
+      return aggregateToMonthly(filteredPoints);
+    } else if (period === "yearly") {
+      return aggregateToMonthly(filteredPoints);
+    }
+
+    return filteredPoints;
   } catch (error) {
     console.error("Failed to fetch item price history:", error);
     return null;
   }
+}
+
+function aggregateToWeekly(points: PriceHistoryPoint[]): PriceHistoryPoint[] {
+  const weeks = new Map<string, { prices: number[]; volumes: number[] }>();
+  for (const p of points) {
+    const d = new Date(p.date);
+    const day = d.getDay();
+    const weekStart = new Date(d.getTime() - day * 24 * 60 * 60 * 1000);
+    const key = weekStart.toISOString().split('T')[0];
+    if (!weeks.has(key)) weeks.set(key, { prices: [], volumes: [] });
+    const w = weeks.get(key)!;
+    w.prices.push(p.price);
+    if (p.volume) w.volumes.push(p.volume);
+  }
+  return Array.from(weeks.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, data]) => ({
+      date,
+      price: Math.round(data.prices.reduce((a, b) => a + b, 0) / data.prices.length),
+      volume: data.volumes.length > 0 ? Math.round(data.volumes.reduce((a, b) => a + b, 0) / data.volumes.length) : undefined,
+    }));
+}
+
+function aggregateToMonthly(points: PriceHistoryPoint[]): PriceHistoryPoint[] {
+  const months = new Map<string, { prices: number[]; volumes: number[] }>();
+  for (const p of points) {
+    const key = p.date.substring(0, 7) + "-01";
+    if (!months.has(key)) months.set(key, { prices: [], volumes: [] });
+    const m = months.get(key)!;
+    m.prices.push(p.price);
+    if (p.volume) m.volumes.push(p.volume);
+  }
+  return Array.from(months.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, data]) => ({
+      date,
+      price: Math.round(data.prices.reduce((a, b) => a + b, 0) / data.prices.length),
+      volume: data.volumes.length > 0 ? Math.round(data.volumes.reduce((a, b) => a + b, 0) / data.volumes.length) : undefined,
+    }));
 }
 
 export interface PriceSuggestion {

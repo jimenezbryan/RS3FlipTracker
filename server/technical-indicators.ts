@@ -4,11 +4,21 @@ export interface TechnicalIndicators {
   rsi14: number | null;
   sma7: number | null;
   sma30: number | null;
+  sma200: number | null;
   smaCrossover: "bullish" | "bearish" | "neutral";
   volatilityPct: number;
   priceVsAvg30: number;
   support: number | null;
   resistance: number | null;
+  valueGap: ValueGapAnalysis | null;
+}
+
+export interface ValueGapAnalysis {
+  fairValue: number;
+  currentPrice: number;
+  gapPct: number;
+  gapDirection: "undervalued" | "overvalued" | "fair";
+  signal: "strong_buy" | "buy" | "hold" | "sell" | "strong_sell";
 }
 
 export interface SmartPricing {
@@ -79,12 +89,41 @@ export function findSupportResistance(prices: number[]): { support: number | nul
   };
 }
 
+export function calculateValueGap(
+  currentPrice: number,
+  sma30: number | null,
+  sma200: number | null,
+): ValueGapAnalysis | null {
+  const anchors: number[] = [];
+  if (sma30 !== null) anchors.push(sma30);
+  if (sma200 !== null) anchors.push(sma200);
+  if (anchors.length === 0) return null;
+
+  const fairValue = Math.round(anchors.reduce((a, b) => a + b, 0) / anchors.length);
+  if (fairValue === 0) return null;
+
+  const gapPct = Math.round(((currentPrice - fairValue) / fairValue) * 10000) / 100;
+
+  let gapDirection: "undervalued" | "overvalued" | "fair" = "fair";
+  if (gapPct < -3) gapDirection = "undervalued";
+  else if (gapPct > 3) gapDirection = "overvalued";
+
+  let signal: "strong_buy" | "buy" | "hold" | "sell" | "strong_sell" = "hold";
+  if (gapPct < -10) signal = "strong_buy";
+  else if (gapPct < -3) signal = "buy";
+  else if (gapPct > 10) signal = "strong_sell";
+  else if (gapPct > 3) signal = "sell";
+
+  return { fairValue, currentPrice, gapPct, gapDirection, signal };
+}
+
 export function calculateTechnicalIndicators(history: PriceHistoryPoint[]): TechnicalIndicators {
   const prices = history.map(h => h.price);
 
   const rsi14 = calculateRSI(prices);
   const sma7 = calculateSMA(prices, 7);
   const sma30 = calculateSMA(prices, 30);
+  const sma200 = calculateSMA(prices, 200);
 
   let smaCrossover: "bullish" | "bearish" | "neutral" = "neutral";
   if (sma7 !== null && sma30 !== null) {
@@ -103,15 +142,20 @@ export function calculateTechnicalIndicators(history: PriceHistoryPoint[]): Tech
 
   const { support, resistance } = findSupportResistance(prices);
 
+  const currentPrice = prices.length > 0 ? prices[prices.length - 1] : 0;
+  const valueGap = calculateValueGap(currentPrice, sma30, sma200);
+
   return {
     rsi14,
     sma7,
     sma30,
+    sma200,
     smaCrossover,
     volatilityPct,
     priceVsAvg30,
     support,
     resistance,
+    valueGap,
   };
 }
 
