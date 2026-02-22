@@ -1,3 +1,5 @@
+import { calculateSmartPricing, getPriceTier } from "./technical-indicators";
+
 const GE_API_BASE = "https://api.weirdgloop.org/exchange/history/rs";
 const RS_ITEMDB_BASE = "https://secure.runescape.com/m=itemdb_rs";
 const GE_IDS_URL = "https://runescape.wiki/w/Module:GEIDs/data.json?action=raw";
@@ -546,13 +548,17 @@ export interface ScannerItem {
   volume: number;
   potentialProfit: number;
   marginVolume: number;
-  // New trading metrics
-  roi: number;  // Return on investment after GE tax (%)
-  netProfit: number;  // Actual profit after 2% tax (per limit cycle)
-  capitalEfficiency: number;  // Profit per GP invested (basis points)
-  rsi: number;  // Simulated RSI indicator (0-100)
-  trend: "up" | "down" | "stable";  // Price direction
-  volatility: "low" | "medium" | "high";  // Risk assessment
+  roi: number;
+  netProfit: number;
+  capitalEfficiency: number;
+  rsi: number;
+  trend: "up" | "down" | "stable";
+  volatility: "low" | "medium" | "high";
+  suggestedBuyPrice: number;
+  suggestedSellPrice: number;
+  suggestedMarginPct: number;
+  priceTier: "low" | "mid" | "high" | "ultra";
+  confidence: "low" | "medium" | "high";
 }
 
 export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
@@ -604,6 +610,8 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
     const marginPercent = margin / price;
     const volatility: "low" | "medium" | "high" = marginPercent > 0.03 ? "high" : marginPercent > 0.01 ? "medium" : "low";
     
+    const smartPricing = calculateSmartPricing(price, null, null);
+
     results.push({
       id: item.id,
       name: item.name,
@@ -622,6 +630,11 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
       rsi: Math.min(100, Math.max(0, rsi)),
       trend,
       volatility,
+      suggestedBuyPrice: smartPricing.suggestedBuyPrice,
+      suggestedSellPrice: smartPricing.suggestedSellPrice,
+      suggestedMarginPct: smartPricing.suggestedMarginPct,
+      priceTier: smartPricing.priceTier,
+      confidence: smartPricing.confidence,
     });
   }
   

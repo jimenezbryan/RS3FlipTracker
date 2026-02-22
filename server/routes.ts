@@ -3,7 +3,8 @@ import { createServer, type Server } from "http";
 import multer from "multer";
 import { storage } from "./storage";
 import { insertFlipSchema, insertWatchlistSchema, insertPriceAlertSchema, insertFavoriteSchema, insertProfitGoalSchema, insertPortfolioCategorySchema, insertPortfolioHoldingSchema, updatePortfolioHoldingSchema, insertHoldingTransactionSchema, insertRsAccountSchema, insertRecipeSchema, insertRecipeComponentSchema, insertRecipeRunSchema, insertRecipeRunComponentSchema } from "@shared/schema";
-import { getItemPrice, searchItems, getItemTrend, getItemPriceHistory, getItemSuggestions, getAllItemsForScanner } from "./ge-api";
+import { getItemPrice, searchItems, getItemTrend, getItemPriceHistory, getItemSuggestions, getAllItemsForScanner, type ScannerItem } from "./ge-api";
+import { calculateTechnicalIndicators, calculateSmartPricing, calculateTradeHistoryStats, type TechnicalIndicators, type SmartPricing, type TradeHistoryStats } from "./technical-indicators";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { processScreenshot, matchItemsToGE } from "./ocr";
 import { analyzeRS3Screenshot } from "./ai-vision";
@@ -1093,6 +1094,62 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching scanner items:", error);
       res.status(500).json({ error: "Failed to fetch scanner items" });
+    }
+  });
+
+  app.get("/api/scanner/item/:itemId/detail", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const user = await storage.getUser(userId);
+      const isAdminUser = user && (ADMIN_EMAILS.includes(user.email ?? "") || user.isAdmin === true);
+      if (!isAdminUser) {
+        return res.status(403).json({ error: "Admin access required" });
+      }
+
+      const itemId = parseInt(req.params.itemId, 10);
+      if (isNaN(itemId)) {
+        return res.status(400).json({ error: "Invalid item ID" });
+      }
+
+      let indicators: TechnicalIndicators | null = null;
+      try {
+        const history = await getItemPriceHistory(itemId);
+        if (history && history.length > 0) {
+          indicators = calculateTechnicalIndicators(history);
+        }
+      } catch (err) {
+        console.error(`Failed to get price history for item ${itemId}:`, err);
+      }
+
+      const currentPrice = indicators?.sma7 ?? 0;
+      const smartPricingBase = calculateSmartPricing(
+        currentPrice,
+        indicators,
+        null,
+      );
+
+      const userFlips = await storage.getUserFlipsByItemId(userId, itemId);
+      const tradeStats = calculateTradeHistoryStats(
+        userFlips.map(f => ({
+          buyPrice: f.buyPrice,
+          sellPrice: f.sellPrice,
+          quantity: f.quantity,
+          buyDate: f.buyDate,
+          sellDate: f.sellDate,
+          itemId: f.itemId,
+          itemName: f.itemName,
+        })),
+        smartPricingBase.suggestedMarginPct,
+      );
+
+      res.json({
+        itemId,
+        indicators,
+        tradeStats,
+      });
+    } catch (error) {
+      console.error("Error fetching scanner item detail:", error);
+      res.status(500).json({ error: "Failed to fetch item detail" });
     }
   });
 

@@ -16,6 +16,7 @@ export interface IStorage {
   deleteFlip(id: string, userId: string): Promise<boolean>;
   softDeleteFlip(id: string, userId: string): Promise<Flip | undefined>;
   restoreFlip(id: string, userId: string): Promise<Flip | undefined>;
+  getUserFlipsByItemId(userId: string, itemId: number): Promise<Flip[]>;
   
   createWatchlistItem(userId: string, item: InsertWatchlistItem): Promise<WatchlistItem>;
   getWatchlist(userId: string): Promise<WatchlistItem[]>;
@@ -283,6 +284,12 @@ export class MemStorage implements IStorage {
     const updated: Flip = { ...existing, deletedAt: null };
     this.flips.set(id, updated);
     return updated;
+  }
+
+  async getUserFlipsByItemId(userId: string, itemId: number): Promise<Flip[]> {
+    return Array.from(this.flips.values())
+      .filter(f => f.userId === userId && f.itemId === itemId && f.deletedAt === null)
+      .sort((a, b) => new Date(b.buyDate).getTime() - new Date(a.buyDate).getTime());
   }
 
   async createWatchlistItem(userId: string, item: InsertWatchlistItem): Promise<WatchlistItem> {
@@ -985,6 +992,12 @@ export class DatabaseStorage implements IStorage {
       .where(and(eq(flips.id, id), eq(flips.userId, userId)))
       .returning();
     return updatedFlip || undefined;
+  }
+
+  async getUserFlipsByItemId(userId: string, itemId: number): Promise<Flip[]> {
+    return await db.select().from(flips)
+      .where(and(eq(flips.userId, userId), eq(flips.itemId, itemId), isNull(flips.deletedAt)))
+      .orderBy(desc(flips.buyDate));
   }
 
   async createWatchlistItem(userId: string, item: InsertWatchlistItem): Promise<WatchlistItem> {
