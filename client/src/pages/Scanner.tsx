@@ -4,7 +4,7 @@ import {
   Star, ChevronUp, ChevronDown, Filter, ChevronRight, 
   TrendingUp, TrendingDown, Minus, Bell, Download, Settings,
   BarChart3, Zap, Target, Clock, Plus, Eye, AlertTriangle,
-  Briefcase, ListFilter, Flame
+  Briefcase, ListFilter, Flame, ShieldCheck, History, ArrowUpDown
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -62,6 +62,38 @@ interface ScannerItem {
   rsi: number;
   trend: "up" | "down" | "stable";
   volatility: "low" | "medium" | "high";
+  suggestedBuyPrice: number;
+  suggestedSellPrice: number;
+  suggestedMarginPct: number;
+  priceTier: "low" | "mid" | "high" | "ultra";
+  confidence: "low" | "medium" | "high";
+}
+
+interface TechnicalIndicators {
+  rsi14: number | null;
+  sma7: number | null;
+  sma30: number | null;
+  smaCrossover: "bullish" | "bearish" | "neutral";
+  volatilityPct: number;
+  priceVsAvg30: number;
+  support: number | null;
+  resistance: number | null;
+}
+
+interface TradeHistoryStats {
+  tradeCount: number;
+  avgActualMarginPct: number;
+  avgActualROI: number;
+  avgHoldTimeHours: number;
+  winRate: number;
+  lastTradeDate: string | null;
+  modelGap: number;
+}
+
+interface ItemDetail {
+  itemId: number;
+  indicators: TechnicalIndicators | null;
+  tradeStats: TradeHistoryStats;
 }
 
 interface ProcessedScannerItem extends ScannerItem {
@@ -114,7 +146,7 @@ interface PortfolioCategory {
   color?: string;
 }
 
-type SortKey = keyof ScannerItem | "tradeScore" | "volumeScore" | "momentumScore" | "valueScore" | "riskScore";
+type SortKey = keyof ScannerItem | "tradeScore" | "volumeScore" | "momentumScore" | "valueScore" | "riskScore" | "suggestedMarginPct";
 type SortDirection = "asc" | "desc";
 type ViewMode = "compact" | "standard" | "detailed";
 
@@ -254,6 +286,210 @@ function PulsingDot({ active }: { active: boolean }) {
   );
 }
 
+function ConfidenceBadge({ level }: { level: "low" | "medium" | "high" }) {
+  const styles = {
+    low: "bg-slate-500/20 text-slate-400 border-slate-500/30",
+    medium: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
+    high: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
+  };
+  const icons = { low: "?", medium: "~", high: "+" };
+  return (
+    <span className={`px-2 py-0.5 rounded text-xs border inline-flex items-center gap-1 ${styles[level]}`}>
+      <ShieldCheck className="h-3 w-3" />
+      {level.toUpperCase()}
+    </span>
+  );
+}
+
+function PriceTierBadge({ tier }: { tier: "low" | "mid" | "high" | "ultra" }) {
+  const styles = {
+    low: "bg-slate-500/20 text-slate-400 border-slate-500/30",
+    mid: "bg-blue-500/20 text-blue-400 border-blue-500/30",
+    high: "bg-purple-500/20 text-purple-400 border-purple-500/30",
+    ultra: "bg-amber-500/20 text-amber-400 border-amber-500/30",
+  };
+  const labels = { low: "<1K", mid: "1K-1M", high: "1M-100M", ultra: "100M+" };
+  return (
+    <span className={`px-2 py-0.5 rounded text-xs border ${styles[tier]}`}>
+      {labels[tier]}
+    </span>
+  );
+}
+
+function ModelGapIndicator({ gap, tradeCount }: { gap: number; tradeCount: number }) {
+  if (tradeCount === 0) return null;
+  const color = gap > 0 ? "text-emerald-400" : gap < 0 ? "text-red-400" : "text-muted-foreground";
+  const label = gap > 0 ? "Outperforming" : gap < 0 ? "Underperforming" : "On Track";
+  return (
+    <div className="flex items-center gap-1">
+      <ArrowUpDown className={`h-3 w-3 ${color}`} />
+      <span className={`text-xs font-medium ${color}`}>
+        {gap > 0 ? "+" : ""}{gap.toFixed(2)}% ({label})
+      </span>
+    </div>
+  );
+}
+
+function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detail: ItemDetail | undefined; isLoading: boolean }) {
+  const ind = detail?.indicators;
+  const stats = detail?.tradeStats;
+  
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        {ind ? (
+          <>
+            <div className="p-3 rounded-lg border border-slate-700 bg-slate-800/50">
+              <p className="text-xs text-muted-foreground uppercase">RSI (14)</p>
+              <p className={`text-lg font-bold ${
+                ind.rsi14 !== null ? (ind.rsi14 < 30 ? "text-emerald-400" : ind.rsi14 > 70 ? "text-red-400" : "text-cyan-400") : "text-muted-foreground"
+              }`}>
+                {ind.rsi14 !== null ? ind.rsi14.toFixed(1) : "N/A"}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {ind.rsi14 !== null ? (ind.rsi14 < 30 ? "Oversold" : ind.rsi14 > 70 ? "Overbought" : "Neutral") : ""}
+              </p>
+            </div>
+            <div className="p-3 rounded-lg border border-slate-700 bg-slate-800/50">
+              <p className="text-xs text-muted-foreground uppercase">SMA Trend</p>
+              <p className={`text-lg font-bold ${
+                ind.smaCrossover === "bullish" ? "text-emerald-400" : ind.smaCrossover === "bearish" ? "text-red-400" : "text-muted-foreground"
+              }`}>
+                {ind.smaCrossover === "bullish" ? "Bullish" : ind.smaCrossover === "bearish" ? "Bearish" : "Neutral"}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                7d: {ind.sma7 ? formatGP(ind.sma7) : "N/A"} | 30d: {ind.sma30 ? formatGP(ind.sma30) : "N/A"}
+              </p>
+            </div>
+            <div className="p-3 rounded-lg border border-slate-700 bg-slate-800/50">
+              <p className="text-xs text-muted-foreground uppercase">Volatility</p>
+              <p className={`text-lg font-bold ${
+                ind.volatilityPct > 5 ? "text-red-400" : ind.volatilityPct > 3 ? "text-yellow-400" : "text-emerald-400"
+              }`}>
+                {ind.volatilityPct.toFixed(1)}%
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {ind.volatilityPct > 5 ? "High Risk" : ind.volatilityPct > 3 ? "Moderate" : "Stable"}
+              </p>
+            </div>
+            <div className="p-3 rounded-lg border border-slate-700 bg-slate-800/50">
+              <p className="text-xs text-muted-foreground uppercase">Support / Resistance</p>
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-bold text-red-400">{ind.support ? formatGP(ind.support) : "N/A"}</span>
+                <span className="text-muted-foreground">/</span>
+                <span className="text-sm font-bold text-emerald-400">{ind.resistance ? formatGP(ind.resistance) : "N/A"}</span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Price vs 30d avg: <span className={ind.priceVsAvg30 > 0 ? "text-emerald-400" : "text-red-400"}>
+                  {ind.priceVsAvg30 > 0 ? "+" : ""}{ind.priceVsAvg30.toFixed(2)}%
+                </span>
+              </p>
+            </div>
+          </>
+        ) : isLoading ? (
+          <div className="col-span-4 flex items-center justify-center py-4">
+            <div className="animate-spin h-5 w-5 border-2 border-cyan-500 border-t-transparent rounded-full mr-2" />
+            <span className="text-sm text-muted-foreground">Loading technical indicators...</span>
+          </div>
+        ) : (
+          <div className="col-span-4 text-center text-sm text-muted-foreground py-4">
+            No price history available for technical analysis
+          </div>
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="p-4 rounded-lg border border-cyan-500/30 bg-cyan-500/5">
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="text-sm font-semibold text-cyan-400 flex items-center gap-2">
+              <Target className="h-4 w-4" />
+              Smart Price Suggestion
+            </h4>
+            <div className="flex items-center gap-2">
+              <PriceTierBadge tier={item.priceTier} />
+              <ConfidenceBadge level={stats && stats.tradeCount >= 10 ? "high" : stats && stats.tradeCount >= 3 ? "medium" : item.confidence} />
+            </div>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <p className="text-xs text-muted-foreground">Buy At</p>
+              <p className="text-lg font-bold font-mono text-emerald-400">{formatGP(item.suggestedBuyPrice)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Sell At</p>
+              <p className="text-lg font-bold font-mono text-red-400">{formatGP(item.suggestedSellPrice)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Target Margin</p>
+              <p className="text-lg font-bold text-cyan-400">{item.suggestedMarginPct.toFixed(2)}%</p>
+            </div>
+          </div>
+        </div>
+
+        {stats && stats.tradeCount > 0 ? (
+          <div className="p-4 rounded-lg border border-purple-500/30 bg-purple-500/5">
+            <div className="flex items-center justify-between mb-3">
+              <h4 className="text-sm font-semibold text-purple-400 flex items-center gap-2">
+                <History className="h-4 w-4" />
+                Your Trade History ({stats.tradeCount} trades)
+              </h4>
+              <ModelGapIndicator gap={stats.modelGap} tradeCount={stats.tradeCount} />
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div>
+                <p className="text-xs text-muted-foreground">Avg Margin</p>
+                <p className={`text-sm font-bold ${stats.avgActualMarginPct > 0 ? "text-emerald-400" : "text-red-400"}`}>
+                  {stats.avgActualMarginPct.toFixed(2)}%
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Win Rate</p>
+                <p className={`text-sm font-bold ${stats.winRate >= 50 ? "text-emerald-400" : "text-red-400"}`}>
+                  {stats.winRate.toFixed(0)}%
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Avg ROI</p>
+                <p className={`text-sm font-bold ${stats.avgActualROI > 0 ? "text-emerald-400" : "text-red-400"}`}>
+                  {stats.avgActualROI.toFixed(2)}%
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground">Avg Hold</p>
+                <p className="text-sm font-bold text-cyan-400">
+                  {stats.avgHoldTimeHours < 24 ? `${stats.avgHoldTimeHours.toFixed(1)}h` : `${(stats.avgHoldTimeHours / 24).toFixed(1)}d`}
+                </p>
+              </div>
+            </div>
+            <div className="mt-3 pt-3 border-t border-purple-500/20">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-muted-foreground">Model Suggestion vs Your Actual</span>
+                <span className={stats.modelGap > 0 ? "text-emerald-400" : stats.modelGap < 0 ? "text-red-400" : "text-muted-foreground"}>
+                  {stats.modelGap > 0 
+                    ? "You're beating the model - suggestion adjusted upward" 
+                    : stats.modelGap < 0 
+                      ? "Model suggests higher margins - consider wider spreads" 
+                      : "Model aligned with your results"}
+                </span>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="p-4 rounded-lg border border-slate-700 bg-slate-800/50">
+            <h4 className="text-sm font-semibold text-muted-foreground flex items-center gap-2 mb-3">
+              <History className="h-4 w-4" />
+              No Trade History
+            </h4>
+            <p className="text-xs text-muted-foreground">
+              Trade this item to build history. The more you trade, the smarter the price suggestions become - your real results help calibrate the model.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function RelatedItemCard({ item }: { item: ScannerItem }) {
   return (
     <div className="flex items-center gap-3 p-3 rounded-lg border border-slate-700 bg-slate-800/50 hover:border-cyan-500/30 transition-colors">
@@ -326,6 +562,17 @@ export default function Scanner() {
 
   const { data: categories = [] } = useQuery<PortfolioCategory[]>({
     queryKey: ["/api/portfolio/categories"],
+  });
+
+  const { data: itemDetail, isLoading: isDetailLoading } = useQuery<ItemDetail>({
+    queryKey: ["/api/scanner/item", expandedItemId, "detail"],
+    queryFn: async () => {
+      const res = await fetch(`/api/scanner/item/${expandedItemId}/detail`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch item detail");
+      return res.json();
+    },
+    enabled: !!expandedItemId,
+    staleTime: 5 * 60 * 1000,
   });
 
   const addFavoriteMutation = useMutation({
@@ -742,7 +989,7 @@ export default function Scanner() {
 
   const exportData = () => {
     const csv = [
-      ["Item", "Buy", "Sell", "Margin", "ROI%", "Net Profit", "Volume", "Cap Eff", "Trend", "Volatility"].join(","),
+      ["Item", "Buy", "Sell", "Margin", "ROI%", "Net Profit", "Volume", "Cap Eff", "Trend", "Volatility", "Suggested%", "Price Tier", "Confidence"].join(","),
       ...filteredAndSortedItems.map(item => [
         `"${item.name}"`,
         item.buyPrice,
@@ -754,6 +1001,9 @@ export default function Scanner() {
         item.capitalEfficiency,
         item.trend,
         item.volatility,
+        item.suggestedMarginPct,
+        item.priceTier,
+        item.confidence,
       ].join(","))
     ].join("\n");
     
@@ -1113,6 +1363,13 @@ export default function Scanner() {
                 {viewMode === "detailed" && (
                   <TableHead className="text-center text-muted-foreground">STATUS</TableHead>
                 )}
+                <TableHead 
+                  className="cursor-pointer select-none text-muted-foreground hover:text-foreground text-right"
+                  onClick={() => handleSort("suggestedMarginPct" as SortKey)}
+                  data-testid="header-suggested"
+                >
+                  SUGGESTED % <SortIcon columnKey={"suggestedMarginPct" as SortKey} />
+                </TableHead>
                 <TableHead className="text-center text-muted-foreground" data-testid="header-signals">SIGNALS</TableHead>
               </TableRow>
             </TableHeader>
@@ -1258,6 +1515,12 @@ export default function Scanner() {
                           </div>
                         </TableCell>
                       )}
+                      <TableCell className="text-right py-2" data-testid={`cell-suggested-${item.id}`}>
+                        <div className="flex items-center justify-end gap-1">
+                          <span className="font-mono text-sm text-cyan-400">{item.suggestedMarginPct.toFixed(1)}%</span>
+                          <ConfidenceBadge level={item.confidence} />
+                        </div>
+                      </TableCell>
                       <TableCell className="py-2" data-testid={`cell-signals-${item.id}`}>
                         <div className="flex flex-wrap gap-1 justify-center">
                           {item.signals.map((signal) => (
@@ -1276,37 +1539,18 @@ export default function Scanner() {
                     
                     {isExpanded && (
                       <TableRow className="border-slate-800 bg-slate-900/80" data-testid={`row-expanded-${item.id}`}>
-                        <TableCell colSpan={viewMode === "detailed" ? 18 : viewMode === "compact" ? 15 : 16} className="p-0">
+                        <TableCell colSpan={viewMode === "detailed" ? 19 : viewMode === "compact" ? 16 : 17} className="p-0">
                           <div className="p-4 space-y-4 border-l-2 border-cyan-500/50">
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                              {/* Price Chart */}
                               <div>
                                 <PriceHistoryChart itemId={item.id} itemName={item.name} />
                               </div>
-                              
-                              {/* Stats & Actions */}
                               <div className="space-y-4">
-                                {/* Key Stats */}
-                                <div className="grid grid-cols-2 gap-3">
-                                  <div className="p-3 rounded-lg border border-slate-700 bg-slate-800/50">
-                                    <p className="text-xs text-muted-foreground uppercase">7d Average</p>
-                                    <p className="text-lg font-bold text-cyan-400">{formatGP(item.buyPrice * 0.98)}</p>
-                                  </div>
-                                  <div className="p-3 rounded-lg border border-slate-700 bg-slate-800/50">
-                                    <p className="text-xs text-muted-foreground uppercase">30d Average</p>
-                                    <p className="text-lg font-bold text-cyan-400">{formatGP(item.buyPrice * 0.95)}</p>
-                                  </div>
-                                  <div className="p-3 rounded-lg border border-slate-700 bg-slate-800/50">
-                                    <p className="text-xs text-muted-foreground uppercase">30d Low</p>
-                                    <p className="text-lg font-bold text-red-400">{formatGP(item.buyPrice * 0.85)}</p>
-                                  </div>
-                                  <div className="p-3 rounded-lg border border-slate-700 bg-slate-800/50">
-                                    <p className="text-xs text-muted-foreground uppercase">30d High</p>
-                                    <p className="text-lg font-bold text-emerald-400">{formatGP(item.buyPrice * 1.15)}</p>
-                                  </div>
-                                </div>
-                                
-                                {/* Action Buttons */}
+                                <ItemDetailPanel 
+                                  item={item} 
+                                  detail={expandedItemId === item.id ? itemDetail : undefined} 
+                                  isLoading={expandedItemId === item.id && isDetailLoading} 
+                                />
                                 <div className="flex flex-wrap gap-2">
                                   <Button 
                                     onClick={(e) => { e.stopPropagation(); openPortfolioDialog(item); }}
@@ -1324,14 +1568,6 @@ export default function Scanner() {
                                   >
                                     <AlertTriangle className="h-4 w-4 mr-2" />
                                     Set Alert
-                                  </Button>
-                                  <Button 
-                                    variant="outline"
-                                    className="border-purple-500/50 text-purple-400 hover:bg-purple-500/10"
-                                    data-testid={`button-view-analysis-${item.id}`}
-                                  >
-                                    <Eye className="h-4 w-4 mr-2" />
-                                    View Full Analysis
                                   </Button>
                                 </div>
                               </div>
