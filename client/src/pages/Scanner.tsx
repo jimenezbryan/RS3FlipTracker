@@ -69,15 +69,25 @@ interface ScannerItem {
   confidence: "low" | "medium" | "high";
 }
 
+interface ValueGapAnalysis {
+  fairValue: number;
+  currentPrice: number;
+  gapPct: number;
+  gapDirection: "undervalued" | "overvalued" | "fair";
+  signal: "strong_buy" | "buy" | "hold" | "sell" | "strong_sell";
+}
+
 interface TechnicalIndicators {
   rsi14: number | null;
   sma7: number | null;
   sma30: number | null;
+  sma200: number | null;
   smaCrossover: "bullish" | "bearish" | "neutral";
   volatilityPct: number;
   priceVsAvg30: number;
   support: number | null;
   resistance: number | null;
+  valueGap: ValueGapAnalysis | null;
 }
 
 interface TradeHistoryStats {
@@ -358,7 +368,7 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
                 {ind.smaCrossover === "bullish" ? "Bullish" : ind.smaCrossover === "bearish" ? "Bearish" : "Neutral"}
               </p>
               <p className="text-xs text-muted-foreground">
-                7d: {ind.sma7 ? formatGP(ind.sma7) : "N/A"} | 30d: {ind.sma30 ? formatGP(ind.sma30) : "N/A"}
+                7: {ind.sma7 ? formatGP(ind.sma7) : "N/A"} | 30: {ind.sma30 ? formatGP(ind.sma30) : "N/A"} | 200: {ind.sma200 ? formatGP(ind.sma200) : "N/A"}
               </p>
             </div>
             <div className="p-3 rounded-lg border border-slate-700 bg-slate-800/50">
@@ -397,6 +407,55 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
           </div>
         )}
       </div>
+
+      {ind?.valueGap && (
+        <div className={`p-4 rounded-lg border ${
+          ind.valueGap.gapDirection === "undervalued" ? "border-emerald-500/30 bg-emerald-500/5" 
+          : ind.valueGap.gapDirection === "overvalued" ? "border-red-500/30 bg-red-500/5" 
+          : "border-slate-700 bg-slate-800/50"
+        }`} data-testid="value-gap-panel">
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-sm font-semibold flex items-center gap-2">
+              <BarChart3 className="h-4 w-4 text-cyan-400" />
+              Value Gap Analysis
+            </h4>
+            <span className={`px-2 py-0.5 rounded text-xs border font-medium ${
+              ind.valueGap.signal === "strong_buy" ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
+              : ind.valueGap.signal === "buy" ? "bg-green-500/20 text-green-400 border-green-500/30"
+              : ind.valueGap.signal === "strong_sell" ? "bg-red-500/20 text-red-400 border-red-500/30"
+              : ind.valueGap.signal === "sell" ? "bg-orange-500/20 text-orange-400 border-orange-500/30"
+              : "bg-slate-500/20 text-slate-400 border-slate-500/30"
+            }`}>
+              {ind.valueGap.signal.replace("_", " ").toUpperCase()}
+            </span>
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <p className="text-xs text-muted-foreground">Fair Value</p>
+              <p className="text-sm font-bold font-mono text-cyan-400">{formatGP(ind.valueGap.fairValue)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Current Price</p>
+              <p className="text-sm font-bold font-mono">{formatGP(ind.valueGap.currentPrice)}</p>
+            </div>
+            <div>
+              <p className="text-xs text-muted-foreground">Gap</p>
+              <p className={`text-sm font-bold font-mono ${
+                ind.valueGap.gapPct < 0 ? "text-emerald-400" : ind.valueGap.gapPct > 0 ? "text-red-400" : "text-muted-foreground"
+              }`}>
+                {ind.valueGap.gapPct > 0 ? "+" : ""}{ind.valueGap.gapPct.toFixed(2)}%
+              </p>
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground mt-2">
+            {ind.valueGap.gapDirection === "undervalued"
+              ? `Trading ${Math.abs(ind.valueGap.gapPct).toFixed(1)}% below fair value (avg of SMA-30 & SMA-200). Potential buying opportunity.`
+              : ind.valueGap.gapDirection === "overvalued"
+                ? `Trading ${ind.valueGap.gapPct.toFixed(1)}% above fair value. Consider selling or waiting for a pullback.`
+                : "Trading near fair value. Price is within expected range."}
+          </p>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="p-4 rounded-lg border border-cyan-500/30 bg-cyan-500/5">

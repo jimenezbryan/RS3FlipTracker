@@ -1119,7 +1119,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       let indicators: TechnicalIndicators | null = null;
       try {
-        const history = await getItemPriceHistory(itemId);
+        const history = await getItemPriceHistory(itemId, "yearly");
         if (history && history.length > 0) {
           indicators = calculateTechnicalIndicators(history);
         }

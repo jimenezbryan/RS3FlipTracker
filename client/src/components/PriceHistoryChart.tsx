@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -29,6 +30,15 @@ interface UserTrade {
   quantity: number;
 }
 
+type ChartPeriod = "daily" | "weekly" | "monthly" | "yearly";
+
+const PERIOD_LABELS: Record<ChartPeriod, string> = {
+  daily: "90D",
+  weekly: "6M",
+  monthly: "1Y",
+  yearly: "ALL",
+};
+
 interface PriceHistoryChartProps {
   itemId?: number;
   itemName: string;
@@ -44,7 +54,8 @@ const chartConfig = {
 } satisfies ChartConfig;
 
 export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }: PriceHistoryChartProps) {
-  // If itemId is missing, resolve it from itemName
+  const [period, setPeriod] = useState<ChartPeriod>("daily");
+
   const { data: resolvedItem, isLoading: isResolvingId } = useQuery<{ id: number; name: string }>({
     queryKey: ["/api/ge/resolve-id", itemName],
     queryFn: async () => {
@@ -55,14 +66,20 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
       return response.json();
     },
     enabled: !itemId && !!itemName,
-    staleTime: 1000 * 60 * 60, // Cache for 1 hour
+    staleTime: 1000 * 60 * 60,
   });
 
-  // Use provided itemId or resolved one
   const effectiveItemId = itemId || resolvedItem?.id;
 
   const { data: history, isLoading: isLoadingHistory, error } = useQuery<PriceHistoryPoint[]>({
-    queryKey: ["/api/ge/history", effectiveItemId],
+    queryKey: ["/api/ge/history", effectiveItemId, period],
+    queryFn: async () => {
+      const response = await fetch(`/api/ge/history/${effectiveItemId}?period=${period}`, {
+        credentials: 'include',
+      });
+      if (!response.ok) throw new Error("Failed to fetch history");
+      return response.json();
+    },
     enabled: !!effectiveItemId,
   });
 
@@ -245,23 +262,39 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
 
   return (
     <Card data-testid={`chart-price-history-${effectiveItemId || 'pending'}`}>
-      <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-2">
-        <div className="flex items-center gap-2">
-          <CardTitle className="text-base">{itemName}</CardTitle>
-          {trend && (
-            <div className="flex items-center gap-1">
-              {getTrendIcon()}
-              <span className={`font-mono text-sm ${getTrendColor()}`}>
-                {trend.changePercent >= 0 ? "+" : ""}{trend.changePercent.toFixed(1)}%
-              </span>
-            </div>
+      <CardHeader className="flex flex-col gap-2 space-y-0 pb-2">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center gap-2">
+            <CardTitle className="text-base">{itemName}</CardTitle>
+            {trend && (
+              <div className="flex items-center gap-1">
+                {getTrendIcon()}
+                <span className={`font-mono text-sm ${getTrendColor()}`}>
+                  {trend.changePercent >= 0 ? "+" : ""}{trend.changePercent.toFixed(1)}%
+                </span>
+              </div>
+            )}
+          </div>
+          {onClose && (
+            <Button variant="ghost" size="icon" onClick={onClose} data-testid="button-close-chart">
+              <X className="h-4 w-4" />
+            </Button>
           )}
         </div>
-        {onClose && (
-          <Button variant="ghost" size="icon" onClick={onClose} data-testid="button-close-chart">
-            <X className="h-4 w-4" />
-          </Button>
-        )}
+        <div className="flex items-center gap-1" data-testid="chart-period-selector">
+          {(Object.keys(PERIOD_LABELS) as ChartPeriod[]).map((p) => (
+            <Button
+              key={p}
+              variant={period === p ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setPeriod(p)}
+              className={period === p ? "bg-cyan-600 text-white" : "text-muted-foreground"}
+              data-testid={`button-period-${p}`}
+            >
+              {PERIOD_LABELS[p]}
+            </Button>
+          ))}
+        </div>
       </CardHeader>
       <CardContent className="space-y-4">
         <ChartContainer config={chartConfig} className="h-[200px] w-full">
@@ -275,7 +308,13 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
             <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
             <XAxis
               dataKey="timestamp"
-              tickFormatter={(ts) => format(new Date(ts), "MMM d")}
+              tickFormatter={(ts) => {
+                const d = new Date(ts);
+                if (period === "yearly") return format(d, "MMM yyyy");
+                if (period === "monthly") return format(d, "MMM yy");
+                if (period === "weekly") return format(d, "MMM d");
+                return format(d, "MMM d");
+              }}
               tick={{ fontSize: 10 }}
               tickLine={false}
               axisLine={false}
