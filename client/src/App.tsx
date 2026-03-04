@@ -23,6 +23,7 @@ import Profile from "@/pages/Profile";
 import Scanner from "@/pages/Scanner";
 import TradingJournal from "@/pages/TradingJournal";
 import MarketMovers from "@/pages/MarketMovers";
+import Archaeology from "@/pages/Archaeology";
 import Auth from "@/pages/Auth";
 import NotFound from "@/pages/not-found";
 
@@ -101,6 +102,7 @@ function Router() {
         <Route path="/stats" component={Stats} />
         <Route path="/journal" component={TradingJournal} />
         <Route path="/movers" component={MarketMovers} />
+        <Route path="/archaeology" component={Archaeology} />
         <Route path="/profile" component={Profile} />
         <Route path="/admin">{() => <AdminRoute component={Admin} />}</Route>
         <Route component={NotFound} />
