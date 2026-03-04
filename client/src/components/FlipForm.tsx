@@ -85,6 +85,7 @@ interface FlipFormProps {
     rsAccountId?: string;
     isMembers?: boolean;
     geLimit?: number;
+    tradeType: "ge" | "street";
   }) => void;
   openPositions?: OpenPosition[];
 }
@@ -106,6 +107,7 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
   const [category, setCategory] = useState("none");
   const [strategyTag, setStrategyTag] = useState<"Fast Flip" | "Slow Flip" | "Bulk" | "High Margin" | "Speculative" | "Other">("Other");
   const [membershipStatus, setMembershipStatus] = useState<"F2P" | "Members" | "Unknown">("Unknown");
+  const [tradeType, setTradeType] = useState<"ge" | "street">("ge");
   const [selectedRsAccountId, setSelectedRsAccountId] = useState<string>("");
   const [buyDateOpen, setBuyDateOpen] = useState(false);
   const [sellDateOpen, setSellDateOpen] = useState(false);
@@ -121,10 +123,21 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
     const sell = parseGp(sellPrice) || 0;
     const qty = parseInt(quantity) || 1;
     if (sell > 0 && buy > 0) {
+      if (tradeType === "street") {
+        const profit = (sell - buy) * qty;
+        return {
+          totalTax: 0,
+          netSellTotal: sell * qty,
+          profit,
+          roi: buy > 0 ? ((sell - buy) / buy) * 100 : 0,
+          isTaxExempt: true,
+          exemptReason: "Street trade — no GE tax",
+        };
+      }
       return calculateFlipTax(sell, buy, qty, gePrice?.id, itemName);
     }
     return null;
-  }, [buyPrice, sellPrice, quantity, gePrice?.id, itemName]);
+  }, [buyPrice, sellPrice, quantity, gePrice?.id, itemName, tradeType]);
   const [priceTrend, setPriceTrend] = useState<PriceTrend | null>(null);
   const [aiSuggestions, setAiSuggestions] = useState<PriceSuggestion | null>(null);
   const [showChart, setShowChart] = useState(false);
@@ -379,6 +392,7 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
       rsAccountId: selectedRsAccountId || undefined,
       isMembers: gePrice?.isMembers,
       geLimit: gePrice?.geLimit,
+      tradeType,
     });
 
     setItemName("");
@@ -391,6 +405,7 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
     setMembershipStatus("Unknown");
     setCategory("none");
     setStrategyTag("Other");
+    setTradeType("ge");
     setGePrice(null);
     setPriceTrend(null);
     setAiSuggestions(null);
@@ -679,6 +694,43 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
             {lookupError && (
               <p className="text-sm text-destructive">{lookupError}</p>
             )}
+
+            <div className="space-y-2">
+              <Label>Trade Type</Label>
+              <div className="flex rounded-md border overflow-hidden">
+                <button
+                  type="button"
+                  data-testid="button-trade-type-ge"
+                  onClick={() => setTradeType("ge")}
+                  className={cn(
+                    "flex-1 py-2 px-3 text-sm font-medium transition-colors",
+                    tradeType === "ge"
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-background text-muted-foreground hover:bg-muted"
+                  )}
+                >
+                  GE Trade
+                </button>
+                <button
+                  type="button"
+                  data-testid="button-trade-type-street"
+                  onClick={() => setTradeType("street")}
+                  className={cn(
+                    "flex-1 py-2 px-3 text-sm font-medium transition-colors border-l",
+                    tradeType === "street"
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-background text-muted-foreground hover:bg-muted"
+                  )}
+                >
+                  Street Trade
+                </button>
+              </div>
+              {tradeType === "street" && (
+                <p className="text-xs text-muted-foreground">
+                  Street trades bypass GE tax — profit is calculated as sell minus buy with no 2% deduction.
+                </p>
+              )}
+            </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-2">
@@ -1047,7 +1099,7 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
               {taxCalc && (
                 <div className="space-y-1 text-xs">
                   <div className="flex justify-between text-muted-foreground">
-                    <span>Tax ({taxCalc.isTaxExempt ? "Exempt" : "2%"}):</span>
+                    <span>Tax ({tradeType === "street" ? "Street Trade" : taxCalc.isTaxExempt ? "Exempt" : "2%"}):</span>
                     <span className="font-mono text-destructive">
                       -{formatGp(taxCalc.totalTax)} gp
                     </span>

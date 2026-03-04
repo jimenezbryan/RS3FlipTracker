@@ -81,6 +81,7 @@ export const flips = pgTable("flips", {
   membershipStatus: membershipStatusEnum("membership_status").default("Unknown"),
   isMembers: boolean("is_members"),
   geLimit: integer("ge_limit"),
+  tradeType: varchar("trade_type", { length: 20 }).default("ge").notNull(),
   deletedAt: timestamp("deleted_at"),
 });
 
@@ -105,6 +106,7 @@ export const insertFlipSchema = createInsertSchema(flips).omit({
   membershipStatus: z.enum(["F2P", "Members", "Unknown"]).default("Unknown"),
   isMembers: z.boolean().optional(),
   geLimit: z.coerce.number().int().positive().optional(),
+  tradeType: z.enum(["ge", "street"]).default("ge"),
 });
 
 export type InsertFlip = z.infer<typeof insertFlipSchema>;

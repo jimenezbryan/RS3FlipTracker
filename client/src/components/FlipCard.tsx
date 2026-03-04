@@ -32,6 +32,7 @@ interface Flip {
   membershipStatus?: string;
   isMembers?: boolean;
   geLimit?: number;
+  tradeType?: string;
   user?: FlipUser;
 }
 
@@ -124,6 +125,11 @@ export function FlipCard({ flip, onDelete, onEdit, onQuickSell, onViewChart }: F
               {!isCompleted && (
                 <Badge variant="outline" className="text-xs h-5 bg-warning/10 text-warning border-warning/30">
                   Open
+                </Badge>
+              )}
+              {flip.tradeType === "street" && (
+                <Badge variant="outline" className="text-xs h-5 border-amber-500/40 text-amber-500 bg-amber-500/10" data-testid={`flip-street-badge-${flip.id}`}>
+                  Street
                 </Badge>
               )}
               {flip.user && (

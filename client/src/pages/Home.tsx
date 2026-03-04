@@ -156,6 +156,7 @@ export default function Home() {
       notes?: string;
       category?: string;
       strategyTag: "Fast Flip" | "Slow Flip" | "Bulk" | "High Margin" | "Speculative" | "Other";
+      tradeType?: "ge" | "street";
     }) => {
       return await apiRequest("POST", "/api/flips", flipData);
     },

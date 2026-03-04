@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
@@ -481,19 +482,23 @@ export default function Recipes() {
                 />
               </div>
 
-              <div className="relative">
+              <div>
                 <Label>Output Item</Label>
-                <Input 
-                  value={outputItemName} 
-                  onChange={(e) => handleOutputSearch(e.target.value)}
-                  placeholder="Search for the crafted item..."
-                  data-testid="input-output-item"
-                />
-                {isSearchingOutput && (
-                  <Loader2 className="absolute right-3 top-8 h-4 w-4 animate-spin" />
-                )}
-                {showOutputSuggestions && outputSuggestions.length > 0 && (
-                  <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-48 overflow-y-auto">
+                <Popover open={showOutputSuggestions && outputSuggestions.length > 0} onOpenChange={(open) => { if (!open) setShowOutputSuggestions(false); }}>
+                  <PopoverTrigger asChild>
+                    <div className="relative">
+                      <Input 
+                        value={outputItemName} 
+                        onChange={(e) => handleOutputSearch(e.target.value)}
+                        placeholder="Search for the crafted item..."
+                        data-testid="input-output-item"
+                      />
+                      {isSearchingOutput && (
+                        <Loader2 className="absolute right-3 top-2.5 h-4 w-4 animate-spin" />
+                      )}
+                    </div>
+                  </PopoverTrigger>
+                  <PopoverContent className="p-0 w-[var(--radix-popover-trigger-width)] max-h-48 overflow-y-auto" align="start" sideOffset={4}>
                     {outputSuggestions.map((item) => (
                       <div
                         key={item.id}
@@ -507,8 +512,8 @@ export default function Recipes() {
                         </span>
                       </div>
                     ))}
-                  </div>
-                )}
+                  </PopoverContent>
+                </Popover>
               </div>
 
               <div>
@@ -538,15 +543,17 @@ export default function Recipes() {
                 </div>
                 
                 <div className="mt-2 flex gap-2">
-                  <div className="relative flex-1">
-                    <Input 
-                      value={componentSearch} 
-                      onChange={(e) => handleComponentSearch(e.target.value)}
-                      placeholder="Search component..."
-                      data-testid="input-component-search"
-                    />
-                    {showComponentSuggestions && componentSuggestions.length > 0 && (
-                      <div className="absolute z-50 w-full mt-1 bg-popover border rounded-md shadow-lg max-h-48 overflow-y-auto">
+                  <div className="flex-1">
+                    <Popover open={showComponentSuggestions && componentSuggestions.length > 0} onOpenChange={(open) => { if (!open) setShowComponentSuggestions(false); }}>
+                      <PopoverTrigger asChild>
+                        <Input 
+                          value={componentSearch} 
+                          onChange={(e) => handleComponentSearch(e.target.value)}
+                          placeholder="Search component..."
+                          data-testid="input-component-search"
+                        />
+                      </PopoverTrigger>
+                      <PopoverContent className="p-0 w-[var(--radix-popover-trigger-width)] max-h-48 overflow-y-auto" align="start" sideOffset={4}>
                         {componentSuggestions.map((item) => (
                           <div
                             key={item.id}
@@ -557,8 +564,8 @@ export default function Recipes() {
                             <span>{item.name}</span>
                           </div>
                         ))}
-                      </div>
-                    )}
+                      </PopoverContent>
+                    </Popover>
                   </div>
                   <Input 
                     type="number" 
