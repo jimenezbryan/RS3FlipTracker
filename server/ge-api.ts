@@ -1,4 +1,4 @@
-import { calculateSmartPricing, getPriceTier } from "./technical-indicators";
+import { calculateSmartPricing, getPriceTier, calculateObservableRange } from "./technical-indicators";
 
 const GE_API_BASE = "https://api.weirdgloop.org/exchange/history/rs";
 const RS_ITEMDB_BASE = "https://secure.runescape.com/m=itemdb_rs";
@@ -788,12 +788,10 @@ async function refreshRange7dCache(): Promise<void> {
       try {
         const full = await getItemPriceHistoryFull(id);
         if (full && full.daily.length >= 2) {
-          const recent = full.daily.slice(-7);
-          const prices = recent.map(p => p.price);
-          const low = Math.min(...prices);
-          const high = Math.max(...prices);
-          const spreadPct = high > 0 ? Math.round(((high - low) / high) * 10000) / 100 : 0;
-          range7dCache.set(id, { low, high, spreadPct });
+          const range = calculateObservableRange(full.daily, 7);
+          if (range) {
+            range7dCache.set(id, { low: range.low, high: range.high, spreadPct: range.spreadPct });
+          }
         }
       } catch (err) {
         console.error(`[range7d] Failed to fetch history for item ${id}:`, err);
