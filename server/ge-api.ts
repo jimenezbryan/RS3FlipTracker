@@ -446,6 +446,45 @@ function aggregateToMonthly(points: PriceHistoryPoint[]): PriceHistoryPoint[] {
     }));
 }
 
+export async function getItemPriceHistoryFull(itemId: number): Promise<{ monthly: PriceHistoryPoint[]; daily: PriceHistoryPoint[] } | null> {
+  try {
+    const response = await fetch(
+      `${GE_API_BASE}/all?id=${itemId}`,
+      { headers: { "User-Agent": USER_AGENT } }
+    );
+    if (!response.ok) return null;
+
+    const data = await response.json();
+    const history = data[itemId.toString()];
+    if (!history || history.length === 0) return null;
+
+    const sortedHistory = [...history].sort(
+      (a: any, b: any) => {
+        const tsA = typeof a.timestamp === 'number' ? (a.timestamp > 9999999999 ? a.timestamp : a.timestamp * 1000) : new Date(a.timestamp).getTime();
+        const tsB = typeof b.timestamp === 'number' ? (b.timestamp > 9999999999 ? b.timestamp : b.timestamp * 1000) : new Date(b.timestamp).getTime();
+        return tsA - tsB;
+      }
+    );
+
+    const allPoints: PriceHistoryPoint[] = sortedHistory.map((h: any) => ({
+      date: parseTimestamp(h),
+      price: h.price,
+      volume: h.volume,
+    }));
+
+    const monthly = aggregateToMonthly(allPoints);
+
+    const now = new Date();
+    const cutoff90d = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+    const daily = allPoints.filter(p => new Date(p.date) >= cutoff90d);
+
+    return { monthly, daily };
+  } catch (error) {
+    console.error("Failed to fetch full item price history:", error);
+    return null;
+  }
+}
+
 export interface PriceSuggestion {
   suggestedBuyPrice: number;
   suggestedSellPrice: number;
@@ -631,7 +670,6 @@ export interface ScannerItem {
   suggestedMarginPct: number;
   priceTier: "low" | "mid" | "high" | "ultra";
   confidence: "low" | "medium" | "high";
-  estimatedSpread7dPct: number;
 }
 
 export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
@@ -685,21 +723,6 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
     
     const smartPricing = calculateSmartPricing(price, null, null);
 
-    const tierSpreadMultipliers: Record<string, number> = {
-      low: 15.0,
-      mid: 7.0,
-      high: 4.0,
-      ultra: 2.0,
-    };
-    const volatilityMultipliers: Record<string, number> = {
-      low: 0.7,
-      medium: 1.0,
-      high: 1.5,
-    };
-    const baseTierSpread = tierSpreadMultipliers[smartPricing.priceTier] ?? 5.0;
-    const volMultiplier = volatilityMultipliers[volatility] ?? 1.0;
-    const estimatedSpread7dPct = Math.round(baseTierSpread * volMultiplier * 100) / 100;
-
     results.push({
       id: item.id,
       name: item.name,
@@ -723,7 +746,6 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
       suggestedMarginPct: smartPricing.suggestedMarginPct,
       priceTier: smartPricing.priceTier,
       confidence: smartPricing.confidence,
-      estimatedSpread7dPct,
     });
   }
   

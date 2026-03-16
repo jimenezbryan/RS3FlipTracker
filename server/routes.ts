@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import multer from "multer";
 import { storage } from "./storage";
 import { insertFlipSchema, insertWatchlistSchema, insertPriceAlertSchema, insertFavoriteSchema, insertProfitGoalSchema, insertPortfolioCategorySchema, insertPortfolioHoldingSchema, updatePortfolioHoldingSchema, insertHoldingTransactionSchema, insertRsAccountSchema, insertRecipeSchema, insertRecipeComponentSchema, insertRecipeRunSchema, insertRecipeRunComponentSchema } from "@shared/schema";
-import { getItemPrice, searchItems, getItemTrend, getItemPriceHistory, getItemSuggestions, getAllItemsForScanner, type ScannerItem, type ChartPeriod } from "./ge-api";
+import { getItemPrice, searchItems, getItemTrend, getItemPriceHistory, getItemPriceHistoryFull, getItemSuggestions, getAllItemsForScanner, type ScannerItem, type ChartPeriod } from "./ge-api";
 import { calculateTechnicalIndicators, calculateSmartPricing, calculateTradeHistoryStats, calculateObservableRange, type TechnicalIndicators, type SmartPricing, type TradeHistoryStats, type ValueGapAnalysis, type ObservableRange } from "./technical-indicators";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { processScreenshot, matchItemsToGE } from "./ocr";
@@ -1121,18 +1121,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let range7d: ObservableRange | null = null;
       let range30d: ObservableRange | null = null;
       try {
-        const [yearlyHistory, dailyHistory] = await Promise.all([
-          getItemPriceHistory(itemId, "yearly"),
-          getItemPriceHistory(itemId, "daily"),
-        ]);
-        if (yearlyHistory && yearlyHistory.length > 0) {
-          indicators = calculateTechnicalIndicators(yearlyHistory);
-        }
-        if (dailyHistory && dailyHistory.length > 0) {
-          range7d = calculateObservableRange(dailyHistory, 7);
-          range30d = calculateObservableRange(dailyHistory, 30);
-        } else if (yearlyHistory && yearlyHistory.length > 0) {
-          range30d = calculateObservableRange(yearlyHistory, 30);
+        const fullHistory = await getItemPriceHistoryFull(itemId);
+        if (fullHistory) {
+          if (fullHistory.monthly.length > 0) {
+            indicators = calculateTechnicalIndicators(fullHistory.monthly);
+          }
+          if (fullHistory.daily.length > 0) {
+            range7d = calculateObservableRange(fullHistory.daily, 7);
+            range30d = calculateObservableRange(fullHistory.daily, 30);
+          }
         }
       } catch (err) {
         console.error(`Failed to get price history for item ${itemId}:`, err);
