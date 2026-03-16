@@ -1122,7 +1122,7 @@ export default function Scanner() {
 
   const exportData = () => {
     const csv = [
-      ["Item", "Buy", "Sell", "Margin", "ROI%", "Net Profit", "Volume", "Cap Eff", "Trend", "Volatility", "7D Range%", "AI Est.%", "Price Tier", "Confidence"].join(","),
+      ["Item", "Buy", "Sell", "Margin", "ROI%", "Net Profit", "Volume", "Cap Eff", "Trend", "Volatility", "Est Spread%", "AI Est.%", "Price Tier", "Confidence"].join(","),
       ...filteredAndSortedItems.map(item => [
         `"${item.name}"`,
         item.buyPrice,
@@ -1500,9 +1500,9 @@ export default function Scanner() {
                 <TableHead 
                   className="cursor-pointer select-none text-muted-foreground hover:text-foreground text-right"
                   onClick={() => handleSort("estimatedSpread7dPct" as SortKey)}
-                  data-testid="header-7d-range"
+                  data-testid="header-est-spread"
                 >
-                  7D RANGE <SortIcon columnKey={"estimatedSpread7dPct" as SortKey} />
+                  EST. SPREAD <SortIcon columnKey={"estimatedSpread7dPct" as SortKey} />
                 </TableHead>
                 <TableHead 
                   className="cursor-pointer select-none text-muted-foreground hover:text-foreground text-right"
@@ -1656,14 +1656,14 @@ export default function Scanner() {
                           </div>
                         </TableCell>
                       )}
-                      <TableCell className="text-right py-2" data-testid={`cell-7d-range-${item.id}`}>
+                      <TableCell className="text-right py-2" data-testid={`cell-est-spread-${item.id}`}>
                         <span className={`font-mono text-sm font-medium ${
                           item.estimatedSpread7dPct >= 10 ? "text-emerald-400" 
                           : item.estimatedSpread7dPct >= 5 ? "text-cyan-400" 
                           : item.estimatedSpread7dPct >= 2 ? "text-yellow-400" 
                           : "text-muted-foreground"
                         }`}>
-                          {item.estimatedSpread7dPct.toFixed(1)}%
+                          ~{item.estimatedSpread7dPct.toFixed(1)}%
                         </span>
                       </TableCell>
                       <TableCell className="text-right py-2" data-testid={`cell-suggested-${item.id}`}>

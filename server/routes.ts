@@ -1131,6 +1131,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (dailyHistory && dailyHistory.length > 0) {
           range7d = calculateObservableRange(dailyHistory, 7);
           range30d = calculateObservableRange(dailyHistory, 30);
+        } else if (yearlyHistory && yearlyHistory.length > 0) {
+          range30d = calculateObservableRange(yearlyHistory, 30);
         }
       } catch (err) {
         console.error(`Failed to get price history for item ${itemId}:`, err);
