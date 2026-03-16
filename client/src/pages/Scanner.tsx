@@ -100,10 +100,20 @@ interface TradeHistoryStats {
   modelGap: number;
 }
 
+interface ObservableRange {
+  low: number;
+  high: number;
+  current: number;
+  spreadPct: number;
+  percentile: number;
+}
+
 interface ItemDetail {
   itemId: number;
   indicators: TechnicalIndicators | null;
   tradeStats: TradeHistoryStats;
+  range7d: ObservableRange | null;
+  range30d: ObservableRange | null;
 }
 
 interface ProcessedScannerItem extends ScannerItem {
@@ -340,12 +350,71 @@ function ModelGapIndicator({ gap, tradeCount }: { gap: number; tradeCount: numbe
   );
 }
 
+function PriceRangeBar({ range, label }: { range: ObservableRange; label: string }) {
+  const markerPosition = Math.max(0, Math.min(100, range.percentile));
+  const spreadColor = range.spreadPct >= 10 ? "text-emerald-400" : range.spreadPct >= 5 ? "text-cyan-400" : range.spreadPct >= 2 ? "text-yellow-400" : "text-muted-foreground";
+  const barColor = range.spreadPct >= 10 ? "from-emerald-500/60 to-emerald-500/20" : range.spreadPct >= 5 ? "from-cyan-500/60 to-cyan-500/20" : "from-yellow-500/60 to-yellow-500/20";
+
+  return (
+    <div className="space-y-2" data-testid={`range-bar-${label.toLowerCase().replace(/\s/g, '-')}`}>
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-muted-foreground uppercase tracking-wider">{label}</span>
+        <span className={`text-sm font-bold font-mono ${spreadColor}`}>{range.spreadPct.toFixed(1)}% range</span>
+      </div>
+      <div className="relative">
+        <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+          <span className="font-mono">{formatGP(range.low)}</span>
+          <span className="font-mono">{formatGP(range.high)}</span>
+        </div>
+        <div className="relative h-3 bg-slate-700/50 rounded-full overflow-hidden">
+          <div className={`absolute inset-0 bg-gradient-to-r ${barColor} rounded-full`} />
+          <div
+            className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-white border-2 border-slate-900 shadow-lg shadow-white/20"
+            style={{ left: `calc(${markerPosition}% - 6px)` }}
+          />
+        </div>
+        <div className="flex items-center justify-center mt-1">
+          <span className="text-xs text-muted-foreground">
+            Current: <span className="font-mono font-medium text-foreground">{formatGP(range.current)}</span>
+            <span className="ml-1 text-muted-foreground">({range.percentile}th percentile)</span>
+          </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detail: ItemDetail | undefined; isLoading: boolean }) {
   const ind = detail?.indicators;
   const stats = detail?.tradeStats;
+  const range7d = detail?.range7d;
+  const range30d = detail?.range30d;
   
   return (
     <div className="space-y-4">
+      {(range7d || range30d) && (
+        <div className="p-4 rounded-lg border border-emerald-500/30 bg-emerald-500/5" data-testid="observable-range-panel">
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="text-sm font-semibold text-emerald-400 flex items-center gap-2">
+              <Eye className="h-4 w-4" />
+              Observable Market Range
+            </h4>
+            <span className="text-xs text-muted-foreground">Based on actual recorded prices</span>
+          </div>
+          <div className={`grid ${range7d && range30d ? "grid-cols-1 lg:grid-cols-2" : "grid-cols-1"} gap-4`}>
+            {range7d && <PriceRangeBar range={range7d} label="7-Day Range" />}
+            {range30d && <PriceRangeBar range={range30d} label="30-Day Range" />}
+          </div>
+          <p className="text-xs text-muted-foreground mt-3 border-t border-emerald-500/20 pt-2">
+            {range7d && range7d.spreadPct >= 5
+              ? `This item had a ${range7d.spreadPct.toFixed(1)}% price swing in the last 7 days. Traders who buy near the low and sell near the high can capture this range.`
+              : range7d
+                ? `Tight ${range7d.spreadPct.toFixed(1)}% range in 7 days. Margins are slim unless you trade high volume.`
+                : "Insufficient data for 7-day range analysis."}
+          </p>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {ind ? (
           <>
@@ -458,11 +527,12 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="p-4 rounded-lg border border-cyan-500/30 bg-cyan-500/5">
+        <div className="p-4 rounded-lg border border-slate-700 bg-slate-800/30" data-testid="ai-estimate-panel">
           <div className="flex items-center justify-between mb-3">
-            <h4 className="text-sm font-semibold text-cyan-400 flex items-center gap-2">
+            <h4 className="text-sm font-semibold text-muted-foreground flex items-center gap-2">
               <Target className="h-4 w-4" />
-              Smart Price Suggestion
+              AI Estimate
+              <span className="text-xs font-normal text-muted-foreground/60">(speculative)</span>
             </h4>
             <div className="flex items-center gap-2">
               <PriceTierBadge tier={item.priceTier} />
@@ -472,17 +542,20 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
           <div className="grid grid-cols-3 gap-3">
             <div>
               <p className="text-xs text-muted-foreground">Buy At</p>
-              <p className="text-lg font-bold font-mono text-emerald-400">{formatGP(item.suggestedBuyPrice)}</p>
+              <p className="text-sm font-bold font-mono text-emerald-400/70">{formatGP(item.suggestedBuyPrice)}</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Sell At</p>
-              <p className="text-lg font-bold font-mono text-red-400">{formatGP(item.suggestedSellPrice)}</p>
+              <p className="text-sm font-bold font-mono text-red-400/70">{formatGP(item.suggestedSellPrice)}</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Target Margin</p>
-              <p className="text-lg font-bold text-cyan-400">{item.suggestedMarginPct.toFixed(2)}%</p>
+              <p className="text-sm font-bold text-muted-foreground">{item.suggestedMarginPct.toFixed(2)}%</p>
             </div>
           </div>
+          <p className="text-xs text-muted-foreground/60 mt-2 border-t border-slate-700 pt-2">
+            Model-based estimate. Use Observable Range above for data-backed spreads.
+          </p>
         </div>
 
         {stats && stats.tradeCount > 0 ? (
@@ -1048,7 +1121,7 @@ export default function Scanner() {
 
   const exportData = () => {
     const csv = [
-      ["Item", "Buy", "Sell", "Margin", "ROI%", "Net Profit", "Volume", "Cap Eff", "Trend", "Volatility", "Suggested%", "Price Tier", "Confidence"].join(","),
+      ["Item", "Buy", "Sell", "Margin", "ROI%", "Net Profit", "Volume", "Cap Eff", "Trend", "Volatility", "AI Est.%", "Price Tier", "Confidence"].join(","),
       ...filteredAndSortedItems.map(item => [
         `"${item.name}"`,
         item.buyPrice,
@@ -1427,7 +1500,7 @@ export default function Scanner() {
                   onClick={() => handleSort("suggestedMarginPct" as SortKey)}
                   data-testid="header-suggested"
                 >
-                  SUGGESTED % <SortIcon columnKey={"suggestedMarginPct" as SortKey} />
+                  AI EST. % <SortIcon columnKey={"suggestedMarginPct" as SortKey} />
                 </TableHead>
                 <TableHead className="text-center text-muted-foreground" data-testid="header-signals">SIGNALS</TableHead>
               </TableRow>
@@ -1576,7 +1649,7 @@ export default function Scanner() {
                       )}
                       <TableCell className="text-right py-2" data-testid={`cell-suggested-${item.id}`}>
                         <div className="flex items-center justify-end gap-1">
-                          <span className="font-mono text-sm text-cyan-400">{item.suggestedMarginPct.toFixed(1)}%</span>
+                          <span className="font-mono text-sm text-muted-foreground">{item.suggestedMarginPct.toFixed(1)}%</span>
                           <ConfidenceBadge level={item.confidence} />
                         </div>
                       </TableCell>

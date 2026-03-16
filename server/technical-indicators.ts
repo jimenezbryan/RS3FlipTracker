@@ -39,6 +39,32 @@ export interface TradeHistoryStats {
   modelGap: number;
 }
 
+export interface ObservableRange {
+  low: number;
+  high: number;
+  current: number;
+  spreadPct: number;
+  percentile: number;
+}
+
+export function calculateObservableRange(history: PriceHistoryPoint[], days: number): ObservableRange | null {
+  if (history.length === 0) return null;
+  const recent = history.slice(-days);
+  if (recent.length < 2) return null;
+
+  const prices = recent.map(h => h.price);
+  const low = Math.min(...prices);
+  const high = Math.max(...prices);
+  const current = prices[prices.length - 1];
+
+  if (low === 0) return null;
+  const spreadPct = Math.round(((high - low) / low) * 10000) / 100;
+  const range = high - low;
+  const percentile = range > 0 ? Math.round(((current - low) / range) * 100) : 50;
+
+  return { low, high, current, spreadPct, percentile };
+}
+
 export function calculateRSI(prices: number[], period: number = 14): number | null {
   if (prices.length < period + 1) return null;
 

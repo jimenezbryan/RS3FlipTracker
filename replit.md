@@ -33,7 +33,7 @@ The server handles API endpoint definitions, data access, external GE API integr
 ### Key Features
 -   **Multi-Authentication**: Replit OAuth, email/password, Discord OAuth.
 -   **Flip Tracking**: Log buy/sell transactions, calculate profit, ROI. Supports "GE Trade" and "Street Trade" modes.
--   **Advanced Analytics**: Historical performance charts (equity curve, win rate, ROI), market movers dashboard, item leaderboards, performance by strategy analysis, AI price suggestions, and personalized recommendations.
+-   **Advanced Analytics**: Historical performance charts (equity curve, win rate, ROI), market movers dashboard, item leaderboards, performance by strategy analysis, AI price suggestions (de-emphasized as speculative), observable market range display (7d/30d actual price ranges), and personalized recommendations.
 -   **Portfolio Management**: Track holdings, categorize items, monitor value growth, manage transactions with P&L tracking, and create snapshots.
 -   **Recipe/Set Crafting Tracker**: Create templates, log component purchases, track progress, and calculate profit for crafting runs across multiple RS accounts.
 -   **User Experience**: Card-based flip display, item autocomplete with metadata (membership, GE limit), inline price charts, date input UX.

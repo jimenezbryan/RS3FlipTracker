@@ -4,7 +4,7 @@ import multer from "multer";
 import { storage } from "./storage";
 import { insertFlipSchema, insertWatchlistSchema, insertPriceAlertSchema, insertFavoriteSchema, insertProfitGoalSchema, insertPortfolioCategorySchema, insertPortfolioHoldingSchema, updatePortfolioHoldingSchema, insertHoldingTransactionSchema, insertRsAccountSchema, insertRecipeSchema, insertRecipeComponentSchema, insertRecipeRunSchema, insertRecipeRunComponentSchema } from "@shared/schema";
 import { getItemPrice, searchItems, getItemTrend, getItemPriceHistory, getItemSuggestions, getAllItemsForScanner, type ScannerItem, type ChartPeriod } from "./ge-api";
-import { calculateTechnicalIndicators, calculateSmartPricing, calculateTradeHistoryStats, type TechnicalIndicators, type SmartPricing, type TradeHistoryStats, type ValueGapAnalysis } from "./technical-indicators";
+import { calculateTechnicalIndicators, calculateSmartPricing, calculateTradeHistoryStats, calculateObservableRange, type TechnicalIndicators, type SmartPricing, type TradeHistoryStats, type ValueGapAnalysis, type ObservableRange } from "./technical-indicators";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { processScreenshot, matchItemsToGE } from "./ocr";
 import { analyzeRS3Screenshot } from "./ai-vision";
@@ -1118,10 +1118,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       let indicators: TechnicalIndicators | null = null;
+      let range7d: ObservableRange | null = null;
+      let range30d: ObservableRange | null = null;
+      let dailyHistory: any[] | null = null;
       try {
         const history = await getItemPriceHistory(itemId, "yearly");
         if (history && history.length > 0) {
           indicators = calculateTechnicalIndicators(history);
+          range7d = calculateObservableRange(history, 7);
+          range30d = calculateObservableRange(history, 30);
+          dailyHistory = history;
         }
       } catch (err) {
         console.error(`Failed to get price history for item ${itemId}:`, err);
@@ -1152,6 +1158,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         itemId,
         indicators,
         tradeStats,
+        range7d,
+        range30d,
       });
     } catch (error) {
       console.error("Error fetching scanner item detail:", error);
