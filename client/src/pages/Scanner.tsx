@@ -1669,7 +1669,7 @@ export default function Scanner() {
                             {item.range7dSpreadPct.toFixed(1)}%
                           </span>
                         ) : (
-                          <span className="font-mono text-xs text-muted-foreground">0.0%</span>
+                          <span className="font-mono text-xs text-muted-foreground/50">N/A</span>
                         )}
                       </TableCell>
                       <TableCell className="text-right py-2" data-testid={`cell-suggested-${item.id}`}>

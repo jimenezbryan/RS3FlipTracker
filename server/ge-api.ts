@@ -758,21 +758,56 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
   }
 
   for (const r of results) {
-    const priceData = itemPriceCache.get(r.id);
-    if (!priceData || priceData.price <= 0) continue;
-    const current = priceData.price;
-    const last = priceData.last ?? current;
-    const dailyChange = Math.abs(current - last);
-    const dailyChangePct = current > 0 ? (dailyChange / current) : 0;
-    const projectedSwing = dailyChangePct * Math.sqrt(7);
-    const minSpread = current > 0 ? Math.max(1 / current, 0.001) : 0.001;
-    const spreadPct = Math.max(projectedSwing, minSpread) * 100;
-    r.range7dLow = Math.round(current * (1 - spreadPct / 100));
-    r.range7dHigh = Math.round(current * (1 + spreadPct / 100));
-    r.range7dSpreadPct = Math.round(spreadPct * 100) / 100;
+    const cached = range7dCache.get(r.id);
+    if (cached) {
+      r.range7dLow = cached.low;
+      r.range7dHigh = cached.high;
+      r.range7dSpreadPct = cached.spreadPct;
+    }
   }
 
   return results;
+}
+
+const range7dCache = new Map<number, { low: number; high: number; spreadPct: number }>();
+let range7dCacheReady = false;
+const RANGE_REFRESH_INTERVAL = 15 * 60 * 1000;
+
+async function refreshRange7dCache(): Promise<void> {
+  await refreshItemCache();
+  const itemsByVolume = [...itemPriceCache.entries()]
+    .filter(([, d]) => d.price > 0 && (d.volume ?? 0) > 0)
+    .sort(([, a], [, b]) => (b.volume ?? 0) - (a.volume ?? 0))
+    .slice(0, 100)
+    .map(([id]) => id);
+
+  const batchSize = 5;
+  for (let i = 0; i < itemsByVolume.length; i += batchSize) {
+    const batch = itemsByVolume.slice(i, i + batchSize);
+    await Promise.all(batch.map(async (id) => {
+      try {
+        const full = await getItemPriceHistoryFull(id);
+        if (full && full.daily.length >= 2) {
+          const recent = full.daily.slice(-7);
+          const prices = recent.map(p => p.price);
+          const low = Math.min(...prices);
+          const high = Math.max(...prices);
+          const spreadPct = high > 0 ? Math.round(((high - low) / high) * 10000) / 100 : 0;
+          range7dCache.set(id, { low, high, spreadPct });
+        }
+      } catch (err) {
+        console.error(`[range7d] Failed to fetch history for item ${id}:`, err);
+      }
+    }));
+  }
+
+  range7dCacheReady = true;
+  console.log(`[range7d] Cache refreshed with ${range7dCache.size} items`);
+}
+
+export function startRange7dCacheRefresh(): void {
+  refreshRange7dCache();
+  setInterval(() => refreshRange7dCache(), RANGE_REFRESH_INTERVAL);
 }
 
 export async function getItemById(itemId: number): Promise<GEItem | null> {
