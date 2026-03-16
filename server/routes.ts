@@ -1169,34 +1169,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/scanner/batch-range", async (req, res) => {
-    try {
-      const { itemIds } = req.body;
-      if (!Array.isArray(itemIds) || itemIds.length === 0 || itemIds.length > 25) {
-        return res.status(400).json({ error: "Provide 1-25 item IDs" });
-      }
-      const results: Record<number, { low: number; high: number; spreadPct: number } | null> = {};
-      const fetches = itemIds.map(async (id: number) => {
-        try {
-          const fullHistory = await getItemPriceHistoryFull(id);
-          if (fullHistory && fullHistory.daily.length > 0) {
-            const range = calculateObservableRange(fullHistory.daily, 7);
-            results[id] = range ? { low: range.low, high: range.high, spreadPct: range.spreadPct } : null;
-          } else {
-            results[id] = null;
-          }
-        } catch {
-          results[id] = null;
-        }
-      });
-      await Promise.all(fetches);
-      res.json(results);
-    } catch (error) {
-      console.error("Error fetching batch range data:", error);
-      res.status(500).json({ error: "Failed to fetch batch range data" });
-    }
-  });
-
   app.get("/api/favorites", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;

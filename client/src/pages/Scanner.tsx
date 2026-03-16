@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback, useRef, Fragment } from "react";
+import { useState, useMemo, Fragment } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { 
   Star, ChevronUp, ChevronDown, Filter, ChevronRight, 
@@ -1083,45 +1083,6 @@ export default function Scanner() {
     currentPage * ITEMS_PER_PAGE
   );
 
-  const [rangeCache, setRangeCache] = useState<Record<number, { low: number; high: number; spreadPct: number } | null>>({});
-  const fetchedRangeIds = useRef<Set<number>>(new Set());
-
-  useEffect(() => {
-    const idsToFetch = paginatedItems
-      .map(item => item.id)
-      .filter(id => !fetchedRangeIds.current.has(id));
-    if (idsToFetch.length === 0) return;
-
-    const batchSize = 25;
-    const batches: number[][] = [];
-    for (let i = 0; i < idsToFetch.length; i += batchSize) {
-      batches.push(idsToFetch.slice(i, i + batchSize));
-    }
-
-    idsToFetch.forEach(id => fetchedRangeIds.current.add(id));
-
-    batches.forEach(async (batch) => {
-      try {
-        const resp = await fetch("/api/scanner/batch-range", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ itemIds: batch }),
-        });
-        if (resp.ok) {
-          const data = await resp.json();
-          setRangeCache(prev => ({ ...prev, ...data }));
-        }
-      } catch {}
-    });
-  }, [paginatedItems]);
-
-  const getItemRange = useCallback((item: ScannerItem & { signals: Signal[]; tradeScore: number }) => {
-    const cached = rangeCache[item.id];
-    if (cached) return cached;
-    if (item.range7dSpreadPct !== null) return { low: item.range7dLow!, high: item.range7dHigh!, spreadPct: item.range7dSpreadPct };
-    return null;
-  }, [rangeCache]);
-
   const stats = useMemo(() => {
     const highScoreItems = processedItems.filter(i => i.tradeScore > 70).length;
     const opportunities = processedItems.filter(i => i.roi > 5 && i.netProfit > 0).length;
@@ -1175,7 +1136,7 @@ export default function Scanner() {
         item.capitalEfficiency,
         item.trend,
         item.volatility,
-        rangeCache[item.id]?.spreadPct ?? "",
+        item.range7dSpreadPct ?? "",
         item.suggestedMarginPct,
         item.priceTier,
         item.confidence,
@@ -1698,20 +1659,18 @@ export default function Scanner() {
                         </TableCell>
                       )}
                       <TableCell className="text-right py-2" data-testid={`cell-7d-range-${item.id}`}>
-                        {(() => {
-                          const range = getItemRange(item);
-                          if (!range) return <span className="font-mono text-xs text-muted-foreground/50">...</span>;
-                          return (
-                            <span className={`font-mono text-sm font-medium ${
-                              range.spreadPct >= 10 ? "text-emerald-400" 
-                              : range.spreadPct >= 5 ? "text-cyan-400" 
-                              : range.spreadPct >= 2 ? "text-yellow-400" 
-                              : "text-muted-foreground"
-                            }`}>
-                              {range.spreadPct.toFixed(1)}%
-                            </span>
-                          );
-                        })()}
+                        {item.range7dSpreadPct !== null ? (
+                          <span className={`font-mono text-sm font-medium ${
+                            item.range7dSpreadPct >= 10 ? "text-emerald-400" 
+                            : item.range7dSpreadPct >= 5 ? "text-cyan-400" 
+                            : item.range7dSpreadPct >= 2 ? "text-yellow-400" 
+                            : "text-muted-foreground"
+                          }`}>
+                            {item.range7dSpreadPct.toFixed(1)}%
+                          </span>
+                        ) : (
+                          <span className="font-mono text-xs text-muted-foreground/50" title="Loading range data">--</span>
+                        )}
                       </TableCell>
                       <TableCell className="text-right py-2" data-testid={`cell-suggested-${item.id}`}>
                         <div className="flex items-center justify-end gap-1">

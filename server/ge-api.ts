@@ -1,4 +1,4 @@
-import { calculateSmartPricing, getPriceTier } from "./technical-indicators";
+import { calculateSmartPricing, getPriceTier, calculateObservableRange } from "./technical-indicators";
 
 const GE_API_BASE = "https://api.weirdgloop.org/exchange/history/rs";
 const RS_ITEMDB_BASE = "https://secure.runescape.com/m=itemdb_rs";
@@ -675,6 +675,37 @@ export interface ScannerItem {
   range7dSpreadPct: number | null;
 }
 
+const rangeCache = new Map<number, { low: number; high: number; spreadPct: number }>();
+let rangeCacheLastUpdated = 0;
+const RANGE_CACHE_TTL = 15 * 60 * 1000;
+let rangeFetchInProgress = false;
+
+async function populateRangeCache(itemIds: number[]): Promise<void> {
+  if (rangeFetchInProgress) return;
+  rangeFetchInProgress = true;
+  try {
+    const batchSize = 5;
+    for (let i = 0; i < itemIds.length; i += batchSize) {
+      const batch = itemIds.slice(i, i + batchSize);
+      const fetches = batch.map(async (id) => {
+        try {
+          const fullHistory = await getItemPriceHistoryFull(id);
+          if (fullHistory && fullHistory.daily.length > 0) {
+            const range = calculateObservableRange(fullHistory.daily, 7);
+            if (range) {
+              rangeCache.set(id, { low: range.low, high: range.high, spreadPct: range.spreadPct });
+            }
+          }
+        } catch {}
+      });
+      await Promise.all(fetches);
+    }
+    rangeCacheLastUpdated = Date.now();
+  } finally {
+    rangeFetchInProgress = false;
+  }
+}
+
 export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
   await refreshItemCache();
   
@@ -754,7 +785,25 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
       range7dSpreadPct: null,
     });
   }
-  
+
+  for (const item of results) {
+    const cached = rangeCache.get(item.id);
+    if (cached) {
+      item.range7dLow = cached.low;
+      item.range7dHigh = cached.high;
+      item.range7dSpreadPct = cached.spreadPct;
+    }
+  }
+
+  const now = Date.now();
+  if (now - rangeCacheLastUpdated > RANGE_CACHE_TTL) {
+    const topByVolume = [...results]
+      .sort((a, b) => b.volume - a.volume)
+      .slice(0, 50)
+      .map(i => i.id);
+    populateRangeCache(topByVolume);
+  }
+
   return results;
 }
 
