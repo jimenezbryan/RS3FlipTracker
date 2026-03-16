@@ -670,6 +670,9 @@ export interface ScannerItem {
   suggestedMarginPct: number;
   priceTier: "low" | "mid" | "high" | "ultra";
   confidence: "low" | "medium" | "high";
+  range7dLow: number | null;
+  range7dHigh: number | null;
+  range7dSpreadPct: number | null;
 }
 
 export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
@@ -746,6 +749,9 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
       suggestedMarginPct: smartPricing.suggestedMarginPct,
       priceTier: smartPricing.priceTier,
       confidence: smartPricing.confidence,
+      range7dLow: null,
+      range7dHigh: null,
+      range7dSpreadPct: null,
     });
   }
   
