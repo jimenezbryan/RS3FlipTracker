@@ -1,4 +1,4 @@
-import { calculateSmartPricing, getPriceTier, calculateObservableRange } from "./technical-indicators";
+import { calculateSmartPricing, getPriceTier } from "./technical-indicators";
 
 const GE_API_BASE = "https://api.weirdgloop.org/exchange/history/rs";
 const RS_ITEMDB_BASE = "https://secure.runescape.com/m=itemdb_rs";
@@ -42,7 +42,7 @@ interface CachedItem {
 }
 
 let itemCache: CachedItem[] = [];
-let itemPriceCache: Map<number, { price: number; volume?: number; isMembers?: boolean; geLimit?: number; examine?: string }> = new Map();
+let itemPriceCache: Map<number, { price: number; last?: number; volume?: number; isMembers?: boolean; geLimit?: number; examine?: string }> = new Map();
 let cacheLastUpdated = 0;
 const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 
@@ -87,6 +87,7 @@ async function refreshItemCache(): Promise<void> {
       if (itemData.price) {
         itemPriceCache.set(id, {
           price: itemData.price,
+          last: itemData.last,
           volume: itemData.volume,
           isMembers: itemData.members,
           geLimit: itemData.limit,
@@ -675,37 +676,6 @@ export interface ScannerItem {
   range7dSpreadPct: number | null;
 }
 
-const rangeCache = new Map<number, { low: number; high: number; spreadPct: number }>();
-let rangeCacheLastUpdated = 0;
-const RANGE_CACHE_TTL = 15 * 60 * 1000;
-let rangeFetchInProgress = false;
-
-async function populateRangeCache(itemIds: number[]): Promise<void> {
-  if (rangeFetchInProgress) return;
-  rangeFetchInProgress = true;
-  try {
-    const batchSize = 5;
-    for (let i = 0; i < itemIds.length; i += batchSize) {
-      const batch = itemIds.slice(i, i + batchSize);
-      const fetches = batch.map(async (id) => {
-        try {
-          const fullHistory = await getItemPriceHistoryFull(id);
-          if (fullHistory && fullHistory.daily.length > 0) {
-            const range = calculateObservableRange(fullHistory.daily, 7);
-            if (range) {
-              rangeCache.set(id, { low: range.low, high: range.high, spreadPct: range.spreadPct });
-            }
-          }
-        } catch {}
-      });
-      await Promise.all(fetches);
-    }
-    rangeCacheLastUpdated = Date.now();
-  } finally {
-    rangeFetchInProgress = false;
-  }
-}
-
 export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
   await refreshItemCache();
   
@@ -716,6 +686,7 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
     if (!priceData || priceData.price <= 0) continue;
     
     const price = priceData.price;
+    const lastPrice = priceData.last ?? price;
     const geLimit = item.geLimit ?? 0;
     const volume = priceData.volume ?? 0;
     
@@ -786,22 +757,19 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
     });
   }
 
-  const now = Date.now();
-  if (now - rangeCacheLastUpdated > RANGE_CACHE_TTL) {
-    const topByVolume = [...results]
-      .sort((a, b) => b.volume - a.volume)
-      .slice(0, 50)
-      .map(i => i.id);
-    await populateRangeCache(topByVolume);
-  }
-
-  for (const item of results) {
-    const cached = rangeCache.get(item.id);
-    if (cached) {
-      item.range7dLow = cached.low;
-      item.range7dHigh = cached.high;
-      item.range7dSpreadPct = cached.spreadPct;
-    }
+  for (const r of results) {
+    const priceData = itemPriceCache.get(r.id);
+    if (!priceData || priceData.price <= 0) continue;
+    const current = priceData.price;
+    const last = priceData.last ?? current;
+    const dailyChange = Math.abs(current - last);
+    const dailyChangePct = current > 0 ? (dailyChange / current) : 0;
+    const projectedSwing = dailyChangePct * Math.sqrt(7);
+    const minSpread = current > 0 ? Math.max(1 / current, 0.001) : 0.001;
+    const spreadPct = Math.max(projectedSwing, minSpread) * 100;
+    r.range7dLow = Math.round(current * (1 - spreadPct / 100));
+    r.range7dHigh = Math.round(current * (1 + spreadPct / 100));
+    r.range7dSpreadPct = Math.round(spreadPct * 100) / 100;
   }
 
   return results;

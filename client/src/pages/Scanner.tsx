@@ -1659,7 +1659,7 @@ export default function Scanner() {
                         </TableCell>
                       )}
                       <TableCell className="text-right py-2" data-testid={`cell-7d-range-${item.id}`}>
-                        {item.range7dSpreadPct !== null ? (
+                        {item.range7dSpreadPct !== null && item.range7dSpreadPct !== undefined ? (
                           <span className={`font-mono text-sm font-medium ${
                             item.range7dSpreadPct >= 10 ? "text-emerald-400" 
                             : item.range7dSpreadPct >= 5 ? "text-cyan-400" 
@@ -1669,7 +1669,7 @@ export default function Scanner() {
                             {item.range7dSpreadPct.toFixed(1)}%
                           </span>
                         ) : (
-                          <span className="font-mono text-xs text-muted-foreground/50" title="Loading range data">--</span>
+                          <span className="font-mono text-xs text-muted-foreground">0.0%</span>
                         )}
                       </TableCell>
                       <TableCell className="text-right py-2" data-testid={`cell-suggested-${item.id}`}>
