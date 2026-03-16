@@ -631,6 +631,7 @@ export interface ScannerItem {
   suggestedMarginPct: number;
   priceTier: "low" | "mid" | "high" | "ultra";
   confidence: "low" | "medium" | "high";
+  estimatedSpread7dPct: number;
 }
 
 export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
@@ -684,6 +685,21 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
     
     const smartPricing = calculateSmartPricing(price, null, null);
 
+    const tierSpreadMultipliers: Record<string, number> = {
+      low: 15.0,
+      mid: 7.0,
+      high: 4.0,
+      ultra: 2.0,
+    };
+    const volatilityMultipliers: Record<string, number> = {
+      low: 0.7,
+      medium: 1.0,
+      high: 1.5,
+    };
+    const baseTierSpread = tierSpreadMultipliers[smartPricing.priceTier] ?? 5.0;
+    const volMultiplier = volatilityMultipliers[volatility] ?? 1.0;
+    const estimatedSpread7dPct = Math.round(baseTierSpread * volMultiplier * 100) / 100;
+
     results.push({
       id: item.id,
       name: item.name,
@@ -707,6 +723,7 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
       suggestedMarginPct: smartPricing.suggestedMarginPct,
       priceTier: smartPricing.priceTier,
       confidence: smartPricing.confidence,
+      estimatedSpread7dPct,
     });
   }
   

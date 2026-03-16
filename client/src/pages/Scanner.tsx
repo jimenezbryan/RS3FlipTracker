@@ -67,6 +67,7 @@ interface ScannerItem {
   suggestedMarginPct: number;
   priceTier: "low" | "mid" | "high" | "ultra";
   confidence: "low" | "medium" | "high";
+  estimatedSpread7dPct: number;
 }
 
 interface ValueGapAnalysis {
@@ -166,7 +167,7 @@ interface PortfolioCategory {
   color?: string;
 }
 
-type SortKey = keyof ScannerItem | "tradeScore" | "volumeScore" | "momentumScore" | "valueScore" | "riskScore" | "suggestedMarginPct";
+type SortKey = keyof ScannerItem | "tradeScore" | "volumeScore" | "momentumScore" | "valueScore" | "riskScore" | "suggestedMarginPct" | "estimatedSpread7dPct";
 type SortDirection = "asc" | "desc";
 type ViewMode = "compact" | "standard" | "detailed";
 
@@ -1121,7 +1122,7 @@ export default function Scanner() {
 
   const exportData = () => {
     const csv = [
-      ["Item", "Buy", "Sell", "Margin", "ROI%", "Net Profit", "Volume", "Cap Eff", "Trend", "Volatility", "AI Est.%", "Price Tier", "Confidence"].join(","),
+      ["Item", "Buy", "Sell", "Margin", "ROI%", "Net Profit", "Volume", "Cap Eff", "Trend", "Volatility", "7D Range%", "AI Est.%", "Price Tier", "Confidence"].join(","),
       ...filteredAndSortedItems.map(item => [
         `"${item.name}"`,
         item.buyPrice,
@@ -1133,6 +1134,7 @@ export default function Scanner() {
         item.capitalEfficiency,
         item.trend,
         item.volatility,
+        item.estimatedSpread7dPct,
         item.suggestedMarginPct,
         item.priceTier,
         item.confidence,
@@ -1497,6 +1499,13 @@ export default function Scanner() {
                 )}
                 <TableHead 
                   className="cursor-pointer select-none text-muted-foreground hover:text-foreground text-right"
+                  onClick={() => handleSort("estimatedSpread7dPct" as SortKey)}
+                  data-testid="header-7d-range"
+                >
+                  7D RANGE <SortIcon columnKey={"estimatedSpread7dPct" as SortKey} />
+                </TableHead>
+                <TableHead 
+                  className="cursor-pointer select-none text-muted-foreground hover:text-foreground text-right"
                   onClick={() => handleSort("suggestedMarginPct" as SortKey)}
                   data-testid="header-suggested"
                 >
@@ -1647,6 +1656,16 @@ export default function Scanner() {
                           </div>
                         </TableCell>
                       )}
+                      <TableCell className="text-right py-2" data-testid={`cell-7d-range-${item.id}`}>
+                        <span className={`font-mono text-sm font-medium ${
+                          item.estimatedSpread7dPct >= 10 ? "text-emerald-400" 
+                          : item.estimatedSpread7dPct >= 5 ? "text-cyan-400" 
+                          : item.estimatedSpread7dPct >= 2 ? "text-yellow-400" 
+                          : "text-muted-foreground"
+                        }`}>
+                          {item.estimatedSpread7dPct.toFixed(1)}%
+                        </span>
+                      </TableCell>
                       <TableCell className="text-right py-2" data-testid={`cell-suggested-${item.id}`}>
                         <div className="flex items-center justify-end gap-1">
                           <span className="font-mono text-sm text-muted-foreground">{item.suggestedMarginPct.toFixed(1)}%</span>
@@ -1671,7 +1690,7 @@ export default function Scanner() {
                     
                     {isExpanded && (
                       <TableRow className="border-slate-800 bg-slate-900/80" data-testid={`row-expanded-${item.id}`}>
-                        <TableCell colSpan={viewMode === "detailed" ? 19 : viewMode === "compact" ? 16 : 17} className="p-0">
+                        <TableCell colSpan={viewMode === "detailed" ? 20 : viewMode === "compact" ? 17 : 18} className="p-0">
                           <div className="p-4 space-y-4 border-l-2 border-cyan-500/50">
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                               <div>

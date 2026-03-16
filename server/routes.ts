@@ -1120,14 +1120,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let indicators: TechnicalIndicators | null = null;
       let range7d: ObservableRange | null = null;
       let range30d: ObservableRange | null = null;
-      let dailyHistory: any[] | null = null;
       try {
-        const history = await getItemPriceHistory(itemId, "yearly");
-        if (history && history.length > 0) {
-          indicators = calculateTechnicalIndicators(history);
-          range7d = calculateObservableRange(history, 7);
-          range30d = calculateObservableRange(history, 30);
-          dailyHistory = history;
+        const [yearlyHistory, dailyHistory] = await Promise.all([
+          getItemPriceHistory(itemId, "yearly"),
+          getItemPriceHistory(itemId, "daily"),
+        ]);
+        if (yearlyHistory && yearlyHistory.length > 0) {
+          indicators = calculateTechnicalIndicators(yearlyHistory);
+        }
+        if (dailyHistory && dailyHistory.length > 0) {
+          range7d = calculateObservableRange(dailyHistory, 7);
+          range30d = calculateObservableRange(dailyHistory, 30);
         }
       } catch (err) {
         console.error(`Failed to get price history for item ${itemId}:`, err);
