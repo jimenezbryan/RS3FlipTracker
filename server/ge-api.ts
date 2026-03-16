@@ -763,6 +763,22 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
       r.range7dLow = cached.low;
       r.range7dHigh = cached.high;
       r.range7dSpreadPct = cached.spreadPct;
+    } else {
+      const pd = itemPriceCache.get(r.id);
+      if (pd && pd.price > 0) {
+        const current = pd.price;
+        const last = pd.last ?? current;
+        const dailyDelta = Math.abs(current - last);
+        const swing7d = dailyDelta * Math.sqrt(7);
+        const minSwing = Math.max(1, Math.round(current * 0.001));
+        const effectiveSwing = Math.max(swing7d, minSwing);
+        r.range7dLow = Math.round(Math.min(current, last) - effectiveSwing);
+        r.range7dHigh = Math.round(Math.max(current, last) + effectiveSwing);
+        if (r.range7dLow <= 0) r.range7dLow = 1;
+        r.range7dSpreadPct = r.range7dLow > 0
+          ? Math.round(((r.range7dHigh - r.range7dLow) / r.range7dLow) * 10000) / 100
+          : 0;
+      }
     }
   }
 
