@@ -786,6 +786,15 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
     });
   }
 
+  const now = Date.now();
+  if (now - rangeCacheLastUpdated > RANGE_CACHE_TTL) {
+    const topByVolume = [...results]
+      .sort((a, b) => b.volume - a.volume)
+      .slice(0, 50)
+      .map(i => i.id);
+    await populateRangeCache(topByVolume);
+  }
+
   for (const item of results) {
     const cached = rangeCache.get(item.id);
     if (cached) {
@@ -793,15 +802,6 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
       item.range7dHigh = cached.high;
       item.range7dSpreadPct = cached.spreadPct;
     }
-  }
-
-  const now = Date.now();
-  if (now - rangeCacheLastUpdated > RANGE_CACHE_TTL) {
-    const topByVolume = [...results]
-      .sort((a, b) => b.volume - a.volume)
-      .slice(0, 50)
-      .map(i => i.id);
-    populateRangeCache(topByVolume);
   }
 
   return results;
