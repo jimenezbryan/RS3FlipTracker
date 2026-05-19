@@ -524,7 +524,7 @@ export default function Landing() {
 
           <div className="grid gap-8 md:grid-cols-3 max-w-4xl mx-auto">
             {[
-              { step: 1, title: "Sign In", desc: "Log in with your email, Discord, or Replit account. Takes seconds.", color: "text-success", borderColor: "border-success/40" },
+              { step: 1, title: "Sign In", desc: "Log in with your email, Google, Discord, or Replit account. Takes seconds.", color: "text-success", borderColor: "border-success/40" },
               { step: 2, title: "Log Flips", desc: "Search any GE item, enter buy/sell prices. Tax and profit calculated automatically.", color: "text-blue-400", borderColor: "border-blue-500/40" },
               { step: 3, title: "Analyze & Grow", desc: "Review stats, set goals, get AI tips, and watch your equity curve climb.", color: "text-purple-400", borderColor: "border-purple-500/40" },
             ].map((item) => (

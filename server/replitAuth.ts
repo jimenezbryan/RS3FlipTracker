@@ -3,7 +3,7 @@ import { Strategy, type VerifyFunction } from "openid-client/passport";
 
 import passport from "passport";
 import session from "express-session";
-import type { Express, RequestHandler } from "express";
+import type { Express, Request, RequestHandler } from "express";
 import memoize from "memoizee";
 import connectPg from "connect-pg-simple";
 import bcrypt from "bcryptjs";
@@ -82,6 +82,12 @@ const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
 });
+
+function getOAuthRedirectUri(req: Request, path: string) {
+  const forwardedProto = req.get("x-forwarded-proto");
+  const protocol = forwardedProto?.split(",")[0] ?? req.protocol;
+  return `${protocol}://${req.hostname}${path}`;
+}
 
 export async function setupAuth(app: Express) {
   app.set("trust proxy", 1);
@@ -260,6 +266,8 @@ export async function setupAuth(app: Express) {
   // ──── Discord OAuth ────
   const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID;
   const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET;
+  const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+  const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 
   if (DISCORD_CLIENT_ID && DISCORD_CLIENT_SECRET) {
     app.get("/api/auth/discord", (req, res) => {
@@ -356,11 +364,117 @@ export async function setupAuth(app: Express) {
     });
   }
 
+  // ──── Google OAuth ────
+  if (GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET) {
+    app.get("/api/auth/google", (req, res) => {
+      const redirectUri = getOAuthRedirectUri(req, "/api/auth/google/callback");
+      const params = new URLSearchParams({
+        client_id: GOOGLE_CLIENT_ID,
+        redirect_uri: redirectUri,
+        response_type: "code",
+        scope: "openid email profile",
+        access_type: "online",
+      });
+      res.redirect(`https://accounts.google.com/o/oauth2/v2/auth?${params.toString()}`);
+    });
+
+    app.get("/api/auth/google/callback", async (req, res) => {
+      try {
+        const { code } = req.query;
+        if (!code || typeof code !== "string") {
+          return res.redirect("/?error=google_auth_failed");
+        }
+
+        const redirectUri = getOAuthRedirectUri(req, "/api/auth/google/callback");
+
+        const tokenResponse = await fetch("https://oauth2.googleapis.com/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: new URLSearchParams({
+            client_id: GOOGLE_CLIENT_ID,
+            client_secret: GOOGLE_CLIENT_SECRET,
+            grant_type: "authorization_code",
+            code,
+            redirect_uri: redirectUri,
+          }),
+        });
+
+        if (!tokenResponse.ok) {
+          console.error("Google token exchange failed:", await tokenResponse.text());
+          return res.redirect("/?error=google_auth_failed");
+        }
+
+        const tokens = await tokenResponse.json() as { access_token?: string };
+        if (!tokens.access_token) {
+          return res.redirect("/?error=google_auth_failed");
+        }
+
+        const userResponse = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+          headers: { Authorization: `Bearer ${tokens.access_token}` },
+        });
+
+        if (!userResponse.ok) {
+          console.error("Google userinfo failed:", await userResponse.text());
+          return res.redirect("/?error=google_auth_failed");
+        }
+
+        const googleUser = await userResponse.json() as {
+          email?: string;
+          email_verified?: boolean;
+          given_name?: string;
+          family_name?: string;
+          name?: string;
+          picture?: string;
+        };
+
+        if (!googleUser.email || googleUser.email_verified === false) {
+          return res.redirect("/?error=google_email_unverified");
+        }
+
+        let user = await storage.getUserByEmail(googleUser.email);
+
+        if (user) {
+          user = await storage.updateUserProfile(user.id, {
+            firstName: googleUser.given_name || googleUser.name || user.firstName || undefined,
+            lastName: googleUser.family_name || user.lastName || undefined,
+            profileImageUrl: googleUser.picture || user.profileImageUrl || undefined,
+          }) ?? user;
+        } else {
+          user = await storage.upsertUser({
+            email: googleUser.email,
+            firstName: googleUser.given_name || googleUser.name || null,
+            lastName: googleUser.family_name || null,
+            profileImageUrl: googleUser.picture || null,
+            authProvider: "google",
+          } as any);
+        }
+
+        const sessionUser: any = {
+          claims: { sub: user.id },
+          authProvider: "google",
+          expires_at: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
+        };
+
+        req.login(sessionUser, (err) => {
+          if (err) {
+            console.error("Google login session error:", err);
+            return res.redirect("/?error=google_auth_failed");
+          }
+          res.redirect("/");
+        });
+      } catch (error) {
+        console.error("Google auth error:", error);
+        res.redirect("/?error=google_auth_failed");
+      }
+    });
+  }
+
   app.get("/api/auth/providers", (_req, res) => {
     res.json({
       replit: replitAuthEnabled,
       email: true,
       discord: !!(DISCORD_CLIENT_ID && DISCORD_CLIENT_SECRET),
+      google: !!(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET),
     });
   });
 }
@@ -374,7 +488,7 @@ export const isAuthenticated: RequestHandler = async (req, res, next) => {
 
   const now = Math.floor(Date.now() / 1000);
 
-  if (user.authProvider === "email" || user.authProvider === "discord") {
+  if (user.authProvider === "email" || user.authProvider === "discord" || user.authProvider === "google") {
     if (now <= user.expires_at) {
       return next();
     }
