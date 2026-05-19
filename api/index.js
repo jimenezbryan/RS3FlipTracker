@@ -2937,9 +2937,17 @@ function calculateNameSimilarity(a, b) {
 
 // server/ai-vision.ts
 import OpenAI from "openai";
-var openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+var openai;
+function getOpenAI() {
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY is not configured");
+  }
+  openai ??= new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  return openai;
+}
 async function analyzeRS3Screenshot(imageBuffer) {
   try {
+    const openai3 = getOpenAI();
     const base64Image = imageBuffer.toString("base64");
     const mimeType = detectImageMimeType(imageBuffer);
     const systemPrompt = `You are an expert at identifying items from RuneScape 3 (RS3) bank screenshots. 
@@ -2966,7 +2974,7 @@ Respond with valid JSON only, in this exact format:
     ...
   ]
 }`;
-    const response = await openai.chat.completions.create({
+    const response = await openai3.chat.completions.create({
       model: "gpt-5",
       messages: [
         {
@@ -3047,7 +3055,14 @@ function detectImageMimeType(buffer) {
 
 // server/ai-recommendations.ts
 import OpenAI2 from "openai";
-var openai2 = new OpenAI2({ apiKey: process.env.OPENAI_API_KEY });
+var openai2;
+function getOpenAI2() {
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY is not configured");
+  }
+  openai2 ??= new OpenAI2({ apiKey: process.env.OPENAI_API_KEY });
+  return openai2;
+}
 function analyzeUserTradingProfile(flips2) {
   const completedFlips = flips2.filter((f) => f.sellPrice && f.sellDate && !f.deletedAt);
   const strategyStats = /* @__PURE__ */ new Map();
@@ -3249,7 +3264,8 @@ Respond with JSON containing an "items" array. Each item must use the EXACT item
 }`;
   try {
     console.log("[AI Recommendations] Asking AI to analyze", itemSummaries.length, "items");
-    const response = await openai2.chat.completions.create({
+    const openai3 = getOpenAI2();
+    const response = await openai3.chat.completions.create({
       model: "gpt-4o",
       messages: [
         { role: "system", content: "You are an RS3 GE trading advisor. Only select items from the provided list. Never suggest items not in the user's history." },

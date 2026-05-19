@@ -1,7 +1,16 @@
 import OpenAI from "openai";
 import type { Flip } from "@shared/schema";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+let openai: OpenAI | undefined;
+
+function getOpenAI() {
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY is not configured");
+  }
+
+  openai ??= new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  return openai;
+}
 
 export interface UserTradingProfile {
   preferredStrategies: { strategy: string; frequency: number; avgROI: number; winRate: number }[];
@@ -325,6 +334,7 @@ Respond with JSON containing an "items" array. Each item must use the EXACT item
   try {
     console.log("[AI Recommendations] Asking AI to analyze", itemSummaries.length, "items");
 
+    const openai = getOpenAI();
     const response = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [

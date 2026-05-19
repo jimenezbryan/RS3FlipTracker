@@ -1,7 +1,16 @@
 import OpenAI from "openai";
 
 // the newest OpenAI model is "gpt-5" which was released August 7, 2025. do not change this unless explicitly requested by the user
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+let openai: OpenAI | undefined;
+
+function getOpenAI() {
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error("OPENAI_API_KEY is not configured");
+  }
+
+  openai ??= new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  return openai;
+}
 
 interface IdentifiedItem {
   name: string;
@@ -19,6 +28,7 @@ interface VisionAnalysisResult {
 
 export async function analyzeRS3Screenshot(imageBuffer: Buffer): Promise<VisionAnalysisResult> {
   try {
+    const openai = getOpenAI();
     const base64Image = imageBuffer.toString("base64");
     const mimeType = detectImageMimeType(imageBuffer);
 
