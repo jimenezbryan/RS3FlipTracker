@@ -491,13 +491,32 @@ var insertRecipeRunComponentSchema = createInsertSchema(recipeRunComponents).omi
 import { Pool, neonConfig } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-serverless";
 import ws from "ws";
-neonConfig.webSocketConstructor = ws;
-if (!process.env.DATABASE_URL) {
-  throw new Error(
-    "DATABASE_URL must be set. Did you forget to provision a database?"
-  );
+
+// server/databaseUrl.ts
+function hasPgParts() {
+  return !!(process.env.PGHOST && process.env.PGUSER && process.env.PGPASSWORD && process.env.PGDATABASE);
 }
-var pool = new Pool({ connectionString: process.env.DATABASE_URL });
+function getDatabaseUrl() {
+  if (hasPgParts()) {
+    const user = encodeURIComponent(process.env.PGUSER);
+    const password = encodeURIComponent(process.env.PGPASSWORD);
+    const host = process.env.PGHOST;
+    const port = process.env.PGPORT || "5432";
+    const database = encodeURIComponent(process.env.PGDATABASE);
+    return `postgresql://${user}:${password}@${host}:${port}/${database}?sslmode=require`;
+  }
+  if (!process.env.DATABASE_URL) {
+    throw new Error(
+      "DATABASE_URL or PGHOST/PGUSER/PGPASSWORD/PGDATABASE must be set."
+    );
+  }
+  return process.env.DATABASE_URL;
+}
+
+// server/db.ts
+neonConfig.webSocketConstructor = ws;
+var databaseUrl = getDatabaseUrl();
+var pool = new Pool({ connectionString: databaseUrl });
 var db = drizzle({ client: pool, schema: schema_exports });
 
 // server/storage.ts
@@ -2503,7 +2522,7 @@ function getSession() {
   const sessionTtl = 7 * 24 * 60 * 60 * 1e3;
   const pgStore = connectPg(session);
   const sessionStore = new pgStore({
-    conString: process.env.DATABASE_URL,
+    conString: getDatabaseUrl(),
     createTableIfMissing: false,
     ttl: sessionTtl,
     tableName: "sessions"
