@@ -62,6 +62,7 @@ export default function Auth() {
 
   const { data: providers } = useQuery<{ replit: boolean; email: boolean; discord: boolean; google: boolean }>({
     queryKey: ["/api/auth/providers"],
+    placeholderData: { replit: false, email: true, discord: false, google: false },
   });
 
   const handleEmailAuth = async (e: React.FormEvent) => {

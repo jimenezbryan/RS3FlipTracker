@@ -2554,11 +2554,23 @@ function getOAuthRedirectUri(req, path) {
   return `${protocol}://${req.hostname}${path}`;
 }
 async function setupAuth(app) {
+  const replitAuthEnabled = !!process.env.REPL_ID;
+  const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID;
+  const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET;
+  const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+  const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+  app.get("/api/auth/providers", (_req, res) => {
+    res.json({
+      replit: replitAuthEnabled,
+      email: true,
+      discord: !!(DISCORD_CLIENT_ID && DISCORD_CLIENT_SECRET),
+      google: !!(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET)
+    });
+  });
   app.set("trust proxy", 1);
   app.use(getSession());
   app.use(passport.initialize());
   app.use(passport.session());
-  const replitAuthEnabled = !!process.env.REPL_ID;
   const config = replitAuthEnabled ? await getOidcConfig() : null;
   const verify = async (tokens, verified) => {
     const user = {};
@@ -2696,10 +2708,6 @@ async function setupAuth(app) {
       res.status(500).json({ message: "Login failed" });
     }
   });
-  const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID;
-  const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET;
-  const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
-  const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
   if (DISCORD_CLIENT_ID && DISCORD_CLIENT_SECRET) {
     app.get("/api/auth/discord", (req, res) => {
       const redirectUri = `https://${req.hostname}/api/auth/discord/callback`;
@@ -2862,14 +2870,6 @@ async function setupAuth(app) {
       }
     });
   }
-  app.get("/api/auth/providers", (_req, res) => {
-    res.json({
-      replit: replitAuthEnabled,
-      email: true,
-      discord: !!(DISCORD_CLIENT_ID && DISCORD_CLIENT_SECRET),
-      google: !!(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET)
-    });
-  });
 }
 var isAuthenticated = async (req, res, next) => {
   const user = req.user;

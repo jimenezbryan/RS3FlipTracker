@@ -90,12 +90,26 @@ function getOAuthRedirectUri(req: Request, path: string) {
 }
 
 export async function setupAuth(app: Express) {
+  const replitAuthEnabled = !!process.env.REPL_ID;
+  const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID;
+  const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET;
+  const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+  const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+
+  app.get("/api/auth/providers", (_req, res) => {
+    res.json({
+      replit: replitAuthEnabled,
+      email: true,
+      discord: !!(DISCORD_CLIENT_ID && DISCORD_CLIENT_SECRET),
+      google: !!(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET),
+    });
+  });
+
   app.set("trust proxy", 1);
   app.use(getSession());
   app.use(passport.initialize());
   app.use(passport.session());
 
-  const replitAuthEnabled = !!process.env.REPL_ID;
   const config = replitAuthEnabled ? await getOidcConfig() : null;
 
   const verify: VerifyFunction = async (
@@ -264,11 +278,6 @@ export async function setupAuth(app: Express) {
   });
 
   // ──── Discord OAuth ────
-  const DISCORD_CLIENT_ID = process.env.DISCORD_CLIENT_ID;
-  const DISCORD_CLIENT_SECRET = process.env.DISCORD_CLIENT_SECRET;
-  const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
-  const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
-
   if (DISCORD_CLIENT_ID && DISCORD_CLIENT_SECRET) {
     app.get("/api/auth/discord", (req, res) => {
       const redirectUri = `https://${req.hostname}/api/auth/discord/callback`;
@@ -468,15 +477,6 @@ export async function setupAuth(app: Express) {
       }
     });
   }
-
-  app.get("/api/auth/providers", (_req, res) => {
-    res.json({
-      replit: replitAuthEnabled,
-      email: true,
-      discord: !!(DISCORD_CLIENT_ID && DISCORD_CLIENT_SECRET),
-      google: !!(GOOGLE_CLIENT_ID && GOOGLE_CLIENT_SECRET),
-    });
-  });
 }
 
 export const isAuthenticated: RequestHandler = async (req, res, next) => {
