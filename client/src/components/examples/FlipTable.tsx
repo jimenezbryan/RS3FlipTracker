@@ -34,9 +34,13 @@ export default function FlipTableExample() {
     console.log("Delete flip:", id);
   };
 
+  const handleEdit = (id: string) => {
+    console.log("Edit flip:", id);
+  };
+
   return (
     <div className="w-full">
-      <FlipTable flips={mockFlips} onDelete={handleDelete} />
+      <FlipTable flips={mockFlips} onDelete={handleDelete} onEdit={handleEdit} />
     </div>
   );
 }

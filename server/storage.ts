@@ -214,6 +214,7 @@ export class MemStorage implements IStorage {
       membershipStatus: flip.membershipStatus ?? "Unknown",
       isMembers: flip.isMembers ?? null,
       geLimit: flip.geLimit ?? null,
+      tradeType: flip.tradeType ?? "ge",
       deletedAt: null,
     };
     this.flips.set(id, newFlip);

@@ -2615,6 +2615,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         sellDate: sellDate ? new Date(sellDate) : new Date(),
         strategyTag: "Other",
         membershipStatus: "Unknown",
+        tradeType: "ge",
         notes: `Crafted from recipe: ${runDetails.recipe.name}`,
         category: "Crafting",
       });

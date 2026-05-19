@@ -791,7 +791,7 @@ const RANGE_REFRESH_INTERVAL = 15 * 60 * 1000;
 
 async function refreshRange7dCache(): Promise<void> {
   await refreshItemCache();
-  const itemsByVolume = [...itemPriceCache.entries()]
+  const itemsByVolume = Array.from(itemPriceCache.entries())
     .filter(([, d]) => d.price > 0 && (d.volume ?? 0) > 0)
     .sort(([, a], [, b]) => (b.volume ?? 0) - (a.volume ?? 0))
     .slice(0, 100)

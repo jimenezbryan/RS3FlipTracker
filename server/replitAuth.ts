@@ -12,9 +12,13 @@ import { z } from "zod";
 
 const getOidcConfig = memoize(
   async () => {
+    if (!process.env.REPL_ID) {
+      throw new Error("REPL_ID is required for Replit OIDC");
+    }
+
     return await client.discovery(
       new URL(process.env.ISSUER_URL ?? "https://replit.com/oidc"),
-      process.env.REPL_ID!
+      process.env.REPL_ID
     );
   },
   { maxAge: 3600 * 1000 }
@@ -36,7 +40,8 @@ export function getSession() {
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      secure: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
       maxAge: sessionTtl,
     },
   });
@@ -84,7 +89,8 @@ export async function setupAuth(app: Express) {
   app.use(passport.initialize());
   app.use(passport.session());
 
-  const config = await getOidcConfig();
+  const replitAuthEnabled = !!process.env.REPL_ID;
+  const config = replitAuthEnabled ? await getOidcConfig() : null;
 
   const verify: VerifyFunction = async (
     tokens: client.TokenEndpointResponse & client.TokenEndpointResponseHelpers,
@@ -100,6 +106,10 @@ export async function setupAuth(app: Express) {
   const registeredStrategies = new Set<string>();
 
   const ensureStrategy = (domain: string) => {
+    if (!config) {
+      throw new Error("Replit OIDC is not configured");
+    }
+
     const strategyName = `replitauth:${domain}`;
     if (!registeredStrategies.has(strategyName)) {
       const strategy = new Strategy(
@@ -120,25 +130,27 @@ export async function setupAuth(app: Express) {
   passport.deserializeUser((user: Express.User, cb) => cb(null, user));
 
   // ──── Replit OAuth routes ────
-  app.get("/api/login", (req, res, next) => {
-    ensureStrategy(req.hostname);
-    passport.authenticate(`replitauth:${req.hostname}`, {
-      prompt: "login consent",
-      scope: ["openid", "email", "profile", "offline_access"],
-    })(req, res, next);
-  });
+  if (config) {
+    app.get("/api/login", (req, res, next) => {
+      ensureStrategy(req.hostname);
+      passport.authenticate(`replitauth:${req.hostname}`, {
+        prompt: "login consent",
+        scope: ["openid", "email", "profile", "offline_access"],
+      })(req, res, next);
+    });
 
-  app.get("/api/callback", (req, res, next) => {
-    ensureStrategy(req.hostname);
-    passport.authenticate(`replitauth:${req.hostname}`, {
-      successReturnToOrRedirect: "/",
-      failureRedirect: "/api/login",
-    })(req, res, next);
-  });
+    app.get("/api/callback", (req, res, next) => {
+      ensureStrategy(req.hostname);
+      passport.authenticate(`replitauth:${req.hostname}`, {
+        successReturnToOrRedirect: "/",
+        failureRedirect: "/api/login",
+      })(req, res, next);
+    });
+  }
 
   app.get("/api/logout", (req, res) => {
     const user = req.user as any;
-    const isReplitUser = user?.authProvider === "replit" && user?.claims;
+    const isReplitUser = config && user?.authProvider === "replit" && user?.claims;
     
     req.logout(() => {
       if (isReplitUser) {
@@ -346,7 +358,7 @@ export async function setupAuth(app: Express) {
 
   app.get("/api/auth/providers", (_req, res) => {
     res.json({
-      replit: true,
+      replit: replitAuthEnabled,
       email: true,
       discord: !!(DISCORD_CLIENT_ID && DISCORD_CLIENT_SECRET),
     });
