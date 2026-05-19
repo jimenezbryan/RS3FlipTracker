@@ -1,5 +1,5 @@
 import type { Express } from "express";
-import { createApp } from "../server/app";
+import { createApp } from "./app";
 
 let appPromise: Promise<Express> | undefined;
 
