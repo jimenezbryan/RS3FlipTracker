@@ -1,11 +1,18 @@
-const { contextBridge } = require("electron");
+const { contextBridge, nativeImage } = require("electron");
 const screenshot = require("screenshot-desktop");
 
 async function captureScreenAndParse(baseUrl, token) {
   if (!baseUrl) throw new Error("Missing baseUrl");
   if (!token) throw new Error("Missing token");
-  const imageBuffer = await screenshot({ format: "png" });
-  const imageBase64 = imageBuffer.toString("base64");
+  const rawBuffer = await screenshot({ format: "png" });
+  const image = nativeImage.createFromBuffer(rawBuffer);
+  const { width, height } = image.getSize();
+  const maxWidth = 1600;
+  const resized = width > maxWidth
+    ? image.resize({ width: maxWidth, height: Math.round((height * maxWidth) / width) })
+    : image;
+  const jpegBuffer = resized.toJPEG(68);
+  const imageBase64 = jpegBuffer.toString("base64");
   const response = await fetch(`${baseUrl.replace(/\/$/, "")}/api/companion/parse/ge-history`, {
     method: "POST",
     headers: {
