@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express, Request } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
 import { storage } from "./storage";
@@ -12,11 +12,104 @@ import { analyzeUserTradingProfile, getPersonalizedRecommendations } from "./ai-
 import { calculateFlipTax } from "@shared/taxCalculator";
 import { sendFlipToDiscord, sendFlipUpdateToDiscord, sendGoalAchievementToDiscord, sendDailySummaryToDiscord, type GoalAchievement } from "./discord";
 import { startOfDay, startOfWeek, startOfMonth, isAfter } from "date-fns";
+import { z } from "zod";
+import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 
 const upload = multer({ 
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 } // 10MB max
 });
+
+const companionTokenTtlSeconds = 90 * 24 * 60 * 60;
+const companionTokenVersion = 1;
+
+type CompanionTokenPayload = {
+  uid: string;
+  exp: number;
+  nonce: string;
+  v: number;
+};
+
+const companionIngestRowSchema = z.object({
+  itemName: z.string().min(1),
+  quantity: z.coerce.number().int().positive(),
+  price: z.coerce.number().int().positive(),
+  type: z.enum(["buy", "sell"]),
+  timestamp: z.string().datetime().optional(),
+});
+
+const companionIngestSchema = z.object({
+  rows: z.array(companionIngestRowSchema).min(1).max(500),
+  source: z.string().max(100).optional(),
+});
+
+function encodeBase64Url(value: string | Buffer) {
+  const buffer = Buffer.isBuffer(value) ? value : Buffer.from(value, "utf8");
+  return buffer.toString("base64url");
+}
+
+function decodeBase64Url(value: string) {
+  return Buffer.from(value, "base64url").toString("utf8");
+}
+
+function getCompanionTokenSecret() {
+  if (!process.env.SESSION_SECRET) {
+    throw new Error("SESSION_SECRET is required for companion tokens");
+  }
+  return process.env.SESSION_SECRET;
+}
+
+function createCompanionToken(userId: string) {
+  const payload: CompanionTokenPayload = {
+    uid: userId,
+    exp: Math.floor(Date.now() / 1000) + companionTokenTtlSeconds,
+    nonce: encodeBase64Url(randomBytes(12)),
+    v: companionTokenVersion,
+  };
+  const payloadEncoded = encodeBase64Url(JSON.stringify(payload));
+  const signature = createHmac("sha256", getCompanionTokenSecret())
+    .update(payloadEncoded)
+    .digest("base64url");
+  return `${payloadEncoded}.${signature}`;
+}
+
+function parseAndVerifyCompanionToken(token: string): CompanionTokenPayload | null {
+  const parts = token.split(".");
+  if (parts.length !== 2) return null;
+  const [payloadEncoded, providedSignature] = parts;
+  const expectedSignature = createHmac("sha256", getCompanionTokenSecret())
+    .update(payloadEncoded)
+    .digest("base64url");
+
+  if (providedSignature.length !== expectedSignature.length) {
+    return null;
+  }
+
+  const signatureIsValid = timingSafeEqual(
+    Buffer.from(providedSignature),
+    Buffer.from(expectedSignature),
+  );
+  if (!signatureIsValid) return null;
+
+  try {
+    const payload = JSON.parse(decodeBase64Url(payloadEncoded)) as CompanionTokenPayload;
+    if (!payload || payload.v !== companionTokenVersion) return null;
+    if (!payload.uid || !payload.exp) return null;
+    if (Math.floor(Date.now() / 1000) > payload.exp) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+function getBearerToken(req: Request): string | null {
+  const auth = req.get("authorization");
+  if (!auth) return null;
+  const [scheme, value] = auth.split(" ");
+  if (!scheme || !value) return null;
+  if (scheme.toLowerCase() !== "bearer") return null;
+  return value.trim();
+}
 
 // Helper to calculate profit for a flip
 function calculateFlipProfit(flip: any): number {
@@ -164,6 +257,175 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching user:", error);
       res.status(500).json({ message: "Failed to fetch user" });
+    }
+  });
+
+  // Companion app auth token for desktop clients (macOS helper app)
+  app.get("/api/companion/token", isAuthenticated, async (req: any, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const token = createCompanionToken(userId);
+      const expiresAt = new Date(Date.now() + companionTokenTtlSeconds * 1000).toISOString();
+      res.json({ token, expiresAt });
+    } catch (error) {
+      console.error("Failed to issue companion token:", error);
+      res.status(500).json({ error: "Failed to issue companion token" });
+    }
+  });
+
+  app.get("/api/companion/me", async (req, res) => {
+    try {
+      const token = getBearerToken(req);
+      if (!token) {
+        return res.status(401).json({ error: "Missing bearer token" });
+      }
+      const payload = parseAndVerifyCompanionToken(token);
+      if (!payload) {
+        return res.status(401).json({ error: "Invalid companion token" });
+      }
+      const user = await storage.getUser(payload.uid);
+      if (!user) {
+        return res.status(401).json({ error: "Unknown user for token" });
+      }
+
+      res.json({
+        user: {
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName,
+        },
+      });
+    } catch (error) {
+      console.error("Companion auth check failed:", error);
+      res.status(500).json({ error: "Companion auth check failed" });
+    }
+  });
+
+  // Ingest parsed GE history rows from desktop companion app
+  app.post("/api/companion/ingest/ge-history", async (req, res) => {
+    try {
+      const token = getBearerToken(req);
+      if (!token) {
+        return res.status(401).json({ error: "Missing bearer token" });
+      }
+      const payload = parseAndVerifyCompanionToken(token);
+      if (!payload) {
+        return res.status(401).json({ error: "Invalid companion token" });
+      }
+
+      const parsed = companionIngestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid payload" });
+      }
+
+      const userId = payload.uid;
+      const existingFlips = await storage.getFlips(userId);
+      const openFlipsByItem = new Map<string, typeof existingFlips>();
+      for (const flip of existingFlips) {
+        if (flip.deletedAt || flip.sellDate) continue;
+        const key = flip.itemName.trim().toLowerCase();
+        const arr = openFlipsByItem.get(key) ?? [];
+        arr.push(flip);
+        openFlipsByItem.set(key, arr);
+      }
+      openFlipsByItem.forEach((flips) => {
+        flips.sort((a, b) => new Date(b.buyDate).getTime() - new Date(a.buyDate).getTime());
+      });
+
+      let createdBuys = 0;
+      let matchedSells = 0;
+      let skippedDuplicates = 0;
+      let unmatchedSells = 0;
+      const processed: Array<{ type: "buy" | "sell"; itemName: string; quantity: number; price: number }> = [];
+
+      for (const row of parsed.data.rows) {
+        const rowDate = row.timestamp ? new Date(row.timestamp) : new Date();
+        const dateValue = Number.isNaN(rowDate.getTime()) ? new Date() : rowDate;
+        const normalizedName = row.itemName.trim();
+        const itemKey = normalizedName.toLowerCase();
+
+        if (row.type === "buy") {
+          const duplicate = existingFlips.find((flip) => {
+            if (flip.deletedAt || flip.itemName.toLowerCase() !== itemKey) return false;
+            if (Number(flip.buyPrice) !== row.price) return false;
+            if ((flip.quantity ?? 1) !== row.quantity) return false;
+            const deltaMs = Math.abs(new Date(flip.buyDate).getTime() - dateValue.getTime());
+            return deltaMs <= 2 * 60 * 1000;
+          });
+          if (duplicate) {
+            skippedDuplicates += 1;
+            continue;
+          }
+
+          const matches = await searchItems(normalizedName);
+          const bestMatch = matches[0];
+
+          const newFlip = await storage.createFlip(userId, {
+            itemName: bestMatch?.name ?? normalizedName,
+            itemId: bestMatch?.id,
+            itemIcon: bestMatch?.icon,
+            quantity: row.quantity,
+            buyPrice: row.price,
+            buyDate: dateValue,
+            strategyTag: "Other",
+            membershipStatus: "Unknown",
+            tradeType: "ge",
+          });
+
+          const openList = openFlipsByItem.get(itemKey) ?? [];
+          openList.unshift(newFlip);
+          openFlipsByItem.set(itemKey, openList);
+
+          createdBuys += 1;
+          processed.push({ type: "buy", itemName: newFlip.itemName, quantity: row.quantity, price: row.price });
+          continue;
+        }
+
+        const candidates = openFlipsByItem.get(itemKey) ?? [];
+        let candidateIndex = candidates.findIndex((flip) => (flip.quantity ?? 1) === row.quantity);
+        if (candidateIndex < 0) {
+          candidateIndex = 0;
+        }
+
+        if (candidateIndex < 0 || !candidates[candidateIndex]) {
+          unmatchedSells += 1;
+          continue;
+        }
+
+        const target = candidates[candidateIndex];
+        const existingNotes = target.notes ?? "";
+        const sourceNote = parsed.data.source ? `Imported from companion source=${parsed.data.source}` : "Imported from mac companion";
+        const nextNotes = existingNotes ? `${existingNotes}\n${sourceNote}` : sourceNote;
+
+        const updated = await storage.updateFlip(target.id, userId, {
+          sellPrice: row.price,
+          sellDate: dateValue,
+          notes: nextNotes,
+        });
+
+        if (!updated) {
+          unmatchedSells += 1;
+          continue;
+        }
+
+        candidates.splice(candidateIndex, 1);
+        openFlipsByItem.set(itemKey, candidates);
+        matchedSells += 1;
+        processed.push({ type: "sell", itemName: updated.itemName, quantity: row.quantity, price: row.price });
+      }
+
+      res.json({
+        success: true,
+        createdBuys,
+        matchedSells,
+        skippedDuplicates,
+        unmatchedSells,
+        processedCount: processed.length,
+      });
+    } catch (error) {
+      console.error("Companion ingest failed:", error);
+      res.status(500).json({ error: "Companion ingest failed" });
     }
   });
 

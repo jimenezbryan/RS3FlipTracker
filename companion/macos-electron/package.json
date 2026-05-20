@@ -1,0 +1,33 @@
+{
+  "name": "rs3-flip-tracker-mac-companion",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Unsigned macOS companion app for RS3 Flip Tracker GE history OCR imports",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "package:mac": "electron-builder --mac zip"
+  },
+  "devDependencies": {
+    "electron": "^31.7.6",
+    "electron-builder": "^24.13.3"
+  },
+  "dependencies": {
+    "screenshot-desktop": "^1.15.3",
+    "tesseract.js": "^6.0.1"
+  },
+  "build": {
+    "appId": "com.flipsync.maccompanion",
+    "productName": "FlipSync Companion",
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.finance"
+    }
+  }
+}
+

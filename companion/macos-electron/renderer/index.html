@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>FlipSync Companion</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <h1>FlipSync Companion (Mac)</h1>
+      <p class="muted">Capture GE history from screen, parse rows, then push to your FlipSync API.</p>
+
+      <section class="panel">
+        <h2>Connection</h2>
+        <label>
+          API Base URL
+          <input id="baseUrl" value="https://rs3-flip-tracker.vercel.app" />
+        </label>
+        <label>
+          Companion Token
+          <textarea id="token" rows="3" placeholder="Paste token from /api/companion/token"></textarea>
+        </label>
+        <div class="row">
+          <button id="verifyToken">Verify Token</button>
+          <span id="authStatus" class="muted"></span>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Capture + Parse</h2>
+        <div class="row">
+          <button id="capture">Capture Screen + OCR</button>
+          <span id="captureStatus" class="muted"></span>
+        </div>
+        <details>
+          <summary>Raw OCR text</summary>
+          <pre id="rawText"></pre>
+        </details>
+      </section>
+
+      <section class="panel">
+        <h2>Parsed Rows</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Type</th>
+              <th>Item</th>
+              <th>Qty</th>
+              <th>Price</th>
+            </tr>
+          </thead>
+          <tbody id="rowsBody"></tbody>
+        </table>
+        <div class="row">
+          <button id="send" disabled>Send to FlipSync</button>
+          <span id="sendStatus" class="muted"></span>
+        </div>
+      </section>
+    </main>
+
+    <script src="./renderer.js"></script>
+  </body>
+  </html>
+
