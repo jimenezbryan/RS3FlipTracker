@@ -105,6 +105,50 @@ type PasswordResetPayload = {
   v: number;
 };
 
+async function sendPasswordResetEmail(to: string, resetUrl: string) {
+  const resendApiKey = process.env.RESEND_API_KEY;
+  const fromEmail = process.env.PASSWORD_RESET_FROM_EMAIL;
+
+  if (!resendApiKey || !fromEmail) {
+    throw new Error("Missing RESEND_API_KEY or PASSWORD_RESET_FROM_EMAIL");
+  }
+
+  const appName = process.env.PASSWORD_RESET_APP_NAME || "RS3 Flip Tracker";
+  const subject = process.env.PASSWORD_RESET_EMAIL_SUBJECT || `${appName}: Reset your password`;
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${resendApiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: fromEmail,
+      to: [to],
+      subject,
+      html: `
+        <p>We received a request to reset your ${appName} password.</p>
+        <p><a href="${resetUrl}">Reset your password</a></p>
+        <p>This link expires in 30 minutes.</p>
+        <p>If you did not request this, you can safely ignore this email.</p>
+      `,
+      text: [
+        `We received a request to reset your ${appName} password.`,
+        "",
+        `Reset your password: ${resetUrl}`,
+        "",
+        "This link expires in 30 minutes.",
+        "If you did not request this, you can safely ignore this email.",
+      ].join("\n"),
+    }),
+  });
+
+  if (!response.ok) {
+    const details = await response.text();
+    throw new Error(`Resend error: ${response.status} ${details}`);
+  }
+}
+
 function encodeBase64Url(value: string | Buffer) {
   const buffer = Buffer.isBuffer(value) ? value : Buffer.from(value, "utf8");
   return buffer.toString("base64url");
@@ -380,6 +424,8 @@ export async function setupAuth(app: Express) {
       const directResetLinksAllowed =
         process.env.NODE_ENV !== "production" ||
         process.env.PASSWORD_RESET_ALLOW_DIRECT_LINK === "true";
+      const emailDeliveryConfigured =
+        !!process.env.RESEND_API_KEY && !!process.env.PASSWORD_RESET_FROM_EMAIL;
 
       if (!user || !user.password) {
         return res.json({
@@ -390,6 +436,20 @@ export async function setupAuth(app: Express) {
 
       const token = createPasswordResetToken(user.email ?? email, user.password);
       const resetUrl = `${getOAuthRedirectUri(req, "/auth")}?resetToken=${encodeURIComponent(token)}`;
+
+      if (emailDeliveryConfigured) {
+        try {
+          await sendPasswordResetEmail(user.email ?? email, resetUrl);
+        } catch (emailError) {
+          console.error("Password reset email delivery failed:", emailError);
+          return res.status(500).json({ message: "Failed to send password reset email" });
+        }
+
+        return res.json({
+          success: true,
+          message: "If an account exists, password reset instructions have been prepared.",
+        });
+      }
 
       if (directResetLinksAllowed) {
         return res.json({
