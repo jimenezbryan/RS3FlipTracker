@@ -10,6 +10,7 @@ import bcrypt from "bcryptjs";
 import { storage } from "./storage";
 import { getDatabaseUrl } from "./databaseUrl";
 import { z } from "zod";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "crypto";
 
 const getOidcConfig = memoize(
   async () => {
@@ -83,6 +84,94 @@ const loginSchema = z.object({
   email: z.string().email(),
   password: z.string().min(1),
 });
+
+const requestPasswordResetSchema = z.object({
+  email: z.string().email(),
+});
+
+const confirmPasswordResetSchema = z.object({
+  token: z.string().min(20),
+  newPassword: z.string().min(6),
+});
+
+const resetTokenTtlSeconds = 30 * 60;
+const resetTokenVersion = 1;
+
+type PasswordResetPayload = {
+  email: string;
+  exp: number;
+  pwdFingerprint: string;
+  nonce: string;
+  v: number;
+};
+
+function encodeBase64Url(value: string | Buffer) {
+  const buffer = Buffer.isBuffer(value) ? value : Buffer.from(value, "utf8");
+  return buffer.toString("base64url");
+}
+
+function decodeBase64Url(value: string) {
+  return Buffer.from(value, "base64url").toString("utf8");
+}
+
+function passwordFingerprint(passwordHash: string) {
+  return createHash("sha256").update(passwordHash).digest("hex");
+}
+
+function getResetTokenSecret() {
+  if (!process.env.SESSION_SECRET) {
+    throw new Error("SESSION_SECRET is required for password reset tokens");
+  }
+  return process.env.SESSION_SECRET;
+}
+
+function createPasswordResetToken(email: string, currentPasswordHash: string) {
+  const payload: PasswordResetPayload = {
+    email,
+    exp: Math.floor(Date.now() / 1000) + resetTokenTtlSeconds,
+    pwdFingerprint: passwordFingerprint(currentPasswordHash),
+    nonce: encodeBase64Url(randomBytes(12)),
+    v: resetTokenVersion,
+  };
+  const payloadEncoded = encodeBase64Url(JSON.stringify(payload));
+  const signature = createHmac("sha256", getResetTokenSecret())
+    .update(payloadEncoded)
+    .digest("base64url");
+  return `${payloadEncoded}.${signature}`;
+}
+
+function parseAndVerifyResetToken(token: string): PasswordResetPayload | null {
+  const parts = token.split(".");
+  if (parts.length !== 2) return null;
+
+  const [payloadEncoded, providedSignature] = parts;
+  const expectedSignature = createHmac("sha256", getResetTokenSecret())
+    .update(payloadEncoded)
+    .digest("base64url");
+
+  if (providedSignature.length !== expectedSignature.length) {
+    return null;
+  }
+
+  const signatureIsValid = timingSafeEqual(
+    Buffer.from(providedSignature),
+    Buffer.from(expectedSignature),
+  );
+
+  if (!signatureIsValid) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(decodeBase64Url(payloadEncoded)) as PasswordResetPayload;
+    if (!parsed || parsed.v !== resetTokenVersion) return null;
+    if (!parsed.email || !parsed.exp || !parsed.pwdFingerprint) return null;
+    if (Math.floor(Date.now() / 1000) > parsed.exp) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
 
 function getOAuthRedirectUri(req: Request, path: string) {
   const forwardedProto = req.get("x-forwarded-proto");
@@ -275,6 +364,86 @@ export async function setupAuth(app: Express) {
     } catch (error) {
       console.error("Login error:", error);
       res.status(500).json({ message: "Login failed" });
+    }
+  });
+
+  // ──── Password Reset (Email/Password Accounts) ────
+  app.post("/api/auth/password-reset/request", async (req, res) => {
+    try {
+      const parsed = requestPasswordResetSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.errors[0].message });
+      }
+
+      const { email } = parsed.data;
+      const user = await storage.getUserByEmail(email);
+      const directResetLinksAllowed =
+        process.env.NODE_ENV !== "production" ||
+        process.env.PASSWORD_RESET_ALLOW_DIRECT_LINK === "true";
+
+      if (!user || !user.password) {
+        return res.json({
+          success: true,
+          message: "If an account exists, password reset instructions have been prepared.",
+        });
+      }
+
+      const token = createPasswordResetToken(user.email ?? email, user.password);
+      const resetUrl = `${getOAuthRedirectUri(req, "/auth")}?resetToken=${encodeURIComponent(token)}`;
+
+      if (directResetLinksAllowed) {
+        return res.json({
+          success: true,
+          message: "Use the reset link to set a new password.",
+          resetUrl,
+        });
+      }
+
+      console.warn("Password reset requested but direct links are disabled and email sending is not configured.");
+      return res.json({
+        success: true,
+        message: "If an account exists, password reset instructions have been prepared.",
+      });
+    } catch (error) {
+      console.error("Password reset request error:", error);
+      res.status(500).json({ message: "Failed to request password reset" });
+    }
+  });
+
+  app.post("/api/auth/password-reset/confirm", async (req, res) => {
+    try {
+      const parsed = confirmPasswordResetSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ message: parsed.error.errors[0].message });
+      }
+
+      const { token, newPassword } = parsed.data;
+      const payload = parseAndVerifyResetToken(token);
+      if (!payload) {
+        return res.status(400).json({ message: "Invalid or expired reset token" });
+      }
+
+      const user = await storage.getUserByEmail(payload.email);
+      if (!user || !user.password) {
+        return res.status(400).json({ message: "Invalid or expired reset token" });
+      }
+
+      const currentFingerprint = passwordFingerprint(user.password);
+      if (currentFingerprint !== payload.pwdFingerprint) {
+        return res.status(400).json({ message: "Invalid or expired reset token" });
+      }
+
+      const passwordHash = await bcrypt.hash(newPassword, 12);
+      const updated = await storage.setUserPassword(user.id, passwordHash);
+
+      if (!updated) {
+        return res.status(500).json({ message: "Failed to update password" });
+      }
+
+      return res.json({ success: true, message: "Password updated successfully" });
+    } catch (error) {
+      console.error("Password reset confirm error:", error);
+      res.status(500).json({ message: "Failed to reset password" });
     }
   });
 

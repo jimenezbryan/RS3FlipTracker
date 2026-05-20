@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -20,7 +20,7 @@ import {
   Zap,
 } from "lucide-react";
 
-type AuthMode = "login" | "register";
+type AuthMode = "login" | "register" | "forgot" | "reset";
 
 function DiscordIcon({ className }: { className?: string }) {
   return (
@@ -53,7 +53,10 @@ export default function Auth() {
   const [mode, setMode] = useState<AuthMode>("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [firstName, setFirstName] = useState("");
+  const [resetToken, setResetToken] = useState("");
+  const [resetLink, setResetLink] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [, setLocation] = useLocation();
@@ -64,6 +67,15 @@ export default function Auth() {
     queryKey: ["/api/auth/providers"],
     placeholderData: { replit: false, email: true, discord: false, google: false },
   });
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tokenFromQuery = params.get("resetToken");
+    if (tokenFromQuery) {
+      setResetToken(tokenFromQuery);
+      setMode("reset");
+    }
+  }, []);
 
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -106,6 +118,100 @@ export default function Auth() {
     }
   };
 
+  const handleRequestPasswordReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+    setResetLink(null);
+
+    try {
+      const res = await fetch("/api/auth/password-reset/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        toast({
+          title: "Reset Request Failed",
+          description: data.message || "Something went wrong",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      if (data.resetUrl) {
+        setResetLink(data.resetUrl);
+      }
+
+      toast({
+        title: "Check your reset instructions",
+        description: data.message || "If an account exists, reset instructions were generated.",
+      });
+    } catch {
+      toast({
+        title: "Error",
+        description: "Something went wrong. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleConfirmPasswordReset = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsSubmitting(true);
+
+    if (password !== confirmPassword) {
+      toast({
+        title: "Passwords do not match",
+        description: "Please re-enter both password fields.",
+        variant: "destructive",
+      });
+      setIsSubmitting(false);
+      return;
+    }
+
+    try {
+      const res = await fetch("/api/auth/password-reset/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: resetToken, newPassword: password }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        toast({
+          title: "Reset Failed",
+          description: data.message || "Unable to reset password.",
+          variant: "destructive",
+        });
+        return;
+      }
+
+      toast({
+        title: "Password Updated",
+        description: "You can now sign in with your new password.",
+      });
+      setPassword("");
+      setConfirmPassword("");
+      setResetToken("");
+      setMode("login");
+      setLocation("/auth");
+    } catch {
+      toast({
+        title: "Error",
+        description: "Something went wrong. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#0a0e14] via-[#0f1419] to-[#0a0e14] text-foreground relative flex items-center justify-center p-4">
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
@@ -131,16 +237,22 @@ export default function Auth() {
             <GPStackLogo size={40} />
           </div>
           <h1 className="text-2xl font-bold text-white mb-1">
-            {mode === "login" ? "Welcome back" : "Create your account"}
+            {mode === "login" && "Welcome back"}
+            {mode === "register" && "Create your account"}
+            {mode === "forgot" && "Reset your password"}
+            {mode === "reset" && "Set a new password"}
           </h1>
           <p className="text-sm text-muted-foreground">
-            {mode === "login" ? "Sign in to your FlipSync account" : "Start tracking your RS3 flips"}
+            {mode === "login" && "Sign in to your FlipSync account"}
+            {mode === "register" && "Start tracking your RS3 flips"}
+            {mode === "forgot" && "Enter your email and we will generate reset instructions."}
+            {mode === "reset" && "Create a fresh password for your account."}
           </p>
         </div>
 
         <Card className="bg-[#131a22]/90 border-border/40 p-6 backdrop-blur-sm">
           <div className="space-y-4">
-            {providers?.replit && (
+            {(mode === "login" || mode === "register") && providers?.replit && (
               <div className="space-y-2">
                 <Button
                   variant="default"
@@ -160,7 +272,7 @@ export default function Auth() {
               </div>
             )}
 
-            {providers?.discord && (
+            {(mode === "login" || mode === "register") && providers?.discord && (
               <Button
                 variant="outline"
                 className="w-full justify-center gap-3 bg-[#5865F2]/10 border-[#5865F2]/30 text-[#5865F2] backdrop-blur-sm"
@@ -174,7 +286,7 @@ export default function Auth() {
               </Button>
             )}
 
-            {providers?.google && (
+            {(mode === "login" || mode === "register") && providers?.google && (
               <Button
                 variant="outline"
                 className="w-full justify-center gap-3 bg-white/5 border-border/50 text-white backdrop-blur-sm"
@@ -188,7 +300,7 @@ export default function Auth() {
               </Button>
             )}
 
-            {(providers?.replit || providers?.discord || providers?.google) && providers?.email && (
+            {(mode === "login" || mode === "register") && (providers?.replit || providers?.discord || providers?.google) && providers?.email && (
               <div className="relative">
                 <div className="absolute inset-0 flex items-center">
                   <span className="w-full border-t border-border/40" />
@@ -199,7 +311,7 @@ export default function Auth() {
               </div>
             )}
 
-            {providers?.email && (
+            {providers?.email && (mode === "login" || mode === "register") && (
               <form onSubmit={handleEmailAuth} className="space-y-4">
                 {mode === "register" && (
                   <div className="space-y-2">
@@ -281,6 +393,138 @@ export default function Auth() {
                   )}
                   {mode === "login" ? "Sign In" : "Create Account"}
                 </Button>
+
+                {mode === "login" && (
+                  <div className="text-center">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMode("forgot");
+                        setPassword("");
+                      }}
+                      className="text-sm text-muted-foreground hover:text-white transition-colors"
+                      data-testid="button-forgot-password"
+                    >
+                      Forgot password?
+                    </button>
+                  </div>
+                )}
+              </form>
+            )}
+
+            {providers?.email && mode === "forgot" && (
+              <form onSubmit={handleRequestPasswordReset} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="reset-email" className="text-sm text-muted-foreground">
+                    Email
+                  </Label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="reset-email"
+                      type="email"
+                      placeholder="you@example.com"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      required
+                      className="pl-10 bg-background/50 border-border/40"
+                      data-testid="input-reset-email"
+                    />
+                  </div>
+                </div>
+
+                <Button
+                  type="submit"
+                  className="w-full"
+                  disabled={isSubmitting}
+                  data-testid="button-request-password-reset"
+                >
+                  {isSubmitting ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <Mail className="h-4 w-4 mr-2" />
+                  )}
+                  Send Reset Instructions
+                </Button>
+
+                {resetLink && (
+                  <div className="rounded-md border border-border/40 bg-background/30 p-3 text-xs">
+                    <p className="text-muted-foreground mb-2">Reset link:</p>
+                    <a
+                      href={resetLink}
+                      className="break-all text-success hover:underline"
+                      data-testid="link-direct-reset-url"
+                    >
+                      {resetLink}
+                    </a>
+                  </div>
+                )}
+              </form>
+            )}
+
+            {providers?.email && mode === "reset" && (
+              <form onSubmit={handleConfirmPasswordReset} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="new-password" className="text-sm text-muted-foreground">
+                    New Password
+                  </Label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="new-password"
+                      type={showPassword ? "text" : "password"}
+                      placeholder="Min 6 characters"
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      minLength={6}
+                      required
+                      className="pl-10 pr-10 bg-background/50 border-border/40"
+                      data-testid="input-new-password"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="confirm-password" className="text-sm text-muted-foreground">
+                    Confirm New Password
+                  </Label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      id="confirm-password"
+                      type={showPassword ? "text" : "password"}
+                      placeholder="Re-enter password"
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      minLength={6}
+                      required
+                      className="pl-10 pr-10 bg-background/50 border-border/40"
+                      data-testid="input-confirm-password"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                      data-testid="button-toggle-password-reset"
+                    >
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <Button
+                  type="submit"
+                  className="w-full"
+                  disabled={isSubmitting}
+                  data-testid="button-confirm-password-reset"
+                >
+                  {isSubmitting ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <Lock className="h-4 w-4 mr-2" />
+                  )}
+                  Update Password
+                </Button>
               </form>
             )}
 
@@ -288,13 +532,20 @@ export default function Auth() {
               <button
                 type="button"
                 onClick={() => {
-                  setMode(mode === "login" ? "register" : "login");
+                  if (mode === "forgot" || mode === "reset") {
+                    setMode("login");
+                  } else {
+                    setMode(mode === "login" ? "register" : "login");
+                  }
                   setPassword("");
+                  setConfirmPassword("");
                 }}
                 className="text-sm text-muted-foreground hover:text-white transition-colors"
                 data-testid="button-switch-mode"
               >
-                {mode === "login" ? (
+                {mode === "forgot" || mode === "reset" ? (
+                  <>Back to <span className="text-success font-medium">Sign in</span></>
+                ) : mode === "login" ? (
                   <>No account yet? <span className="text-success font-medium">Sign up</span></>
                 ) : (
                   <>Already have an account? <span className="text-success font-medium">Sign in</span></>

@@ -94,6 +94,7 @@ export interface IStorage {
   getOnlineUsers(thresholdMs?: number): Promise<User[]>;
   getAllUsers(): Promise<User[]>;
   setUserAdmin(userId: string, isAdmin: boolean): Promise<User | undefined>;
+  setUserPassword(userId: string, passwordHash: string): Promise<User | undefined>;
   getUserByEmail(email: string): Promise<User | undefined>;
   getUserByDiscordId(discordId: string): Promise<User | undefined>;
   linkDiscordId(userId: string, discordId: string): Promise<void>;
@@ -748,6 +749,15 @@ export class MemStorage implements IStorage {
     const user = this.users.get(userId);
     if (!user) return undefined;
     user.isAdmin = isAdmin;
+    return user;
+  }
+
+  async setUserPassword(userId: string, passwordHash: string): Promise<User | undefined> {
+    const user = this.users.get(userId);
+    if (!user) return undefined;
+    user.password = passwordHash;
+    user.updatedAt = new Date();
+    this.users.set(userId, user);
     return user;
   }
 
@@ -1435,6 +1445,14 @@ export class DatabaseStorage implements IStorage {
   async setUserAdmin(userId: string, isAdmin: boolean): Promise<User | undefined> {
     const [user] = await db.update(users)
       .set({ isAdmin })
+      .where(eq(users.id, userId))
+      .returning();
+    return user || undefined;
+  }
+
+  async setUserPassword(userId: string, passwordHash: string): Promise<User | undefined> {
+    const [user] = await db.update(users)
+      .set({ password: passwordHash, updatedAt: new Date() })
       .where(eq(users.id, userId))
       .returning();
     return user || undefined;
