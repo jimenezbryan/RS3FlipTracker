@@ -8,6 +8,10 @@ function hasPgParts() {
 }
 
 export function getDatabaseUrl() {
+  if (process.env.DATABASE_URL) {
+    return process.env.DATABASE_URL;
+  }
+
   if (hasPgParts()) {
     const user = encodeURIComponent(process.env.PGUSER!);
     const password = encodeURIComponent(process.env.PGPASSWORD!);
@@ -18,11 +22,7 @@ export function getDatabaseUrl() {
     return `postgresql://${user}:${password}@${host}:${port}/${database}?sslmode=require`;
   }
 
-  if (!process.env.DATABASE_URL) {
-    throw new Error(
-      "DATABASE_URL or PGHOST/PGUSER/PGPASSWORD/PGDATABASE must be set.",
-    );
-  }
-
-  return process.env.DATABASE_URL;
+  throw new Error(
+    "DATABASE_URL or PGHOST/PGUSER/PGPASSWORD/PGDATABASE must be set.",
+  );
 }
