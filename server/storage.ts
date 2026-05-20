@@ -1719,6 +1719,10 @@ async function createStorage(): Promise<IStorage> {
     console.log("[storage] Database connection successful, using DatabaseStorage");
     return new DatabaseStorage();
   } catch (error) {
+    if (process.env.NODE_ENV === "production") {
+      console.error("[storage] Database unavailable in production; refusing MemStorage fallback");
+      throw error;
+    }
     console.warn("[storage] Database unavailable, falling back to MemStorage");
     console.warn("[storage] Data will not persist across restarts");
     return new MemStorage();
@@ -1729,4 +1733,10 @@ export let storage: IStorage = new MemStorage();
 
 createStorage().then((s) => {
   storage = s;
+}).catch((error) => {
+  console.error("[storage] Failed to initialize storage:", error);
+  if (process.env.NODE_ENV === "production") {
+    // Crash fast in production so deployment is visibly broken instead of silently using in-memory state.
+    process.exit(1);
+  }
 });
