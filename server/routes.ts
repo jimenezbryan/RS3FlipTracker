@@ -7,7 +7,7 @@ import { getItemPrice, searchItems, getItemTrend, getItemPriceHistory, getItemPr
 import { calculateTechnicalIndicators, calculateSmartPricing, calculateTradeHistoryStats, calculateObservableRange, type TechnicalIndicators, type SmartPricing, type TradeHistoryStats, type ValueGapAnalysis, type ObservableRange } from "./technical-indicators";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { processScreenshot, matchItemsToGE } from "./ocr";
-import { analyzeRS3Screenshot } from "./ai-vision";
+import { analyzeRS3Screenshot, analyzeGEHistoryScreenshot } from "./ai-vision";
 import { analyzeUserTradingProfile, getPersonalizedRecommendations } from "./ai-recommendations";
 import { calculateFlipTax } from "@shared/taxCalculator";
 import { sendFlipToDiscord, sendFlipUpdateToDiscord, sendGoalAchievementToDiscord, sendDailySummaryToDiscord, type GoalAchievement } from "./discord";
@@ -41,6 +41,10 @@ const companionIngestRowSchema = z.object({
 const companionIngestSchema = z.object({
   rows: z.array(companionIngestRowSchema).min(1).max(500),
   source: z.string().max(100).optional(),
+});
+
+const companionParseSchema = z.object({
+  imageBase64: z.string().min(100),
 });
 
 function encodeBase64Url(value: string | Buffer) {
@@ -299,6 +303,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Companion auth check failed:", error);
       res.status(500).json({ error: "Companion auth check failed" });
+    }
+  });
+
+  // Parse GE history rows from screenshot using server-side vision model
+  app.post("/api/companion/parse/ge-history", async (req, res) => {
+    try {
+      const token = getBearerToken(req);
+      if (!token) {
+        return res.status(401).json({ error: "Missing bearer token" });
+      }
+      const payload = parseAndVerifyCompanionToken(token);
+      if (!payload) {
+        return res.status(401).json({ error: "Invalid companion token" });
+      }
+      const user = await storage.getUser(payload.uid);
+      if (!user) {
+        return res.status(401).json({ error: "Unknown user for token" });
+      }
+
+      const parsed = companionParseSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid payload" });
+      }
+
+      const imageBuffer = Buffer.from(parsed.data.imageBase64, "base64");
+      const vision = await analyzeGEHistoryScreenshot(imageBuffer);
+      if (!vision.success) {
+        return res.status(500).json({ error: vision.error || "Failed to parse GE history screenshot" });
+      }
+
+      res.json({
+        success: true,
+        rows: vision.rows,
+        rawText: vision.rawResponse,
+      });
+    } catch (error) {
+      console.error("Companion parse failed:", error);
+      res.status(500).json({ error: "Companion parse failed" });
     }
   });
 

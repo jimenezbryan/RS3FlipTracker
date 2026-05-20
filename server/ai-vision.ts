@@ -26,6 +26,21 @@ interface VisionAnalysisResult {
   error?: string;
 }
 
+export interface GEHistoryVisionRow {
+  type: "buy" | "sell";
+  itemName: string;
+  quantity: number;
+  price: number;
+  confidence?: number;
+}
+
+export interface GEHistoryVisionResult {
+  rows: GEHistoryVisionRow[];
+  rawResponse: string;
+  success: boolean;
+  error?: string;
+}
+
 export async function analyzeRS3Screenshot(imageBuffer: Buffer): Promise<VisionAnalysisResult> {
   try {
     const openai = getOpenAI();
@@ -114,6 +129,94 @@ Respond with valid JSON only, in this exact format:
       rawResponse: "",
       success: false,
       error: error.message || "Failed to analyze screenshot",
+    };
+  }
+}
+
+export async function analyzeGEHistoryScreenshot(imageBuffer: Buffer): Promise<GEHistoryVisionResult> {
+  try {
+    const openai = getOpenAI();
+    const base64Image = imageBuffer.toString("base64");
+    const mimeType = detectImageMimeType(imageBuffer);
+
+    const systemPrompt = `You are an expert at reading RuneScape 3 Grand Exchange history screenshots.
+Extract transaction rows from the GE history area only.
+
+For each row, return:
+- type: "buy" or "sell"
+- itemName: official RS3 item name if possible
+- quantity: integer quantity (convert K/M/B abbreviations)
+- price: integer GP per item
+- confidence: 0-1
+
+Ignore UI noise and unrelated text.
+Respond with valid JSON only in this format:
+{
+  "rows": [
+    {"type":"buy","itemName":"Rune arrow","quantity":1000,"price":120,"confidence":0.93}
+  ]
+}`;
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-5",
+      messages: [
+        {
+          role: "system",
+          content: systemPrompt,
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: "Extract GE history rows from this screenshot and return JSON.",
+            },
+            {
+              type: "image_url",
+              image_url: {
+                url: `data:${mimeType};base64,${base64Image}`,
+              },
+            },
+          ],
+        },
+      ],
+      response_format: { type: "json_object" },
+      max_completion_tokens: 4096,
+    });
+
+    const content = response.choices[0]?.message?.content;
+    if (!content) {
+      return {
+        rows: [],
+        rawResponse: "",
+        success: false,
+        error: "No response from AI",
+      };
+    }
+
+    const parsed = JSON.parse(content);
+    const rows: GEHistoryVisionRow[] = (parsed.rows || [])
+      .map((row: any) => ({
+        type: row.type === "sell" ? "sell" : "buy",
+        itemName: String(row.itemName || "").trim(),
+        quantity: parseQuantity(row.quantity),
+        price: parseQuantity(row.price),
+        confidence: Math.min(1, Math.max(0, Number(row.confidence) || 0.5)),
+      }))
+      .filter((row: GEHistoryVisionRow) => row.itemName.length > 0 && row.quantity > 0 && row.price > 0);
+
+    return {
+      rows,
+      rawResponse: content,
+      success: true,
+    };
+  } catch (error: any) {
+    console.error("[AI Vision] Error analyzing GE history screenshot:", error);
+    return {
+      rows: [],
+      rawResponse: "",
+      success: false,
+      error: error.message || "Failed to analyze GE history screenshot",
     };
   }
 }

@@ -3,7 +3,7 @@
 This is a lightweight Electron app that:
 
 1. Captures a screenshot from macOS
-2. OCRs GE history text
+2. Sends screenshot to FlipSync backend for server-side GE history parsing
 3. Parses buy/sell rows
 4. Sends parsed rows to FlipSync backend ingest API
 
@@ -13,6 +13,7 @@ This companion expects these API routes in the main app:
 
 - `GET /api/companion/token` (session-authenticated)
 - `GET /api/companion/me` (Bearer token)
+- `POST /api/companion/parse/ge-history` (Bearer token)
 - `POST /api/companion/ingest/ge-history` (Bearer token)
 
 ## Local run
@@ -40,12 +41,11 @@ Build artifacts are emitted under `dist/`.
    - Base URL (example: `https://rs3-flip-tracker.vercel.app`)
    - Token
 3. Verify token
-4. Capture screen with GE history visible
+4. Capture screen with GE history visible (server parses rows)
 5. Review parsed rows
 6. Send to FlipSync
 
 ## Notes
 
-- This MVP captures full screen; OCR accuracy depends on GE history visibility and UI scale.
+- This MVP captures full screen; parse quality depends on GE history visibility and UI scale.
 - Unmatched sells are reported back by the API and can be handled manually.
-

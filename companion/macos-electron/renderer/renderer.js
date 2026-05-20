@@ -53,7 +53,7 @@ els.capture.addEventListener("click", async () => {
   els.captureStatus.textContent = "Capturing and parsing...";
   els.sendStatus.textContent = "";
   try {
-    const result = await window.companionApi.captureScreenAndParse();
+    const result = await window.companionApi.captureScreenAndParse(getBaseUrl(), getToken());
     state.rows = result.rows || [];
     renderRows();
     els.rawText.textContent = result.rawText || "";
@@ -72,4 +72,3 @@ els.send.addEventListener("click", async () => {
     els.sendStatus.textContent = `Send failed: ${error.message}`;
   }
 });
-
