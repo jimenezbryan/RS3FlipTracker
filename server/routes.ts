@@ -14,6 +14,7 @@ import { sendFlipToDiscord, sendFlipUpdateToDiscord, sendGoalAchievementToDiscor
 import { startOfDay, startOfWeek, startOfMonth, isAfter } from "date-fns";
 import { z } from "zod";
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
+import { getDatabaseUrl } from "./databaseUrl";
 
 const upload = multer({ 
   storage: multer.memoryStorage(),
@@ -2312,6 +2313,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ isAdmin: isAdminUser });
     } catch (error) {
       res.status(500).json({ error: "Failed to check admin status" });
+    }
+  });
+
+  // Temporary debug endpoint: reveal active DB host only (no credentials)
+  app.get("/api/admin/debug/db-host", isAuthenticated, isAdmin, async (_req: any, res) => {
+    try {
+      const activeUrl = getDatabaseUrl();
+      const parsed = new URL(activeUrl);
+      const usingDatabaseUrl = !!process.env.DATABASE_URL;
+      const usingPgParts = !!(
+        process.env.PGHOST &&
+        process.env.PGUSER &&
+        process.env.PGPASSWORD &&
+        process.env.PGDATABASE
+      );
+
+      res.json({
+        host: parsed.host,
+        database: parsed.pathname.replace(/^\//, ""),
+        source: usingDatabaseUrl ? "DATABASE_URL" : "PG_PARTS",
+        hasDatabaseUrl: usingDatabaseUrl,
+        hasPgParts: usingPgParts,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: error?.message || "Failed to resolve active database host" });
     }
   });
   
