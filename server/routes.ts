@@ -6,8 +6,8 @@ import { insertFlipSchema, insertWatchlistSchema, insertPriceAlertSchema, insert
 import { getItemPrice, searchItems, getItemTrend, getItemPriceHistory, getItemPriceHistoryFull, getItemSuggestions, getAllItemsForScanner, type ScannerItem, type ChartPeriod } from "./ge-api";
 import { calculateTechnicalIndicators, calculateSmartPricing, calculateTradeHistoryStats, calculateObservableRange, type TechnicalIndicators, type SmartPricing, type TradeHistoryStats, type ValueGapAnalysis, type ObservableRange } from "./technical-indicators";
 import { setupAuth, isAuthenticated } from "./replitAuth";
-import { processScreenshot, matchItemsToGE } from "./ocr";
-import { analyzeRS3Screenshot, analyzeGEHistoryScreenshot } from "./ai-vision";
+import { processScreenshot, matchItemsToGE, processGEHistoryScreenshot } from "./ocr";
+import { analyzeRS3Screenshot } from "./ai-vision";
 import { analyzeUserTradingProfile, getPersonalizedRecommendations } from "./ai-recommendations";
 import { calculateFlipTax } from "@shared/taxCalculator";
 import { sendFlipToDiscord, sendFlipUpdateToDiscord, sendGoalAchievementToDiscord, sendDailySummaryToDiscord, type GoalAchievement } from "./discord";
@@ -306,7 +306,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Parse GE history rows from screenshot using server-side vision model
+  // Parse GE history rows from screenshot using free server-side OCR (no OpenAI dependency)
   app.post("/api/companion/parse/ge-history", async (req, res) => {
     try {
       const token = getBearerToken(req);
@@ -328,15 +328,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const imageBuffer = Buffer.from(parsed.data.imageBase64, "base64");
-      const vision = await analyzeGEHistoryScreenshot(imageBuffer);
-      if (!vision.success) {
-        return res.status(500).json({ error: vision.error || "Failed to parse GE history screenshot" });
-      }
+      const ocr = await processGEHistoryScreenshot(imageBuffer);
 
       res.json({
         success: true,
-        rows: vision.rows,
-        rawText: vision.rawResponse,
+        rows: ocr.rows,
+        rawText: ocr.rawText,
+        confidence: ocr.overallConfidence,
       });
     } catch (error) {
       console.error("Companion parse failed:", error);
