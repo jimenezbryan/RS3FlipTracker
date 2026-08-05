@@ -441,8 +441,10 @@ export async function setupAuth(app: Express) {
         try {
           await sendPasswordResetEmail(user.email ?? email, resetUrl);
         } catch (emailError) {
+          // ponytail: log it, but never let delivery failure change the response. Returning
+          // 500 here confirmed the address was registered, since unknown addresses get a 200 —
+          // that difference is how this endpoint was used to enumerate accounts.
           console.error("Password reset email delivery failed:", emailError);
-          return res.status(500).json({ message: "Failed to send password reset email" });
         }
 
         return res.json({
