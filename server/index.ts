@@ -1,5 +1,4 @@
 import { setupVite, serveStatic } from "./vite";
-import { startRange7dCacheRefresh } from "./ge-api";
 import { createApp } from "./app";
 import { log } from "./log";
 
@@ -26,6 +25,5 @@ import { log } from "./log";
     reusePort: true,
   }, () => {
     log(`serving on port ${port}`);
-    startRange7dCacheRefresh();
   });
 })();

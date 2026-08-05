@@ -1,16 +1,31 @@
-import { calculateSmartPricing, getPriceTier, calculateObservableRange } from "./technical-indicators";
+import { calculateSmartPricing, getPriceTier } from "./technical-indicators";
 
+// Current prices, volume and buy limits come from the RuneScape Wiki real-time API.
+// ponytail: its RS3 dataset only starts 2026-07-23, so anything needing more than a
+// couple of weeks of history still comes from WeirdGloop below. Around 2026-10-23 the
+// wiki will have 90 days and getItemTrend/getItemSuggestions/getItemPriceHistory("daily")
+// can move to /timeseries?lookback=30d|6m. Calendar switch, not an abstraction.
+const WIKI_API_BASE = "https://prices.runescape.wiki/api/v2/rs";
 const GE_API_BASE = "https://api.weirdgloop.org/exchange/history/rs";
 const RS_ITEMDB_BASE = "https://secure.runescape.com/m=itemdb_rs";
-const GE_IDS_URL = "https://runescape.wiki/w/Module:GEIDs/data.json?action=raw";
-const GE_DUMP_URL = "https://chisel.weirdgloop.org/gazproj/gazbot/rs_dump.json";
 
-const USER_AGENT = "RS3FlipTracker/1.0 (Replit App; contact@replit.com)";
+// The wiki blocks unhelpful user agents (curl/*, python-requests, Java/*) and asks for a
+// contact address. This is the only thing they require of API consumers.
+export const USER_AGENT =
+  "RS3FlipTracker/2.0 (RS3 Grand Exchange flip tracker; bjimenez@virtualsyncsolutions.com)";
 
 export interface GEItem {
   id: number;
   name: string;
+  /** Mid price, round((high + low) / 2). Drop-in for the old guide price. */
   price: number;
+  /** Instant-buy. Additive — the client re-declares this type in several files, so
+   *  adding fields is safe but renaming `price` would not be. */
+  high?: number;
+  /** Instant-sell. */
+  low?: number;
+  highTime?: number;
+  lowTime?: number;
   volume?: number;
   timestamp?: string;
   icon?: string;
@@ -41,10 +56,153 @@ interface CachedItem {
   examine?: string;
 }
 
+interface CachedPrice {
+  price: number;        // mid — the drop-in for WeirdGloop's guide price
+  high?: number;        // instant-buy
+  low?: number;         // instant-sell
+  highTime?: number;    // unix ms
+  lowTime?: number;     // unix ms
+  hourHigh?: number;    // hourly average instant-buy — outlier-resistant
+  hourLow?: number;     // hourly average instant-sell
+  hourVolume?: number;  // min(high, low) volume traded this hour; 0 if one-sided
+  last?: number;
+  volume?: number;
+  isMembers?: boolean;
+  geLimit?: number;
+  examine?: string;
+}
+
 let itemCache: CachedItem[] = [];
-let itemPriceCache: Map<number, { price: number; last?: number; volume?: number; isMembers?: boolean; geLimit?: number; examine?: string }> = new Map();
+let itemPriceCache: Map<number, CachedPrice> = new Map();
+let itemIdByNameLower: Map<string, number> = new Map();
+
+/** Round to whole gp. The wiki's /1h, /5m and /timeseries averages carry decimals, and
+ *  every price column is bigint — Postgres rejects 786.4. Applied at this seam so no
+ *  caller has to remember. Sub-1gp precision is meaningless in the GE. */
+function gp(n: number | null | undefined): number | null {
+  return n == null || !Number.isFinite(n) ? null : Math.round(n);
+}
+
+/** Per-instance TTL memo with two properties a plain cache lacks:
+ *  - inflight dedupe, so a cold lambda serving concurrent requests fetches /mapping once
+ *  - serve-stale-on-error, so a wiki blip degrades instead of 500ing the scanner
+ *  ponytail: no cron, no snapshot table. A cold start re-fetches ~1MB in ~0.6s parallel,
+ *  which is cheaper than the 2.3MB dump this replaced. Revisit only if the wiki starts
+ *  rate-limiting or /latest grows past a few MB. */
+function memo<T>(ttlMs: number, fetcher: () => Promise<T>): () => Promise<T> {
+  let value: T | undefined;
+  let at = 0;
+  let inflight: Promise<T> | undefined;
+
+  return async () => {
+    if (value !== undefined && Date.now() - at < ttlMs) return value;
+    if (!inflight) {
+      inflight = fetcher()
+        .then((v) => {
+          value = v;
+          at = Date.now();
+          inflight = undefined;
+          return v;
+        })
+        .catch((err) => {
+          inflight = undefined;
+          if (value !== undefined) {
+            console.error("[ge-api] refresh failed, serving stale:", err);
+            return value;
+          }
+          throw err;
+        });
+    }
+    return inflight;
+  };
+}
+
+async function wikiFetch(path: string): Promise<any> {
+  const res = await fetch(`${WIKI_API_BASE}${path}`, {
+    headers: { "User-Agent": USER_AGENT },
+  });
+  if (!res.ok) throw new Error(`wiki ${path} -> ${res.status}`);
+  return res.json();
+}
+
+interface MappingEntry {
+  id: number;
+  name: string;
+  examine?: string;
+  members?: boolean;
+  limit?: number;
+}
+
+/** ~7300 items. Only changes on game-update days. */
+const getMapping = memo<MappingEntry[]>(24 * 60 * 60 * 1000, () => wikiFetch("/mapping"));
+
+/** Real instant-buy/instant-sell for every item, one call. */
+const getLatest = memo<Record<string, { high: number | null; highTime: number | null; low: number | null; lowTime: number | null }>>(
+  60 * 1000,
+  async () => (await wikiFetch("/latest")).data ?? {},
+);
+
+/** Real 24h traded volume per item. */
+const getVolumes = memo<Record<string, number>>(5 * 60 * 1000, async () => {
+  const body = await wikiFetch("/volumes");
+  return body.data ?? {};
+});
+
+interface HourlyTick {
+  avgHighPrice: number | null;
+  avgLowPrice: number | null;
+  highPriceVolume: number;
+  lowPriceVolume: number;
+}
+
+/** Hourly averages. Preferred over /latest for margins: /latest reports the last single
+ *  trade on each side, so one mis-clicked buy turns a 200gp item into a 999,800 "margin".
+ *  Averaging over an hour of real trades removes that. Only ~840 items trade both sides
+ *  in a given hour, hence the /latest fallback. */
+const getHourly = memo<Record<string, HourlyTick>>(
+  5 * 60 * 1000,
+  async () => (await wikiFetch("/1h")).data ?? {},
+);
+
+/** Hour-aligned unix seconds, N hours back. The /1h endpoint indexes whole-hour blocks. */
+function hourBlockAgo(hours: number): number {
+  const seconds = Math.floor(Date.now() / 1000) - hours * 3600;
+  return Math.floor(seconds / 3600) * 3600;
+}
+
+/** The same hourly block 24h ago — the anchor for a real price trend, replacing a
+ *  "trend" that was derived from the fabricated margin and so never varied. */
+const getHourly24hAgo = memo<Record<string, HourlyTick>>(
+  5 * 60 * 1000,
+  async () => (await wikiFetch(`/1h?timestamp=${hourBlockAgo(24)}`)).data ?? {},
+);
+
+/** Same block 7 days back, for the 7d movers column. */
+const getHourly7dAgo = memo<Record<string, HourlyTick>>(
+  15 * 60 * 1000,
+  async () => (await wikiFetch(`/1h?timestamp=${hourBlockAgo(24 * 7)}`)).data ?? {},
+);
+
+/** Mid of an hourly block, or null if it didn't trade. */
+function hourlyMid(tick: HourlyTick | undefined): number | null {
+  if (!tick) return null;
+  const hi = tick.avgHighPrice;
+  const lo = tick.avgLowPrice;
+  if (hi != null && lo != null) return Math.round((hi + lo) / 2);
+  return gp(hi ?? lo);
+}
+
+const CACHE_TTL = 60 * 1000;
 let cacheLastUpdated = 0;
-const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+
+/** ponytail: a quote older than this is not tradeable, so its spread is not a margin.
+ *  Widen it if the scanner feels too sparse — 24h keeps ~3900 items, 72h ~4900. */
+const SCANNER_MAX_QUOTE_AGE_MS = 24 * 60 * 60 * 1000;
+
+/** ponytail: spread sanity cap, as a fraction of the buy price. Real GE margins are low
+ *  single digits; 50%+ means a manipulated or mis-clicked trade, not an opportunity.
+ *  Lower it toward 0.2 if artifacts still surface at the top of the profit sort. */
+const SCANNER_MAX_SPREAD_RATIO = 0.5;
 
 async function refreshItemCache(): Promise<void> {
   const now = Date.now();
@@ -53,52 +211,67 @@ async function refreshItemCache(): Promise<void> {
   }
 
   try {
-    console.log("[ge-api] Refreshing item cache from GE dump...");
-    
-    const response = await fetch(GE_DUMP_URL, {
-      headers: { "User-Agent": USER_AGENT },
-    });
+    const [mapping, latest, volumes, hourly] = await Promise.all([
+      getMapping(),
+      getLatest(),
+      getVolumes(),
+      getHourly(),
+    ]);
 
-    if (!response.ok) {
-      console.error("[ge-api] Failed to fetch GE dump:", response.status);
-      return;
-    }
-
-    const data = await response.json();
     const items: CachedItem[] = [];
-    
-    for (const [key, value] of Object.entries(data)) {
-      if (key.startsWith("%")) continue;
-      
-      const itemData = value as any;
-      const id = parseInt(key);
-      
-      if (isNaN(id) || !itemData.name) continue;
-      
+    const prices = new Map<number, CachedPrice>();
+    const idsByName = new Map<string, number>();
+
+    for (const entry of mapping) {
+      if (!entry?.id || !entry.name) continue;
+
+      const nameLower = entry.name.toLowerCase();
       items.push({
-        id,
-        name: itemData.name,
-        nameLower: itemData.name.toLowerCase(),
-        isMembers: itemData.members,
-        geLimit: itemData.limit,
-        examine: itemData.examine,
+        id: entry.id,
+        name: entry.name,
+        nameLower,
+        isMembers: entry.members,
+        geLimit: entry.limit,
+        examine: entry.examine,
       });
-      
-      if (itemData.price) {
-        itemPriceCache.set(id, {
-          price: itemData.price,
-          last: itemData.last,
-          volume: itemData.volume,
-          isMembers: itemData.members,
-          geLimit: itemData.limit,
-          examine: itemData.examine,
-        });
-      }
+      if (!idsByName.has(nameLower)) idsByName.set(nameLower, entry.id);
+
+      const tick = latest[String(entry.id)];
+      const high = gp(tick?.high);
+      const low = gp(tick?.low);
+      // Mid is the drop-in for the old guide price. One-sided books still get a usable
+      // number; items with no trades at all are simply absent, as they were before.
+      const mid = high != null && low != null ? Math.round((high + low) / 2) : (high ?? low);
+      if (mid == null || mid <= 0) continue;
+
+      const hr = hourly[String(entry.id)];
+      const hourHigh = gp(hr?.avgHighPrice);
+      const hourLow = gp(hr?.avgLowPrice);
+
+      prices.set(entry.id, {
+        price: mid,
+        high: high ?? undefined,
+        low: low ?? undefined,
+        highTime: tick?.highTime ? tick.highTime * 1000 : undefined,
+        lowTime: tick?.lowTime ? tick.lowTime * 1000 : undefined,
+        hourHigh: hourHigh ?? undefined,
+        hourLow: hourLow ?? undefined,
+        hourVolume:
+          hr && hr.highPriceVolume > 0 && hr.lowPriceVolume > 0
+            ? Math.min(hr.highPriceVolume, hr.lowPriceVolume)
+            : 0,
+        volume: volumes[String(entry.id)] ?? 0,
+        isMembers: entry.members,
+        geLimit: entry.limit,
+        examine: entry.examine,
+      });
     }
-    
+
     itemCache = items;
+    itemPriceCache = prices;
+    itemIdByNameLower = idsByName;
     cacheLastUpdated = now;
-    console.log(`[ge-api] Cached ${items.length} items`);
+    console.log(`[ge-api] Cached ${items.length} items, ${prices.size} priced`);
   } catch (error) {
     console.error("[ge-api] Failed to refresh item cache:", error);
   }
@@ -146,6 +319,8 @@ export async function searchItems(query: string): Promise<GEItem[]> {
         id: item.id,
         name: item.name,
         price: priceData.price,
+        high: priceData.high,
+        low: priceData.low,
         volume: priceData.volume,
         icon: `${RS_ITEMDB_BASE}/obj_sprite.gif?id=${item.id}`,
         isMembers: item.isMembers,
@@ -161,39 +336,38 @@ export async function searchItems(query: string): Promise<GEItem[]> {
 export async function getItemPrice(itemName: string): Promise<GEItem | null> {
   try {
     await refreshItemCache();
-    
-    const response = await fetch(
-      `${GE_API_BASE}/latest?name=${encodeURIComponent(itemName)}`,
-      {
-        headers: {
-          "User-Agent": USER_AGENT,
-        },
-      }
-    );
 
-    if (!response.ok) return null;
+    // Resolved entirely from the cached mapping now — this used to hit WeirdGloop's
+    // /latest?name=, which was the app's second name->id mechanism and could disagree
+    // with the local fuzzy scan. One source now.
+    const wanted = itemName.toLowerCase();
+    let itemId = itemIdByNameLower.get(wanted);
 
-    const data = await response.json();
-    const keys = Object.keys(data).filter(k => !k.startsWith("%"));
-    
-    if (keys.length === 0) return null;
+    if (itemId === undefined) {
+      const best = await searchItems(itemName);
+      if (best.length === 0) return null;
+      itemId = best[0].id;
+    }
 
-    const foundName = keys[0];
-    const itemData = data[foundName];
-    const itemId = parseInt(itemData.id);
-    
     const cachedData = itemPriceCache.get(itemId);
+    if (!cachedData) return null;
+
+    const item = itemCache.find((i) => i.id === itemId);
 
     return {
       id: itemId,
-      name: foundName,
-      price: itemData.price,
-      volume: itemData.volume,
-      timestamp: itemData.timestamp,
+      name: item?.name ?? itemName,
+      price: cachedData.price,
+      high: cachedData.high,
+      low: cachedData.low,
+      highTime: cachedData.highTime,
+      lowTime: cachedData.lowTime,
+      volume: cachedData.volume,
+      timestamp: cachedData.highTime ? new Date(cachedData.highTime).toISOString() : undefined,
       icon: `${RS_ITEMDB_BASE}/obj_sprite.gif?id=${itemId}`,
-      isMembers: cachedData?.isMembers,
-      geLimit: cachedData?.geLimit,
-      examine: cachedData?.examine,
+      isMembers: cachedData.isMembers,
+      geLimit: cachedData.geLimit,
+      examine: cachedData.examine,
     };
   } catch (error) {
     console.error("Failed to fetch GE price:", error);
@@ -663,7 +837,6 @@ export interface ScannerItem {
   roi: number;
   netProfit: number;
   capitalEfficiency: number;
-  rsi: number;
   trend: "up" | "down" | "stable";
   volatility: "low" | "medium" | "high";
   suggestedBuyPrice: number;
@@ -678,7 +851,8 @@ export interface ScannerItem {
 
 export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
   await refreshItemCache();
-  
+  const yesterday = await getHourly24hAgo();
+
   const results: ScannerItem[] = [];
   
   for (const item of itemCache) {
@@ -689,11 +863,36 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
     const lastPrice = priceData.last ?? price;
     const geLimit = item.geLimit ?? 0;
     const volume = priceData.volume ?? 0;
-    
-    // Estimate margin as 1% of price (since we don't have instant buy/sell data)
-    const margin = Math.round(price * 0.01);
-    const buyPrice = price;
-    const sellPrice = price + margin;
+
+    // Margin source, best first. /latest reports the last single trade on each side, so
+    // one mis-clicked buy becomes a 999,800 "margin" on a 200gp item. The hourly average
+    // is immune to that but only ~840 items trade both sides in a given hour, so /latest
+    // (with a freshness guard) covers the rest.
+    let low: number | undefined;
+    let high: number | undefined;
+
+    if (priceData.hourVolume && priceData.hourLow != null && priceData.hourHigh != null) {
+      low = priceData.hourLow;
+      high = priceData.hourHigh;
+    } else {
+      // A quote nobody has traded against in 24h is not a price you can transact at.
+      const staleAfter = Date.now() - SCANNER_MAX_QUOTE_AGE_MS;
+      if ((priceData.highTime ?? 0) >= staleAfter && (priceData.lowTime ?? 0) >= staleAfter) {
+        low = priceData.low;
+        high = priceData.high;
+      }
+    }
+
+    if (low == null || high == null || low <= 0 || high < low) continue;
+
+    // Anything wider than this is an artifact, not an opportunity — real GE margins on
+    // tradeable items run low single digits. Without it the profit sort is topped by
+    // items like "Fishbowl: buy 200, sell 1,000,000".
+    if ((high - low) / low > SCANNER_MAX_SPREAD_RATIO) continue;
+
+    const buyPrice = low;
+    const sellPrice = high;
+    const margin = high - low;
     const potentialProfit = margin * geLimit;
     const marginVolume = margin * volume;
     
@@ -712,16 +911,14 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
     // Capital efficiency (profit per 1M GP invested, as basis points)
     const capitalEfficiency = totalInvestment > 0 ? (netProfit / totalInvestment) * 10000 : 0;
     
-    // Simulated RSI based on volume and price (for visual purposes)
-    // Higher volume + higher margin tends toward overbought, low volume + low margin toward oversold
-    const volumeScore = volume > 0 ? Math.min(volume / 10000, 1) : 0;
-    const marginScore = margin > 0 ? Math.min(margin / price, 0.1) * 10 : 0;
-    const rsi = Math.round(30 + (volumeScore * 30) + (marginScore * 40)); // Range roughly 30-100
-    
-    // Trend based on margin direction (simulated since we don't have historical data here)
-    // Use price thresholds as proxy
-    const trend: "up" | "down" | "stable" = margin > price * 0.015 ? "up" : margin < price * 0.005 ? "down" : "stable";
-    
+    // Real 24h price direction: mid now vs the mid of the same hourly block yesterday.
+    // Previously this was derived from the fabricated margin, so it described spread
+    // width — not direction — and collapsed to a single value for every item.
+    const priorMid = hourlyMid(yesterday[String(item.id)]);
+    const changePct = priorMid && priorMid > 0 ? ((price - priorMid) / priorMid) * 100 : 0;
+    const trend: "up" | "down" | "stable" =
+      changePct > 1 ? "up" : changePct < -1 ? "down" : "stable";
+
     // Volatility based on margin relative to price
     const marginPercent = margin / price;
     const volatility: "low" | "medium" | "high" = marginPercent > 0.03 ? "high" : marginPercent > 0.01 ? "medium" : "low";
@@ -743,7 +940,6 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
       roi: Math.round(roi * 100) / 100,
       netProfit,
       capitalEfficiency: Math.round(capitalEfficiency),
-      rsi: Math.min(100, Math.max(0, rsi)),
       trend,
       volatility,
       suggestedBuyPrice: smartPricing.suggestedBuyPrice,
@@ -757,101 +953,96 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
     });
   }
 
-  for (const r of results) {
-    const cached = range7dCache.get(r.id);
-    if (cached) {
-      r.range7dLow = cached.low;
-      r.range7dHigh = cached.high;
-      r.range7dSpreadPct = cached.spreadPct;
-    } else {
-      const pd = itemPriceCache.get(r.id);
-      if (pd && pd.price > 0) {
-        const current = pd.price;
-        const last = pd.last ?? current;
-        const dailyDelta = Math.abs(current - last);
-        const swing7d = dailyDelta * Math.sqrt(7);
-        const minSwing = Math.max(1, Math.round(current * 0.001));
-        const effectiveSwing = Math.max(swing7d, minSwing);
-        r.range7dLow = Math.round(Math.min(current, last) - effectiveSwing);
-        r.range7dHigh = Math.round(Math.max(current, last) + effectiveSwing);
-        if (r.range7dLow <= 0) r.range7dLow = 1;
-        r.range7dSpreadPct = r.range7dLow > 0
-          ? Math.round(((r.range7dHigh - r.range7dLow) / r.range7dLow) * 10000) / 100
-          : 0;
-      }
-    }
-  }
-
+  // range7d* stay null here on purpose. They used to be filled from a cache that only
+  // ever populated under `npm run dev` (startRange7dCacheRefresh was called from
+  // server/index.ts, but Vercel enters through server/vercel.ts), so in production every
+  // value came from the sqrt(7) random-walk guess that used to live here — while the UI
+  // labelled it a "data-backed spread". The real 7d/30d range is computed per item from
+  // actual history in GET /api/scanner/item/:id/detail.
   return results;
 }
 
-const range7dCache = new Map<number, { low: number; high: number; spreadPct: number }>();
-let range7dCacheReady = false;
-const RANGE_REFRESH_INTERVAL = 15 * 60 * 1000;
 
-async function refreshRange7dCache(): Promise<void> {
+export interface MarketMover {
+  itemId: number;
+  itemName: string;
+  currentPrice: number;
+  volume: number;
+  members: boolean;
+  price24hAgo: number | null;
+  price7dAgo: number | null;
+  change24h: number;
+  change7d: number;
+  changePercent24h: number;
+  changePercent7d: number;
+}
+
+/**
+ * Biggest 24h movers by traded volume.
+ *
+ * Replaces a route body that re-downloaded the full 2.3MB GE dump every 5 minutes and
+ * then fired 100 concurrent unthrottled history requests — the exact access pattern the
+ * wiki asks consumers not to use. This is three memoized bulk calls instead, shared with
+ * the scanner. Items with no anchor price are excluded rather than reported as 0% movers,
+ * which is what the old `price24h = item.currentPrice` default produced.
+ */
+export async function getMarketMovers(limit = 20): Promise<{
+  gainers: MarketMover[];
+  losers: MarketMover[];
+  mostActive: MarketMover[];
+}> {
   await refreshItemCache();
-  const itemsByVolume = Array.from(itemPriceCache.entries())
-    .filter(([, d]) => d.price > 0 && (d.volume ?? 0) > 0)
-    .sort(([, a], [, b]) => (b.volume ?? 0) - (a.volume ?? 0))
-    .slice(0, 100)
-    .map(([id]) => id);
+  const [thisHour, dayAgo, weekAgo] = await Promise.all([
+    getHourly(),
+    getHourly24hAgo(),
+    getHourly7dAgo(),
+  ]);
 
-  const batchSize = 5;
-  for (let i = 0; i < itemsByVolume.length; i += batchSize) {
-    const batch = itemsByVolume.slice(i, i + batchSize);
-    await Promise.all(batch.map(async (id) => {
-      try {
-        const full = await getItemPriceHistoryFull(id);
-        if (full && full.daily.length >= 2) {
-          const range = calculateObservableRange(full.daily, 7);
-          if (range) {
-            range7dCache.set(id, { low: range.low, high: range.high, spreadPct: range.spreadPct });
-          }
-        }
-      } catch (err) {
-        console.error(`[range7d] Failed to fetch history for item ${id}:`, err);
-      }
-    }));
+  const rows: MarketMover[] = [];
+
+  for (const item of itemCache) {
+    const priceData = itemPriceCache.get(item.id);
+    if (!priceData || priceData.price < 100) continue;
+
+    // Compare like with like: both ends of the change should be hourly averages where
+    // possible. Using the /latest mid here made a single outlier trade on a 20gp dart
+    // read as a +2450% "gain".
+    const current = hourlyMid(thisHour[String(item.id)]) ?? priceData.price;
+    if (current < 100) continue;
+    const price24hAgo = hourlyMid(dayAgo[String(item.id)]);
+    const price7dAgo = hourlyMid(weekAgo[String(item.id)]);
+    if (price24hAgo == null && price7dAgo == null) continue;
+
+    const change24h = price24hAgo != null ? current - price24hAgo : 0;
+    const change7d = price7dAgo != null ? current - price7dAgo : 0;
+
+    rows.push({
+      itemId: item.id,
+      itemName: item.name,
+      currentPrice: current,
+      volume: priceData.volume ?? 0,
+      members: item.isMembers ?? false,
+      price24hAgo,
+      price7dAgo,
+      change24h,
+      change7d,
+      changePercent24h: price24hAgo ? (change24h / price24hAgo) * 100 : 0,
+      changePercent7d: price7dAgo ? (change7d / price7dAgo) * 100 : 0,
+    });
   }
 
-  range7dCacheReady = true;
-  console.log(`[range7d] Cache refreshed with ${range7dCache.size} items`);
-}
+  const byVolume = [...rows].sort((a, b) => b.volume - a.volume).slice(0, 100);
+  const moved = byVolume.filter((r) => r.price24hAgo != null);
 
-export function startRange7dCacheRefresh(): void {
-  refreshRange7dCache();
-  setInterval(() => refreshRange7dCache(), RANGE_REFRESH_INTERVAL);
-}
-
-export async function getItemById(itemId: number): Promise<GEItem | null> {
-  try {
-    const response = await fetch(
-      `${GE_API_BASE}/latest?id=${itemId}`,
-      {
-        headers: {
-          "User-Agent": USER_AGENT,
-        },
-      }
-    );
-
-    if (!response.ok) return null;
-
-    const data = await response.json();
-    const itemData = data[itemId.toString()];
-    
-    if (!itemData) return null;
-
-    return {
-      id: itemId,
-      name: itemData.name || `Item ${itemId}`,
-      price: itemData.price,
-      volume: itemData.volume,
-      timestamp: itemData.timestamp,
-      icon: `${RS_ITEMDB_BASE}/obj_sprite.gif?id=${itemId}`,
-    };
-  } catch (error) {
-    console.error("Failed to fetch item by ID:", error);
-    return null;
-  }
+  return {
+    gainers: [...moved]
+      .filter((r) => r.changePercent24h > 0)
+      .sort((a, b) => b.changePercent24h - a.changePercent24h)
+      .slice(0, limit),
+    losers: [...moved]
+      .filter((r) => r.changePercent24h < 0)
+      .sort((a, b) => a.changePercent24h - b.changePercent24h)
+      .slice(0, limit),
+    mostActive: byVolume.slice(0, limit),
+  };
 }

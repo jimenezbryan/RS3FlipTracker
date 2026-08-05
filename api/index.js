@@ -488,15 +488,17 @@ var insertRecipeRunComponentSchema = createInsertSchema(recipeRunComponents).omi
 });
 
 // server/db.ts
-import { Pool, neonConfig } from "@neondatabase/serverless";
-import { drizzle } from "drizzle-orm/neon-serverless";
-import ws from "ws";
+import { Pool } from "pg";
+import { drizzle } from "drizzle-orm/node-postgres";
 
 // server/databaseUrl.ts
 function hasPgParts() {
   return !!(process.env.PGHOST && process.env.PGUSER && process.env.PGPASSWORD && process.env.PGDATABASE);
 }
 function getDatabaseUrl() {
+  if (process.env.DATABASE_URL) {
+    return process.env.DATABASE_URL;
+  }
   if (hasPgParts()) {
     const user = encodeURIComponent(process.env.PGUSER);
     const password = encodeURIComponent(process.env.PGPASSWORD);
@@ -505,16 +507,12 @@ function getDatabaseUrl() {
     const database = encodeURIComponent(process.env.PGDATABASE);
     return `postgresql://${user}:${password}@${host}:${port}/${database}?sslmode=require`;
   }
-  if (!process.env.DATABASE_URL) {
-    throw new Error(
-      "DATABASE_URL or PGHOST/PGUSER/PGPASSWORD/PGDATABASE must be set."
-    );
-  }
-  return process.env.DATABASE_URL;
+  throw new Error(
+    "DATABASE_URL or PGHOST/PGUSER/PGPASSWORD/PGDATABASE must be set."
+  );
 }
 
 // server/db.ts
-neonConfig.webSocketConstructor = ws;
 var databaseUrl = getDatabaseUrl();
 var pool = new Pool({ connectionString: databaseUrl });
 var db = drizzle({ client: pool, schema: schema_exports });
@@ -1717,14 +1715,19 @@ async function createStorage() {
     console.log("[storage] Database connection successful, using DatabaseStorage");
     return new DatabaseStorage();
   } catch (error) {
+    if (process.env.NODE_ENV === "production") {
+      console.error("[storage] Database unavailable in production; refusing MemStorage fallback");
+      throw error;
+    }
     console.warn("[storage] Database unavailable, falling back to MemStorage");
     console.warn("[storage] Data will not persist across restarts");
     return new MemStorage();
   }
 }
 var storage = new MemStorage();
-createStorage().then((s) => {
-  storage = s;
+var storageReady = createStorage().then((s) => storage = s).catch((error) => {
+  console.error("[storage] Failed to initialize storage:", error);
+  throw error;
 });
 
 // server/technical-indicators.ts
@@ -1949,57 +1952,138 @@ function calculateTradeHistoryStats(flips2, suggestedMarginPct) {
 }
 
 // server/ge-api.ts
+var WIKI_API_BASE = "https://prices.runescape.wiki/api/v2/rs";
 var GE_API_BASE = "https://api.weirdgloop.org/exchange/history/rs";
 var RS_ITEMDB_BASE = "https://secure.runescape.com/m=itemdb_rs";
-var GE_DUMP_URL = "https://chisel.weirdgloop.org/gazproj/gazbot/rs_dump.json";
-var USER_AGENT = "RS3FlipTracker/1.0 (Replit App; contact@replit.com)";
+var USER_AGENT = "RS3FlipTracker/2.0 (RS3 Grand Exchange flip tracker; bjimenez@virtualsyncsolutions.com)";
 var itemCache = [];
 var itemPriceCache = /* @__PURE__ */ new Map();
+var itemIdByNameLower = /* @__PURE__ */ new Map();
+function gp(n) {
+  return n == null || !Number.isFinite(n) ? null : Math.round(n);
+}
+function memo(ttlMs, fetcher) {
+  let value;
+  let at = 0;
+  let inflight;
+  return async () => {
+    if (value !== void 0 && Date.now() - at < ttlMs) return value;
+    if (!inflight) {
+      inflight = fetcher().then((v) => {
+        value = v;
+        at = Date.now();
+        inflight = void 0;
+        return v;
+      }).catch((err) => {
+        inflight = void 0;
+        if (value !== void 0) {
+          console.error("[ge-api] refresh failed, serving stale:", err);
+          return value;
+        }
+        throw err;
+      });
+    }
+    return inflight;
+  };
+}
+async function wikiFetch(path) {
+  const res = await fetch(`${WIKI_API_BASE}${path}`, {
+    headers: { "User-Agent": USER_AGENT }
+  });
+  if (!res.ok) throw new Error(`wiki ${path} -> ${res.status}`);
+  return res.json();
+}
+var getMapping = memo(24 * 60 * 60 * 1e3, () => wikiFetch("/mapping"));
+var getLatest = memo(
+  60 * 1e3,
+  async () => (await wikiFetch("/latest")).data ?? {}
+);
+var getVolumes = memo(5 * 60 * 1e3, async () => {
+  const body = await wikiFetch("/volumes");
+  return body.data ?? {};
+});
+var getHourly = memo(
+  5 * 60 * 1e3,
+  async () => (await wikiFetch("/1h")).data ?? {}
+);
+function hourBlockAgo(hours) {
+  const seconds = Math.floor(Date.now() / 1e3) - hours * 3600;
+  return Math.floor(seconds / 3600) * 3600;
+}
+var getHourly24hAgo = memo(
+  5 * 60 * 1e3,
+  async () => (await wikiFetch(`/1h?timestamp=${hourBlockAgo(24)}`)).data ?? {}
+);
+var getHourly7dAgo = memo(
+  15 * 60 * 1e3,
+  async () => (await wikiFetch(`/1h?timestamp=${hourBlockAgo(24 * 7)}`)).data ?? {}
+);
+function hourlyMid(tick) {
+  if (!tick) return null;
+  const hi = tick.avgHighPrice;
+  const lo = tick.avgLowPrice;
+  if (hi != null && lo != null) return Math.round((hi + lo) / 2);
+  return gp(hi ?? lo);
+}
+var CACHE_TTL = 60 * 1e3;
 var cacheLastUpdated = 0;
-var CACHE_TTL = 30 * 60 * 1e3;
+var SCANNER_MAX_QUOTE_AGE_MS = 24 * 60 * 60 * 1e3;
+var SCANNER_MAX_SPREAD_RATIO = 0.5;
 async function refreshItemCache() {
   const now = Date.now();
   if (itemCache.length > 0 && now - cacheLastUpdated < CACHE_TTL) {
     return;
   }
   try {
-    console.log("[ge-api] Refreshing item cache from GE dump...");
-    const response = await fetch(GE_DUMP_URL, {
-      headers: { "User-Agent": USER_AGENT }
-    });
-    if (!response.ok) {
-      console.error("[ge-api] Failed to fetch GE dump:", response.status);
-      return;
-    }
-    const data = await response.json();
+    const [mapping, latest, volumes, hourly] = await Promise.all([
+      getMapping(),
+      getLatest(),
+      getVolumes(),
+      getHourly()
+    ]);
     const items = [];
-    for (const [key, value] of Object.entries(data)) {
-      if (key.startsWith("%")) continue;
-      const itemData = value;
-      const id = parseInt(key);
-      if (isNaN(id) || !itemData.name) continue;
+    const prices = /* @__PURE__ */ new Map();
+    const idsByName = /* @__PURE__ */ new Map();
+    for (const entry of mapping) {
+      if (!entry?.id || !entry.name) continue;
+      const nameLower = entry.name.toLowerCase();
       items.push({
-        id,
-        name: itemData.name,
-        nameLower: itemData.name.toLowerCase(),
-        isMembers: itemData.members,
-        geLimit: itemData.limit,
-        examine: itemData.examine
+        id: entry.id,
+        name: entry.name,
+        nameLower,
+        isMembers: entry.members,
+        geLimit: entry.limit,
+        examine: entry.examine
       });
-      if (itemData.price) {
-        itemPriceCache.set(id, {
-          price: itemData.price,
-          last: itemData.last,
-          volume: itemData.volume,
-          isMembers: itemData.members,
-          geLimit: itemData.limit,
-          examine: itemData.examine
-        });
-      }
+      if (!idsByName.has(nameLower)) idsByName.set(nameLower, entry.id);
+      const tick = latest[String(entry.id)];
+      const high = gp(tick?.high);
+      const low = gp(tick?.low);
+      const mid = high != null && low != null ? Math.round((high + low) / 2) : high ?? low;
+      if (mid == null || mid <= 0) continue;
+      const hr = hourly[String(entry.id)];
+      const hourHigh = gp(hr?.avgHighPrice);
+      const hourLow = gp(hr?.avgLowPrice);
+      prices.set(entry.id, {
+        price: mid,
+        high: high ?? void 0,
+        low: low ?? void 0,
+        highTime: tick?.highTime ? tick.highTime * 1e3 : void 0,
+        lowTime: tick?.lowTime ? tick.lowTime * 1e3 : void 0,
+        hourHigh: hourHigh ?? void 0,
+        hourLow: hourLow ?? void 0,
+        hourVolume: hr && hr.highPriceVolume > 0 && hr.lowPriceVolume > 0 ? Math.min(hr.highPriceVolume, hr.lowPriceVolume) : 0,
+        volume: volumes[String(entry.id)] ?? 0,
+        isMembers: entry.members,
+        geLimit: entry.limit,
+        examine: entry.examine
+      });
     }
     itemCache = items;
+    itemPriceCache = prices;
+    itemIdByNameLower = idsByName;
     cacheLastUpdated = now;
-    console.log(`[ge-api] Cached ${items.length} items`);
+    console.log(`[ge-api] Cached ${items.length} items, ${prices.size} priced`);
   } catch (error) {
     console.error("[ge-api] Failed to refresh item cache:", error);
   }
@@ -2036,6 +2120,8 @@ async function searchItems(query) {
         id: item.id,
         name: item.name,
         price: priceData.price,
+        high: priceData.high,
+        low: priceData.low,
         volume: priceData.volume,
         icon: `${RS_ITEMDB_BASE}/obj_sprite.gif?id=${item.id}`,
         isMembers: item.isMembers,
@@ -2049,32 +2135,30 @@ async function searchItems(query) {
 async function getItemPrice(itemName) {
   try {
     await refreshItemCache();
-    const response = await fetch(
-      `${GE_API_BASE}/latest?name=${encodeURIComponent(itemName)}`,
-      {
-        headers: {
-          "User-Agent": USER_AGENT
-        }
-      }
-    );
-    if (!response.ok) return null;
-    const data = await response.json();
-    const keys = Object.keys(data).filter((k) => !k.startsWith("%"));
-    if (keys.length === 0) return null;
-    const foundName = keys[0];
-    const itemData = data[foundName];
-    const itemId = parseInt(itemData.id);
+    const wanted = itemName.toLowerCase();
+    let itemId = itemIdByNameLower.get(wanted);
+    if (itemId === void 0) {
+      const best = await searchItems(itemName);
+      if (best.length === 0) return null;
+      itemId = best[0].id;
+    }
     const cachedData = itemPriceCache.get(itemId);
+    if (!cachedData) return null;
+    const item = itemCache.find((i) => i.id === itemId);
     return {
       id: itemId,
-      name: foundName,
-      price: itemData.price,
-      volume: itemData.volume,
-      timestamp: itemData.timestamp,
+      name: item?.name ?? itemName,
+      price: cachedData.price,
+      high: cachedData.high,
+      low: cachedData.low,
+      highTime: cachedData.highTime,
+      lowTime: cachedData.lowTime,
+      volume: cachedData.volume,
+      timestamp: cachedData.highTime ? new Date(cachedData.highTime).toISOString() : void 0,
       icon: `${RS_ITEMDB_BASE}/obj_sprite.gif?id=${itemId}`,
-      isMembers: cachedData?.isMembers,
-      geLimit: cachedData?.geLimit,
-      examine: cachedData?.examine
+      isMembers: cachedData.isMembers,
+      geLimit: cachedData.geLimit,
+      examine: cachedData.examine
     };
   } catch (error) {
     console.error("Failed to fetch GE price:", error);
@@ -2427,6 +2511,7 @@ function formatPriceSimple(price) {
 }
 async function getAllItemsForScanner() {
   await refreshItemCache();
+  const yesterday = await getHourly24hAgo();
   const results = [];
   for (const item of itemCache) {
     const priceData = itemPriceCache.get(item.id);
@@ -2435,9 +2520,23 @@ async function getAllItemsForScanner() {
     const lastPrice = priceData.last ?? price;
     const geLimit = item.geLimit ?? 0;
     const volume = priceData.volume ?? 0;
-    const margin = Math.round(price * 0.01);
-    const buyPrice = price;
-    const sellPrice = price + margin;
+    let low;
+    let high;
+    if (priceData.hourVolume && priceData.hourLow != null && priceData.hourHigh != null) {
+      low = priceData.hourLow;
+      high = priceData.hourHigh;
+    } else {
+      const staleAfter = Date.now() - SCANNER_MAX_QUOTE_AGE_MS;
+      if ((priceData.highTime ?? 0) >= staleAfter && (priceData.lowTime ?? 0) >= staleAfter) {
+        low = priceData.low;
+        high = priceData.high;
+      }
+    }
+    if (low == null || high == null || low <= 0 || high < low) continue;
+    if ((high - low) / low > SCANNER_MAX_SPREAD_RATIO) continue;
+    const buyPrice = low;
+    const sellPrice = high;
+    const margin = high - low;
     const potentialProfit = margin * geLimit;
     const marginVolume = margin * volume;
     const taxPerItem = sellPrice <= 49 ? 0 : Math.floor(sellPrice * 0.02);
@@ -2447,10 +2546,9 @@ async function getAllItemsForScanner() {
     const totalInvestment = buyPrice * geLimit;
     const roi = totalInvestment > 0 ? netProfit / totalInvestment * 100 : 0;
     const capitalEfficiency = totalInvestment > 0 ? netProfit / totalInvestment * 1e4 : 0;
-    const volumeScore = volume > 0 ? Math.min(volume / 1e4, 1) : 0;
-    const marginScore = margin > 0 ? Math.min(margin / price, 0.1) * 10 : 0;
-    const rsi = Math.round(30 + volumeScore * 30 + marginScore * 40);
-    const trend = margin > price * 0.015 ? "up" : margin < price * 5e-3 ? "down" : "stable";
+    const priorMid = hourlyMid(yesterday[String(item.id)]);
+    const changePct = priorMid && priorMid > 0 ? (price - priorMid) / priorMid * 100 : 0;
+    const trend = changePct > 1 ? "up" : changePct < -1 ? "down" : "stable";
     const marginPercent = margin / price;
     const volatility = marginPercent > 0.03 ? "high" : marginPercent > 0.01 ? "medium" : "low";
     const smartPricing = calculateSmartPricing(price, null, null);
@@ -2469,7 +2567,6 @@ async function getAllItemsForScanner() {
       roi: Math.round(roi * 100) / 100,
       netProfit,
       capitalEfficiency: Math.round(capitalEfficiency),
-      rsi: Math.min(100, Math.max(0, rsi)),
       trend,
       volatility,
       suggestedBuyPrice: smartPricing.suggestedBuyPrice,
@@ -2482,32 +2579,48 @@ async function getAllItemsForScanner() {
       range7dSpreadPct: null
     });
   }
-  for (const r of results) {
-    const cached = range7dCache.get(r.id);
-    if (cached) {
-      r.range7dLow = cached.low;
-      r.range7dHigh = cached.high;
-      r.range7dSpreadPct = cached.spreadPct;
-    } else {
-      const pd = itemPriceCache.get(r.id);
-      if (pd && pd.price > 0) {
-        const current = pd.price;
-        const last = pd.last ?? current;
-        const dailyDelta = Math.abs(current - last);
-        const swing7d = dailyDelta * Math.sqrt(7);
-        const minSwing = Math.max(1, Math.round(current * 1e-3));
-        const effectiveSwing = Math.max(swing7d, minSwing);
-        r.range7dLow = Math.round(Math.min(current, last) - effectiveSwing);
-        r.range7dHigh = Math.round(Math.max(current, last) + effectiveSwing);
-        if (r.range7dLow <= 0) r.range7dLow = 1;
-        r.range7dSpreadPct = r.range7dLow > 0 ? Math.round((r.range7dHigh - r.range7dLow) / r.range7dLow * 1e4) / 100 : 0;
-      }
-    }
-  }
   return results;
 }
-var range7dCache = /* @__PURE__ */ new Map();
-var RANGE_REFRESH_INTERVAL = 15 * 60 * 1e3;
+async function getMarketMovers(limit = 20) {
+  await refreshItemCache();
+  const [thisHour, dayAgo, weekAgo] = await Promise.all([
+    getHourly(),
+    getHourly24hAgo(),
+    getHourly7dAgo()
+  ]);
+  const rows = [];
+  for (const item of itemCache) {
+    const priceData = itemPriceCache.get(item.id);
+    if (!priceData || priceData.price < 100) continue;
+    const current = hourlyMid(thisHour[String(item.id)]) ?? priceData.price;
+    if (current < 100) continue;
+    const price24hAgo = hourlyMid(dayAgo[String(item.id)]);
+    const price7dAgo = hourlyMid(weekAgo[String(item.id)]);
+    if (price24hAgo == null && price7dAgo == null) continue;
+    const change24h = price24hAgo != null ? current - price24hAgo : 0;
+    const change7d = price7dAgo != null ? current - price7dAgo : 0;
+    rows.push({
+      itemId: item.id,
+      itemName: item.name,
+      currentPrice: current,
+      volume: priceData.volume ?? 0,
+      members: item.isMembers ?? false,
+      price24hAgo,
+      price7dAgo,
+      change24h,
+      change7d,
+      changePercent24h: price24hAgo ? change24h / price24hAgo * 100 : 0,
+      changePercent7d: price7dAgo ? change7d / price7dAgo * 100 : 0
+    });
+  }
+  const byVolume = [...rows].sort((a, b) => b.volume - a.volume).slice(0, 100);
+  const moved = byVolume.filter((r) => r.price24hAgo != null);
+  return {
+    gainers: [...moved].filter((r) => r.changePercent24h > 0).sort((a, b) => b.changePercent24h - a.changePercent24h).slice(0, limit),
+    losers: [...moved].filter((r) => r.changePercent24h < 0).sort((a, b) => a.changePercent24h - b.changePercent24h).slice(0, limit),
+    mostActive: byVolume.slice(0, limit)
+  };
+}
 
 // server/replitAuth.ts
 import * as client from "openid-client";
@@ -2864,7 +2977,6 @@ async function setupAuth(app) {
           await sendPasswordResetEmail(user.email ?? email, resetUrl);
         } catch (emailError) {
           console.error("Password reset email delivery failed:", emailError);
-          return res.status(500).json({ message: "Failed to send password reset email" });
         }
         return res.json({
           success: true,
@@ -3136,6 +3248,27 @@ async function processScreenshot(imageBuffer) {
     throw new Error("Failed to process screenshot");
   }
 }
+async function processGEHistoryScreenshot(imageBuffer) {
+  try {
+    const result = await Tesseract.recognize(imageBuffer, "eng", {
+      logger: (m) => {
+        if (m.status === "recognizing text") {
+          console.log(`[OCR:GE] Progress: ${Math.round(m.progress * 100)}%`);
+        }
+      }
+    });
+    const rawText = result.data.text || "";
+    const rows = parseGEHistoryRows(rawText);
+    return {
+      rows,
+      rawText,
+      overallConfidence: result.data.confidence
+    };
+  } catch (error) {
+    console.error("[OCR:GE] Failed to process GE history screenshot:", error);
+    throw new Error("Failed to process GE history screenshot");
+  }
+}
 function parseRS3Items(text2) {
   const items = [];
   const lines = text2.split("\n").filter((line) => line.trim());
@@ -3178,6 +3311,43 @@ function parseQuantity(str) {
 }
 function cleanItemName(name) {
   return name.replace(/[^a-zA-Z0-9\s\-'()]/g, "").replace(/\s+/g, " ").trim();
+}
+function cleanGEItemName(name) {
+  return name.replace(/[^a-zA-Z0-9\s\-'()]/g, "").replace(/\s+/g, " ").trim();
+}
+function parseGEHistoryRows(rawText) {
+  const lines = rawText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const rows = [];
+  for (const rawLine of lines) {
+    const line = rawLine.replace(/\s+/g, " ");
+    const full = line.match(
+      /^(Bought|Sold)\s+([\d.,]+[KkMmBb]?)\s*x?\s*(.+?)\s+for\s+([\d.,]+[KkMmBb]?)\s*gp/i
+    );
+    if (full) {
+      const type = full[1].toLowerCase() === "bought" ? "buy" : "sell";
+      const quantity = parseQuantity(full[2]);
+      const itemName = cleanGEItemName(full[3]);
+      const price = parseQuantity(full[4]);
+      if (itemName && quantity > 0 && price > 0) {
+        rows.push({ type, itemName, quantity, price });
+      }
+      continue;
+    }
+    const fallback = line.match(
+      /^(Bought|Sold)\s+(.+?)\s+x?\s*([\d.,]+[KkMmBb]?)\s+for\s+([\d.,]+[KkMmBb]?)\s*gp/i
+    );
+    if (fallback) {
+      const type = fallback[1].toLowerCase() === "bought" ? "buy" : "sell";
+      const itemName = cleanGEItemName(fallback[2]);
+      const quantity = parseQuantity(fallback[3]);
+      const price = parseQuantity(fallback[4]);
+      if (itemName && quantity > 0 && price > 0) {
+        rows.push({ type, itemName, quantity, price });
+      }
+      continue;
+    }
+  }
+  return rows;
 }
 function isNoise(text2) {
   const noisePatterns = [
@@ -4083,11 +4253,84 @@ async function sendGoalAchievementToDiscord(achievement) {
 
 // server/routes.ts
 import { startOfDay, startOfWeek, startOfMonth, isAfter } from "date-fns";
+import { z as z3 } from "zod";
+import { createHmac as createHmac2, randomBytes as randomBytes2, timingSafeEqual as timingSafeEqual2 } from "crypto";
 var upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 }
   // 10MB max
 });
+var companionTokenTtlSeconds = 90 * 24 * 60 * 60;
+var companionTokenVersion = 1;
+var companionIngestRowSchema = z3.object({
+  itemName: z3.string().min(1),
+  quantity: z3.coerce.number().int().positive(),
+  price: z3.coerce.number().int().positive(),
+  type: z3.enum(["buy", "sell"]),
+  timestamp: z3.string().datetime().optional()
+});
+var companionIngestSchema = z3.object({
+  rows: z3.array(companionIngestRowSchema).min(1).max(500),
+  source: z3.string().max(100).optional()
+});
+var companionParseSchema = z3.object({
+  imageBase64: z3.string().min(100)
+});
+function encodeBase64Url2(value) {
+  const buffer = Buffer.isBuffer(value) ? value : Buffer.from(value, "utf8");
+  return buffer.toString("base64url");
+}
+function decodeBase64Url2(value) {
+  return Buffer.from(value, "base64url").toString("utf8");
+}
+function getCompanionTokenSecret() {
+  if (!process.env.SESSION_SECRET) {
+    throw new Error("SESSION_SECRET is required for companion tokens");
+  }
+  return process.env.SESSION_SECRET;
+}
+function createCompanionToken(userId) {
+  const payload = {
+    uid: userId,
+    exp: Math.floor(Date.now() / 1e3) + companionTokenTtlSeconds,
+    nonce: encodeBase64Url2(randomBytes2(12)),
+    v: companionTokenVersion
+  };
+  const payloadEncoded = encodeBase64Url2(JSON.stringify(payload));
+  const signature = createHmac2("sha256", getCompanionTokenSecret()).update(payloadEncoded).digest("base64url");
+  return `${payloadEncoded}.${signature}`;
+}
+function parseAndVerifyCompanionToken(token) {
+  const parts = token.split(".");
+  if (parts.length !== 2) return null;
+  const [payloadEncoded, providedSignature] = parts;
+  const expectedSignature = createHmac2("sha256", getCompanionTokenSecret()).update(payloadEncoded).digest("base64url");
+  if (providedSignature.length !== expectedSignature.length) {
+    return null;
+  }
+  const signatureIsValid = timingSafeEqual2(
+    Buffer.from(providedSignature),
+    Buffer.from(expectedSignature)
+  );
+  if (!signatureIsValid) return null;
+  try {
+    const payload = JSON.parse(decodeBase64Url2(payloadEncoded));
+    if (!payload || payload.v !== companionTokenVersion) return null;
+    if (!payload.uid || !payload.exp) return null;
+    if (Math.floor(Date.now() / 1e3) > payload.exp) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+function getBearerToken(req) {
+  const auth = req.get("authorization");
+  if (!auth) return null;
+  const [scheme, value] = auth.split(" ");
+  if (!scheme || !value) return null;
+  if (scheme.toLowerCase() !== "bearer") return null;
+  return value.trim();
+}
 function calculateFlipProfit(flip) {
   if (!flip.sellPrice) return 0;
   const buyPrice = Number(flip.buyPrice);
@@ -4186,7 +4429,7 @@ async function getCurrentProfits(userId) {
   }
   return { daily, weekly, monthly };
 }
-var SERVER_START_TIME = Date.now().toString();
+var SERVER_START_TIME = process.env.VERCEL_GIT_COMMIT_SHA ?? Date.now().toString();
 async function registerRoutes(app) {
   await setupAuth(app);
   app.get("/api/version", (req, res) => {
@@ -4200,6 +4443,185 @@ async function registerRoutes(app) {
     } catch (error) {
       console.error("Error fetching user:", error);
       res.status(500).json({ message: "Failed to fetch user" });
+    }
+  });
+  app.get("/api/companion/token", isAuthenticated, async (req, res) => {
+    try {
+      const userId = req.user.claims.sub;
+      const token = createCompanionToken(userId);
+      const expiresAt = new Date(Date.now() + companionTokenTtlSeconds * 1e3).toISOString();
+      res.json({ token, expiresAt });
+    } catch (error) {
+      console.error("Failed to issue companion token:", error);
+      res.status(500).json({ error: "Failed to issue companion token" });
+    }
+  });
+  app.get("/api/companion/me", async (req, res) => {
+    try {
+      const token = getBearerToken(req);
+      if (!token) {
+        return res.status(401).json({ error: "Missing bearer token" });
+      }
+      const payload = parseAndVerifyCompanionToken(token);
+      if (!payload) {
+        return res.status(401).json({ error: "Invalid companion token" });
+      }
+      const user = await storage.getUser(payload.uid);
+      if (!user) {
+        return res.status(401).json({ error: "Unknown user for token" });
+      }
+      res.json({
+        user: {
+          id: user.id,
+          email: user.email,
+          firstName: user.firstName,
+          lastName: user.lastName
+        }
+      });
+    } catch (error) {
+      console.error("Companion auth check failed:", error);
+      res.status(500).json({ error: "Companion auth check failed" });
+    }
+  });
+  app.post("/api/companion/parse/ge-history", async (req, res) => {
+    try {
+      const token = getBearerToken(req);
+      if (!token) {
+        return res.status(401).json({ error: "Missing bearer token" });
+      }
+      const payload = parseAndVerifyCompanionToken(token);
+      if (!payload) {
+        return res.status(401).json({ error: "Invalid companion token" });
+      }
+      const user = await storage.getUser(payload.uid);
+      if (!user) {
+        return res.status(401).json({ error: "Unknown user for token" });
+      }
+      const parsed = companionParseSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid payload" });
+      }
+      const imageBuffer = Buffer.from(parsed.data.imageBase64, "base64");
+      const ocr = await processGEHistoryScreenshot(imageBuffer);
+      res.json({
+        success: true,
+        rows: ocr.rows,
+        rawText: ocr.rawText,
+        confidence: ocr.overallConfidence
+      });
+    } catch (error) {
+      console.error("Companion parse failed:", error);
+      res.status(500).json({ error: "Companion parse failed" });
+    }
+  });
+  app.post("/api/companion/ingest/ge-history", async (req, res) => {
+    try {
+      const token = getBearerToken(req);
+      if (!token) {
+        return res.status(401).json({ error: "Missing bearer token" });
+      }
+      const payload = parseAndVerifyCompanionToken(token);
+      if (!payload) {
+        return res.status(401).json({ error: "Invalid companion token" });
+      }
+      const parsed = companionIngestSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid payload" });
+      }
+      const userId = payload.uid;
+      const existingFlips = await storage.getFlips(userId);
+      const openFlipsByItem = /* @__PURE__ */ new Map();
+      for (const flip of existingFlips) {
+        if (flip.deletedAt || flip.sellDate) continue;
+        const key = flip.itemName.trim().toLowerCase();
+        const arr = openFlipsByItem.get(key) ?? [];
+        arr.push(flip);
+        openFlipsByItem.set(key, arr);
+      }
+      openFlipsByItem.forEach((flips2) => {
+        flips2.sort((a, b) => new Date(b.buyDate).getTime() - new Date(a.buyDate).getTime());
+      });
+      let createdBuys = 0;
+      let matchedSells = 0;
+      let skippedDuplicates = 0;
+      let unmatchedSells = 0;
+      const processed = [];
+      for (const row of parsed.data.rows) {
+        const rowDate = row.timestamp ? new Date(row.timestamp) : /* @__PURE__ */ new Date();
+        const dateValue = Number.isNaN(rowDate.getTime()) ? /* @__PURE__ */ new Date() : rowDate;
+        const normalizedName = row.itemName.trim();
+        const itemKey = normalizedName.toLowerCase();
+        if (row.type === "buy") {
+          const duplicate = existingFlips.find((flip) => {
+            if (flip.deletedAt || flip.itemName.toLowerCase() !== itemKey) return false;
+            if (Number(flip.buyPrice) !== row.price) return false;
+            if ((flip.quantity ?? 1) !== row.quantity) return false;
+            const deltaMs = Math.abs(new Date(flip.buyDate).getTime() - dateValue.getTime());
+            return deltaMs <= 2 * 60 * 1e3;
+          });
+          if (duplicate) {
+            skippedDuplicates += 1;
+            continue;
+          }
+          const matches = await searchItems(normalizedName);
+          const bestMatch = matches[0];
+          const newFlip = await storage.createFlip(userId, {
+            itemName: bestMatch?.name ?? normalizedName,
+            itemId: bestMatch?.id,
+            itemIcon: bestMatch?.icon,
+            quantity: row.quantity,
+            buyPrice: row.price,
+            buyDate: dateValue,
+            strategyTag: "Other",
+            membershipStatus: "Unknown",
+            tradeType: "ge"
+          });
+          const openList = openFlipsByItem.get(itemKey) ?? [];
+          openList.unshift(newFlip);
+          openFlipsByItem.set(itemKey, openList);
+          createdBuys += 1;
+          processed.push({ type: "buy", itemName: newFlip.itemName, quantity: row.quantity, price: row.price });
+          continue;
+        }
+        const candidates = openFlipsByItem.get(itemKey) ?? [];
+        let candidateIndex = candidates.findIndex((flip) => (flip.quantity ?? 1) === row.quantity);
+        if (candidateIndex < 0) {
+          candidateIndex = 0;
+        }
+        if (candidateIndex < 0 || !candidates[candidateIndex]) {
+          unmatchedSells += 1;
+          continue;
+        }
+        const target = candidates[candidateIndex];
+        const existingNotes = target.notes ?? "";
+        const sourceNote = parsed.data.source ? `Imported from companion source=${parsed.data.source}` : "Imported from mac companion";
+        const nextNotes = existingNotes ? `${existingNotes}
+${sourceNote}` : sourceNote;
+        const updated = await storage.updateFlip(target.id, userId, {
+          sellPrice: row.price,
+          sellDate: dateValue,
+          notes: nextNotes
+        });
+        if (!updated) {
+          unmatchedSells += 1;
+          continue;
+        }
+        candidates.splice(candidateIndex, 1);
+        openFlipsByItem.set(itemKey, candidates);
+        matchedSells += 1;
+        processed.push({ type: "sell", itemName: updated.itemName, quantity: row.quantity, price: row.price });
+      }
+      res.json({
+        success: true,
+        createdBuys,
+        matchedSells,
+        skippedDuplicates,
+        unmatchedSells,
+        processedCount: processed.length
+      });
+    } catch (error) {
+      console.error("Companion ingest failed:", error);
+      res.status(500).json({ error: "Companion ingest failed" });
     }
   });
   app.get("/api/ge/price", async (req, res) => {
@@ -5665,6 +6087,23 @@ async function registerRoutes(app) {
       res.status(500).json({ error: "Failed to check admin status" });
     }
   });
+  app.get("/api/admin/debug/db-host", isAuthenticated, isAdmin, async (_req, res) => {
+    try {
+      const activeUrl = getDatabaseUrl();
+      const parsed = new URL(activeUrl);
+      const usingDatabaseUrl = !!process.env.DATABASE_URL;
+      const usingPgParts = !!(process.env.PGHOST && process.env.PGUSER && process.env.PGPASSWORD && process.env.PGDATABASE);
+      res.json({
+        host: parsed.host,
+        database: parsed.pathname.replace(/^\//, ""),
+        source: usingDatabaseUrl ? "DATABASE_URL" : "PG_PARTS",
+        hasDatabaseUrl: usingDatabaseUrl,
+        hasPgParts: usingPgParts
+      });
+    } catch (error) {
+      res.status(500).json({ error: error?.message || "Failed to resolve active database host" });
+    }
+  });
   app.get("/api/admin/users", isAuthenticated, isAdmin, async (req, res) => {
     try {
       const allUsers = await storage.getAllUsers();
@@ -6180,92 +6619,8 @@ async function registerRoutes(app) {
       if (marketMoversCache && now - marketMoversCacheTime < MARKET_MOVERS_CACHE_TTL) {
         return res.json(marketMoversCache);
       }
-      const dumpResponse = await fetch("https://chisel.weirdgloop.org/gazproj/gazbot/rs_dump.json", {
-        headers: { "User-Agent": "RS3FlipTracker/1.0 (Replit App; contact@replit.com)" }
-      });
-      if (!dumpResponse.ok) {
-        return res.status(502).json({ error: "Failed to fetch GE dump" });
-      }
-      const dump = await dumpResponse.json();
-      const items = [];
-      for (const [key, value] of Object.entries(dump)) {
-        if (key.startsWith("%")) continue;
-        const itemData = value;
-        const id = parseInt(key);
-        if (isNaN(id) || !itemData.name || !itemData.price || itemData.price < 100) continue;
-        items.push({
-          itemId: id,
-          itemName: itemData.name,
-          currentPrice: itemData.price,
-          volume: itemData.volume || 0,
-          members: !!itemData.members
-        });
-      }
-      items.sort((a, b) => (b.volume || 0) - (a.volume || 0));
-      const topItems = items.slice(0, 100);
-      const historyResults = await Promise.allSettled(
-        topItems.map(async (item) => {
-          const resp = await fetch(
-            `https://api.weirdgloop.org/exchange/history/rs/last90d?id=${item.itemId}`,
-            { headers: { "User-Agent": "RS3FlipTracker/1.0 (Replit App; contact@replit.com)" } }
-          );
-          if (!resp.ok) return { itemId: item.itemId, history: [] };
-          const data = await resp.json();
-          const history = data[item.itemId.toString()] || [];
-          return { itemId: item.itemId, history };
-        })
-      );
-      const historyMap = /* @__PURE__ */ new Map();
-      for (const result2 of historyResults) {
-        if (result2.status === "fulfilled") {
-          historyMap.set(result2.value.itemId, result2.value.history);
-        }
-      }
-      const movers = topItems.map((item) => {
-        const rawHistory = historyMap.get(item.itemId) || [];
-        const sortedHistory = [...rawHistory].sort(
-          (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-        );
-        let price24h = item.currentPrice;
-        let price7d = item.currentPrice;
-        if (sortedHistory.length > 0) {
-          const nowMs = Date.now();
-          const day1Ago = nowMs - 864e5;
-          const day7Ago = nowMs - 7 * 864e5;
-          let closest24h = Infinity;
-          let closest7d = Infinity;
-          for (const entry of sortedHistory) {
-            const ts = new Date(entry.timestamp).getTime();
-            const price = entry.price;
-            if (!ts || !price) continue;
-            const diff24h = Math.abs(ts - day1Ago);
-            if (diff24h < closest24h) {
-              closest24h = diff24h;
-              price24h = price;
-            }
-            const diff7d = Math.abs(ts - day7Ago);
-            if (diff7d < closest7d) {
-              closest7d = diff7d;
-              price7d = price;
-            }
-          }
-        }
-        const change24h = item.currentPrice - price24h;
-        const change7d = item.currentPrice - price7d;
-        return {
-          ...item,
-          price24hAgo: price24h,
-          price7dAgo: price7d,
-          change24h,
-          change7d,
-          changePercent24h: price24h > 0 ? change24h / price24h * 100 : 0,
-          changePercent7d: price7d > 0 ? change7d / price7d * 100 : 0
-        };
-      });
-      const gainers = [...movers].filter((m) => m.changePercent24h > 0).sort((a, b) => b.changePercent24h - a.changePercent24h).slice(0, 20);
-      const losers = [...movers].filter((m) => m.changePercent24h < 0).sort((a, b) => a.changePercent24h - b.changePercent24h).slice(0, 20);
-      const mostActive = [...movers].sort((a, b) => (b.volume || 0) - (a.volume || 0)).slice(0, 20);
-      const result = { gainers, losers, mostActive, timestamp: Date.now() };
+      const { gainers, losers, mostActive } = await getMarketMovers();
+      const result = { gainers, losers, mostActive, timestamp: now };
       marketMoversCache = result;
       marketMoversCacheTime = now;
       res.json(result);
@@ -6299,9 +6654,10 @@ function log(message, source = "express") {
 
 // server/app.ts
 async function createApp() {
+  await storageReady;
   const app = express();
-  app.use(express.json());
-  app.use(express.urlencoded({ extended: false }));
+  app.use(express.json({ limit: "25mb" }));
+  app.use(express.urlencoded({ extended: false, limit: "25mb" }));
   app.use((req, res, next) => {
     const start = Date.now();
     const path = req.path;

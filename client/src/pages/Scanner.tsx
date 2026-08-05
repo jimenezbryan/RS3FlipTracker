@@ -59,7 +59,6 @@ interface ScannerItem {
   roi: number;
   netProfit: number;
   capitalEfficiency: number;
-  rsi: number;
   trend: "up" | "down" | "stable";
   volatility: "low" | "medium" | "high";
   suggestedBuyPrice: number;
@@ -281,20 +280,6 @@ function VolatilityBadge({ level }: { level: "low" | "medium" | "high" }) {
     <span className={`px-2 py-0.5 rounded text-xs border ${styles[level]}`}>
       {level.toUpperCase()}
     </span>
-  );
-}
-
-function StatusBar({ value, max = 100 }: { value: number; max?: number }) {
-  const percent = Math.min((value / max) * 100, 100);
-  const color = percent > 70 ? "bg-emerald-500" : percent > 30 ? "bg-cyan-500" : "bg-red-500";
-  
-  return (
-    <div className="w-20 h-2 bg-slate-700 rounded-full overflow-hidden">
-      <div 
-        className={`h-full ${color} transition-all duration-300`}
-        style={{ width: `${percent}%` }}
-      />
-    </div>
   );
 }
 
@@ -811,21 +796,10 @@ export default function Scanner() {
       const volumeScore = Math.min(100, Math.round(volumeRatio * 50));
       
       // 2. MOMENTUM INDICATORS
-      // RSI scoring: Best between 30-70 (healthy), penalize extremes
-      let rsiScore = 0;
-      if (item.rsi >= 30 && item.rsi <= 70) {
-        // Perfect healthy range
-        rsiScore = 100;
-      } else if (item.rsi < 30) {
-        // Oversold - still tradeable but risky
-        rsiScore = Math.max(30, 100 - (30 - item.rsi) * 2);
-      } else {
-        // Overbought - caution
-        rsiScore = Math.max(20, 100 - (item.rsi - 70) * 2);
-      }
-      // Trend weight: up = +20, stable = +10, down = -10
-      const trendWeight = item.trend === "up" ? 20 : item.trend === "stable" ? 10 : -10;
-      const momentumScore = Math.min(100, Math.max(0, Math.round((rsiScore * 0.8) + trendWeight)));
+      // Driven by the real 24h price direction. The RSI that used to weight this was
+      // synthesised server-side from volume, so it carried no information the volume
+      // score above didn't already have. Real RSI lives in the detail drawer.
+      const momentumScore = item.trend === "up" ? 90 : item.trend === "stable" ? 55 : 20;
       
       // 3. VALUE METRICS
       let valueScore = 0;
@@ -868,11 +842,10 @@ export default function Scanner() {
       }
       
       // Momentum signals (Priority 2-3)
-      if (item.rsi < 35) {
-        signals.push("Oversold"); // Priority 2 - buying opportunity
-      }
-      if (item.rsi > 75) {
-        signals.push("Overbought"); // Priority 3 - take profits
+      // "Oversold"/"Overbought" used to come from the synthesised RSI, so they fired on
+      // volume alone and meant nothing. Real overbought/oversold is in the detail drawer.
+      if (item.trend === "down" && marginPercent > 2) {
+        signals.push("Pullback"); // Priority 2 - price falling into a real spread
       }
       if (item.trend === "up" && marginPercent > 2) {
         signals.push("Strong Trend"); // Priority 2
@@ -1653,7 +1626,7 @@ export default function Scanner() {
                       {viewMode === "detailed" && (
                         <TableCell className="py-2">
                           <div className="flex items-center gap-2 justify-center">
-                            <StatusBar value={item.rsi} />
+                            <TrendArrow trend={item.trend} />
                             <VolatilityBadge level={item.volatility} />
                           </div>
                         </TableCell>

@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import multer from "multer";
 import { storage } from "./storage";
 import { insertFlipSchema, insertWatchlistSchema, insertPriceAlertSchema, insertFavoriteSchema, insertProfitGoalSchema, insertPortfolioCategorySchema, insertPortfolioHoldingSchema, updatePortfolioHoldingSchema, insertHoldingTransactionSchema, insertRsAccountSchema, insertRecipeSchema, insertRecipeComponentSchema, insertRecipeRunSchema, insertRecipeRunComponentSchema } from "@shared/schema";
-import { getItemPrice, searchItems, getItemTrend, getItemPriceHistory, getItemPriceHistoryFull, getItemSuggestions, getAllItemsForScanner, type ScannerItem, type ChartPeriod } from "./ge-api";
+import { getItemPrice, searchItems, getItemTrend, getItemPriceHistory, getItemPriceHistoryFull, getItemSuggestions, getAllItemsForScanner, getMarketMovers, type ScannerItem, type ChartPeriod } from "./ge-api";
 import { calculateTechnicalIndicators, calculateSmartPricing, calculateTradeHistoryStats, calculateObservableRange, type TechnicalIndicators, type SmartPricing, type TradeHistoryStats, type ValueGapAnalysis, type ObservableRange } from "./technical-indicators";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { processScreenshot, matchItemsToGE, processGEHistoryScreenshot } from "./ocr";
@@ -2981,118 +2981,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json(marketMoversCache);
       }
 
-      const dumpResponse = await fetch("https://chisel.weirdgloop.org/gazproj/gazbot/rs_dump.json", {
-        headers: { "User-Agent": "RS3FlipTracker/1.0 (Replit App; contact@replit.com)" },
-      });
-      if (!dumpResponse.ok) {
-        return res.status(502).json({ error: "Failed to fetch GE dump" });
-      }
-      const dump = await dumpResponse.json();
+      const { gainers, losers, mostActive } = await getMarketMovers();
+      const result = { gainers, losers, mostActive, timestamp: now };
 
-      const items: Array<{ itemId: number; itemName: string; currentPrice: number; volume: number; members: boolean }> = [];
-      for (const [key, value] of Object.entries(dump)) {
-        if (key.startsWith("%")) continue;
-        const itemData = value as any;
-        const id = parseInt(key);
-        if (isNaN(id) || !itemData.name || !itemData.price || itemData.price < 100) continue;
-        items.push({
-          itemId: id,
-          itemName: itemData.name,
-          currentPrice: itemData.price,
-          volume: itemData.volume || 0,
-          members: !!itemData.members,
-        });
-      }
-
-      items.sort((a, b) => (b.volume || 0) - (a.volume || 0));
-      const topItems = items.slice(0, 100);
-
-      const historyResults = await Promise.allSettled(
-        topItems.map(async (item) => {
-          const resp = await fetch(
-            `https://api.weirdgloop.org/exchange/history/rs/last90d?id=${item.itemId}`,
-            { headers: { "User-Agent": "RS3FlipTracker/1.0 (Replit App; contact@replit.com)" } }
-          );
-          if (!resp.ok) return { itemId: item.itemId, history: [] };
-          const data = await resp.json();
-          const history = data[item.itemId.toString()] || [];
-          return { itemId: item.itemId, history };
-        })
-      );
-
-      const historyMap = new Map<number, any[]>();
-      for (const result of historyResults) {
-        if (result.status === "fulfilled") {
-          historyMap.set(result.value.itemId, result.value.history);
-        }
-      }
-
-      const movers = topItems.map((item) => {
-        const rawHistory = historyMap.get(item.itemId) || [];
-        const sortedHistory = [...rawHistory].sort(
-          (a: any, b: any) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-        );
-
-        let price24h = item.currentPrice;
-        let price7d = item.currentPrice;
-
-        if (sortedHistory.length > 0) {
-          const nowMs = Date.now();
-          const day1Ago = nowMs - 86400000;
-          const day7Ago = nowMs - 7 * 86400000;
-
-          let closest24h = Infinity;
-          let closest7d = Infinity;
-
-          for (const entry of sortedHistory) {
-            const ts = new Date(entry.timestamp).getTime();
-            const price = entry.price;
-            if (!ts || !price) continue;
-
-            const diff24h = Math.abs(ts - day1Ago);
-            if (diff24h < closest24h) {
-              closest24h = diff24h;
-              price24h = price;
-            }
-
-            const diff7d = Math.abs(ts - day7Ago);
-            if (diff7d < closest7d) {
-              closest7d = diff7d;
-              price7d = price;
-            }
-          }
-        }
-
-        const change24h = item.currentPrice - price24h;
-        const change7d = item.currentPrice - price7d;
-
-        return {
-          ...item,
-          price24hAgo: price24h,
-          price7dAgo: price7d,
-          change24h,
-          change7d,
-          changePercent24h: price24h > 0 ? ((change24h / price24h) * 100) : 0,
-          changePercent7d: price7d > 0 ? ((change7d / price7d) * 100) : 0,
-        };
-      });
-
-      const gainers = [...movers]
-        .filter((m) => m.changePercent24h > 0)
-        .sort((a, b) => b.changePercent24h - a.changePercent24h)
-        .slice(0, 20);
-      const losers = [...movers]
-        .filter((m) => m.changePercent24h < 0)
-        .sort((a, b) => a.changePercent24h - b.changePercent24h)
-        .slice(0, 20);
-      const mostActive = [...movers]
-        .sort((a, b) => (b.volume || 0) - (a.volume || 0))
-        .slice(0, 20);
-
-      const result = { gainers, losers, mostActive, timestamp: Date.now() };
       marketMoversCache = result;
       marketMoversCacheTime = now;
-
       res.json(result);
     } catch (error) {
       console.error("Market movers error:", error);
