@@ -245,7 +245,11 @@ async function getCurrentProfits(userId: string): Promise<{ daily: number; weekl
   return { daily, weekly, monthly };
 }
 
-const SERVER_START_TIME = Date.now().toString();
+// ponytail: identify the deployment, not the process. On Vercel each lambda instance
+// has its own start time, so Date.now() made every cold start look like a new version
+// and useVersionCheck logged the user out. Falls back to start time off-Vercel.
+const SERVER_START_TIME =
+  process.env.VERCEL_GIT_COMMIT_SHA ?? Date.now().toString();
 
 export async function registerRoutes(app: Express): Promise<Server> {
   await setupAuth(app);
