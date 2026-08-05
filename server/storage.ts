@@ -1731,12 +1731,14 @@ async function createStorage(): Promise<IStorage> {
 
 export let storage: IStorage = new MemStorage();
 
-createStorage().then((s) => {
-  storage = s;
-}).catch((error) => {
-  console.error("[storage] Failed to initialize storage:", error);
-  if (process.env.NODE_ENV === "production") {
-    // Crash fast in production so deployment is visibly broken instead of silently using in-memory state.
-    process.exit(1);
-  }
-});
+// ponytail: this used to be fire-and-forget, so `storage` was an empty MemStorage until the
+// probe resolved. On Vercel every cold start reopened that window and requests landing in it
+// got "user not found" — logins failed with a correct password, password resets silently
+// no-oped. createApp() awaits this now, so nothing is served on the placeholder store.
+// A failure rejects here instead of process.exit(1), which was killing live requests.
+export const storageReady: Promise<IStorage> = createStorage()
+  .then((s) => (storage = s))
+  .catch((error) => {
+    console.error("[storage] Failed to initialize storage:", error);
+    throw error;
+  });

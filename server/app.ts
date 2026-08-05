@@ -1,8 +1,12 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { log } from "./log";
+import { storageReady } from "./storage";
 
 export async function createApp() {
+  // Never serve a request on the placeholder MemStorage — see storage.ts.
+  await storageReady;
+
   const app = express();
   app.use(express.json({ limit: "25mb" }));
   app.use(express.urlencoded({ extended: false, limit: "25mb" }));
