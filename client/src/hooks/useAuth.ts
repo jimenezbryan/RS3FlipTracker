@@ -7,7 +7,7 @@ export function useAuth() {
     queryKey: ["/api/auth/user"],
     queryFn: async () => {
       const controller = new AbortController();
-      const timeout = window.setTimeout(() => controller.abort(), 8000);
+      const timeout = window.setTimeout(() => controller.abort(), 15000);
 
       try {
         const res = await fetch("/api/auth/user", {
@@ -15,23 +15,24 @@ export function useAuth() {
           signal: controller.signal,
         });
 
-        if (res.status === 401 || !res.ok) {
-          return null;
-        }
+        // ponytail: only 401 means "logged out". Everything else — a 500, a cold-start
+        // timeout, a dropped connection — means "couldn't tell", and returning null for
+        // those logged the user straight back out to the landing page. With retry:false a
+        // single hiccup was a logout. Throwing lets react-query retry instead.
+        if (res.status === 401) return null;
+        if (!res.ok) throw new Error(`/api/auth/user returned ${res.status}`);
 
         return await res.json();
-      } catch {
-        return null;
       } finally {
         window.clearTimeout(timeout);
       }
     },
-    retry: false,
+    retry: 2,
+    retryDelay: (attempt) => 500 * 2 ** attempt,
   });
 
-  const refetchUser = () => {
+  const refetchUser = () =>
     queryClient.invalidateQueries({ queryKey: ["/api/auth/user"] });
-  };
 
   return {
     user,

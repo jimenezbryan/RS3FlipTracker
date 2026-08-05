@@ -2666,6 +2666,14 @@ function getSession() {
     }
   });
 }
+function loginAndSave(req, sessionUser) {
+  return new Promise((resolve, reject) => {
+    req.login(sessionUser, (err) => {
+      if (err) return reject(err);
+      req.session.save((saveErr) => saveErr ? reject(saveErr) : resolve());
+    });
+  });
+}
 function updateUserSession(user, tokens) {
   user.claims = tokens.claims();
   user.access_token = tokens.access_token;
@@ -2912,12 +2920,8 @@ async function setupAuth(app) {
         authProvider: "email",
         expires_at: Math.floor(Date.now() / 1e3) + 7 * 24 * 60 * 60
       };
-      req.login(sessionUser, (err) => {
-        if (err) {
-          return res.status(500).json({ message: "Registration succeeded but login failed" });
-        }
-        res.json({ success: true, user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName } });
-      });
+      await loginAndSave(req, sessionUser);
+      res.json({ success: true, user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName } });
     } catch (error) {
       console.error("Registration error:", error);
       res.status(500).json({ message: "Registration failed" });
@@ -2943,12 +2947,8 @@ async function setupAuth(app) {
         authProvider: "email",
         expires_at: Math.floor(Date.now() / 1e3) + 7 * 24 * 60 * 60
       };
-      req.login(sessionUser, (err) => {
-        if (err) {
-          return res.status(500).json({ message: "Login failed" });
-        }
-        res.json({ success: true, user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName } });
-      });
+      await loginAndSave(req, sessionUser);
+      res.json({ success: true, user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName } });
     } catch (error) {
       console.error("Login error:", error);
       res.status(500).json({ message: "Login failed" });
@@ -3096,13 +3096,8 @@ async function setupAuth(app) {
           authProvider: "discord",
           expires_at: Math.floor(Date.now() / 1e3) + 7 * 24 * 60 * 60
         };
-        req.login(sessionUser, (err) => {
-          if (err) {
-            console.error("Discord login session error:", err);
-            return res.redirect("/?error=discord_auth_failed");
-          }
-          res.redirect("/");
-        });
+        await loginAndSave(req, sessionUser);
+        res.redirect("/");
       } catch (error) {
         console.error("Discord auth error:", error);
         res.redirect("/?error=discord_auth_failed");
@@ -3179,13 +3174,8 @@ async function setupAuth(app) {
           authProvider: "google",
           expires_at: Math.floor(Date.now() / 1e3) + 7 * 24 * 60 * 60
         };
-        req.login(sessionUser, (err) => {
-          if (err) {
-            console.error("Google login session error:", err);
-            return res.redirect("/?error=google_auth_failed");
-          }
-          res.redirect("/");
-        });
+        await loginAndSave(req, sessionUser);
+        res.redirect("/");
       } catch (error) {
         console.error("Google auth error:", error);
         res.redirect("/?error=google_auth_failed");

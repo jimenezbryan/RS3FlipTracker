@@ -49,6 +49,21 @@ export function getSession() {
   });
 }
 
+// ponytail: req.login() only mutates req.session in memory — express-session writes to
+// Postgres from res.end, after the response is already flushed. Vercel freezes the lambda
+// the moment that happens, so the INSERT often never lands. The browser then gets a valid
+// cookie for a session row that does not exist, the next request hits a different instance,
+// SELECT misses, 401 — and login bounces back to the landing page forever. Awaiting
+// session.save() makes the write finish before we respond. Every login path goes through here.
+export function loginAndSave(req: any, sessionUser: any): Promise<void> {
+  return new Promise((resolve, reject) => {
+    req.login(sessionUser, (err: any) => {
+      if (err) return reject(err);
+      req.session.save((saveErr: any) => (saveErr ? reject(saveErr) : resolve()));
+    });
+  });
+}
+
 function updateUserSession(
   user: any,
   tokens: client.TokenEndpointResponse & client.TokenEndpointResponseHelpers
@@ -361,12 +376,8 @@ export async function setupAuth(app: Express) {
         expires_at: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
       };
 
-      req.login(sessionUser, (err) => {
-        if (err) {
-          return res.status(500).json({ message: "Registration succeeded but login failed" });
-        }
-        res.json({ success: true, user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName } });
-      });
+      await loginAndSave(req, sessionUser);
+      res.json({ success: true, user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName } });
     } catch (error) {
       console.error("Registration error:", error);
       res.status(500).json({ message: "Registration failed" });
@@ -399,12 +410,8 @@ export async function setupAuth(app: Express) {
         expires_at: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
       };
 
-      req.login(sessionUser, (err) => {
-        if (err) {
-          return res.status(500).json({ message: "Login failed" });
-        }
-        res.json({ success: true, user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName } });
-      });
+      await loginAndSave(req, sessionUser);
+      res.json({ success: true, user: { id: user.id, email: user.email, firstName: user.firstName, lastName: user.lastName } });
     } catch (error) {
       console.error("Login error:", error);
       res.status(500).json({ message: "Login failed" });
@@ -591,13 +598,8 @@ export async function setupAuth(app: Express) {
           expires_at: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
         };
 
-        req.login(sessionUser, (err) => {
-          if (err) {
-            console.error("Discord login session error:", err);
-            return res.redirect("/?error=discord_auth_failed");
-          }
-          res.redirect("/");
-        });
+        await loginAndSave(req, sessionUser);
+        res.redirect("/");
       } catch (error) {
         console.error("Discord auth error:", error);
         res.redirect("/?error=discord_auth_failed");
@@ -696,13 +698,8 @@ export async function setupAuth(app: Express) {
           expires_at: Math.floor(Date.now() / 1000) + 7 * 24 * 60 * 60,
         };
 
-        req.login(sessionUser, (err) => {
-          if (err) {
-            console.error("Google login session error:", err);
-            return res.redirect("/?error=google_auth_failed");
-          }
-          res.redirect("/");
-        });
+        await loginAndSave(req, sessionUser);
+        res.redirect("/");
       } catch (error) {
         console.error("Google auth error:", error);
         res.redirect("/?error=google_auth_failed");
