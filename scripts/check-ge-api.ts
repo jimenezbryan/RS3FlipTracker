@@ -69,6 +69,28 @@ assert.ok(
   "margin is not sellPrice - buyPrice",
 );
 
+// ── 3b. changePct24h carries magnitude, not just direction ──────────────────────
+// Scanner.tsx gates its momentum signals on |changePct24h|. When only the bucketed `trend`
+// existed those signals fired on direction alone, which was true of ~half the game. A null
+// here must stay null: coercing "no 24h anchor" to 0 silently means "did not move".
+assert.ok(
+  items.every((i) => i.changePct24h === null || Number.isFinite(i.changePct24h)),
+  "changePct24h is neither null nor a finite number",
+);
+const withChange = items.filter((i) => i.changePct24h !== null);
+assert.ok(
+  withChange.length > items.length * 0.25,
+  `only ${withChange.length}/${items.length} items have a 24h anchor`,
+);
+assert.ok(
+  new Set(withChange.map((i) => i.changePct24h)).size > 100,
+  "changePct24h is degenerate — momentum signals have nothing to gate on",
+);
+assert.ok(
+  withChange.some((i) => i.changePct24h! < 0) && withChange.some((i) => i.changePct24h! > 0),
+  "changePct24h never goes both directions",
+);
+
 // ── 4. Decimal boundary ─────────────────────────────────────────────────────────
 // The wiki's hourly averages carry decimals; every price column is bigint, and Postgres
 // rejects 786.4. Rounding happens once, in ge-api, so nothing downstream has to know.
@@ -92,5 +114,5 @@ const spreads = items.map((i) => i.margin / i.buyPrice).sort((a, b) => a - b);
 console.log(
   `ok — ${items.length} scanner items, ${onePct.length} at exactly 1%, ` +
     `median spread ${(spreads[Math.floor(spreads.length / 2)] * 100).toFixed(2)}%, ` +
-    `${gainers.length} gainers`,
+    `${withChange.length} with a 24h anchor, ${gainers.length} gainers`,
 );

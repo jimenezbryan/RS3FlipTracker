@@ -838,6 +838,10 @@ export interface ScannerItem {
   netProfit: number;
   capitalEfficiency: number;
   trend: "up" | "down" | "stable";
+  // ponytail: the signed 24h move behind `trend`. The bucket alone cannot say whether a
+  // move was 1.1% or 40%, so signal thresholds had nothing to gate on but direction.
+  // null when the item has no hourly block 24h ago to compare against.
+  changePct24h: number | null;
   volatility: "low" | "medium" | "high";
   suggestedBuyPrice: number;
   suggestedSellPrice: number;
@@ -915,9 +919,9 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
     // Previously this was derived from the fabricated margin, so it described spread
     // width — not direction — and collapsed to a single value for every item.
     const priorMid = hourlyMid(yesterday[String(item.id)]);
-    const changePct = priorMid && priorMid > 0 ? ((price - priorMid) / priorMid) * 100 : 0;
+    const changePct = priorMid && priorMid > 0 ? ((price - priorMid) / priorMid) * 100 : null;
     const trend: "up" | "down" | "stable" =
-      changePct > 1 ? "up" : changePct < -1 ? "down" : "stable";
+      changePct == null ? "stable" : changePct > 1 ? "up" : changePct < -1 ? "down" : "stable";
 
     // Volatility based on margin relative to price
     const marginPercent = margin / price;
@@ -941,6 +945,7 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
       netProfit,
       capitalEfficiency: Math.round(capitalEfficiency),
       trend,
+      changePct24h: changePct == null ? null : Math.round(changePct * 100) / 100,
       volatility,
       suggestedBuyPrice: smartPricing.suggestedBuyPrice,
       suggestedSellPrice: smartPricing.suggestedSellPrice,

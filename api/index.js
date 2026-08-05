@@ -2547,8 +2547,8 @@ async function getAllItemsForScanner() {
     const roi = totalInvestment > 0 ? netProfit / totalInvestment * 100 : 0;
     const capitalEfficiency = totalInvestment > 0 ? netProfit / totalInvestment * 1e4 : 0;
     const priorMid = hourlyMid(yesterday[String(item.id)]);
-    const changePct = priorMid && priorMid > 0 ? (price - priorMid) / priorMid * 100 : 0;
-    const trend = changePct > 1 ? "up" : changePct < -1 ? "down" : "stable";
+    const changePct = priorMid && priorMid > 0 ? (price - priorMid) / priorMid * 100 : null;
+    const trend = changePct == null ? "stable" : changePct > 1 ? "up" : changePct < -1 ? "down" : "stable";
     const marginPercent = margin / price;
     const volatility = marginPercent > 0.03 ? "high" : marginPercent > 0.01 ? "medium" : "low";
     const smartPricing = calculateSmartPricing(price, null, null);
@@ -2568,6 +2568,7 @@ async function getAllItemsForScanner() {
       netProfit,
       capitalEfficiency: Math.round(capitalEfficiency),
       trend,
+      changePct24h: changePct == null ? null : Math.round(changePct * 100) / 100,
       volatility,
       suggestedBuyPrice: smartPricing.suggestedBuyPrice,
       suggestedSellPrice: smartPricing.suggestedSellPrice,

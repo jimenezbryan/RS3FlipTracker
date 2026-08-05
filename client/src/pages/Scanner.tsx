@@ -60,6 +60,7 @@ interface ScannerItem {
   netProfit: number;
   capitalEfficiency: number;
   trend: "up" | "down" | "stable";
+  changePct24h: number | null;
   volatility: "low" | "medium" | "high";
   suggestedBuyPrice: number;
   suggestedSellPrice: number;
@@ -132,15 +133,22 @@ interface ProcessedScannerItem extends ScannerItem {
 const SIGNAL_PRIORITY: Record<string, number> = {
   "Smart Money": 1,
   "Deep Value": 1,
-  "Favorable R/R": 1,
   "Accumulation": 2,
-  "Oversold": 2,
   "Strong Trend": 2,
   "Good Value": 3,
-  "High Reward": 3,
-  "Overbought": 3,
   "Distribution": 3,
+  "Pullback": 2,
 };
+
+// ponytail: every one of these used to be compared against a margin the server hardcoded to
+// 1% of price, so the margin-gated conditions effectively never fired and the ones that did
+// fired on volume alone. With real spreads (median ~7%) the same thresholds fired on 93% of
+// items, which is why "signals only" filtered almost nothing. Recalibrated against the live
+// distribution: each marks roughly the top quartile-to-decile of its own axis.
+// Tighten these to make the scanner pickier — they are the only dial that matters here.
+const SIGNAL_DEEP_VALUE_ROI = 30;   // post-tax ROI %, ~p90
+const SIGNAL_GOOD_VALUE_ROI = 15;   // post-tax ROI %, ~p75
+const SIGNAL_MIN_MOVE_PCT = 10;     // |24h move| %, ~p75
 
 const SIGNAL_STYLES: Record<string, string> = {
   "Smart Money": "bg-amber-500/20 text-amber-400 border-amber-500/30",
@@ -814,8 +822,12 @@ export default function Scanner() {
       }
       
       // 4. RISK/REWARD ANALYSIS
-      const stopLossAmount = item.buyPrice * 0.02; // 2% stop loss assumption
-      const riskRewardRatio = stopLossAmount > 0 ? item.potentialProfit / stopLossAmount : 0;
+      // ponytail: reward and risk have to be the same unit. This compared potentialProfit —
+      // margin across the whole buy limit — against a stop loss on a SINGLE unit, so the
+      // ratio was inflated by roughly geLimit and "Favorable R/R" fired on 93% of items.
+      // Per-unit margin against per-unit stop loss is the comparison that was intended.
+      const stopLossAmount = item.buyPrice * 0.02; // 2% stop loss assumption, per unit
+      const riskRewardRatio = stopLossAmount > 0 ? item.margin / stopLossAmount : 0;
       // R/R scoring: ratio > 3 = 100, ratio > 2 = 75, ratio > 1 = 50
       const riskScore = Math.min(100, Math.max(0, Math.round(riskRewardRatio * 25)));
       
@@ -841,31 +853,33 @@ export default function Scanner() {
         signals.push("Distribution"); // Priority 3 - selling pressure
       }
       
-      // Momentum signals (Priority 2-3)
+      // Momentum signals (Priority 2)
       // "Oversold"/"Overbought" used to come from the synthesised RSI, so they fired on
       // volume alone and meant nothing. Real overbought/oversold is in the detail drawer.
-      if (item.trend === "down" && marginPercent > 2) {
-        signals.push("Pullback"); // Priority 2 - price falling into a real spread
+      // These gate on the SIZE of the 24h move, not just its direction — "trend is down and
+      // the spread is over 2%" was true of nearly every falling item once spreads were real.
+      const move = Math.abs(item.changePct24h ?? 0);
+      if (item.trend === "down" && move > SIGNAL_MIN_MOVE_PCT) {
+        signals.push("Pullback"); // Priority 2 - meaningful drop, not noise
       }
-      if (item.trend === "up" && marginPercent > 2) {
+      if (item.trend === "up" && move > SIGNAL_MIN_MOVE_PCT) {
         signals.push("Strong Trend"); // Priority 2
       }
-      
-      // Value signals (Priority 1-3)
-      if (marginPercent > 5 || item.roi > 8) {
+
+      // Value signals (Priority 1, 3)
+      // Post-tax ROI only. The old margin-percent arm double-counted the same quantity and
+      // was set for a 1% world, so it fired on ~60% of items.
+      if (item.roi > SIGNAL_DEEP_VALUE_ROI) {
         signals.push("Deep Value"); // Priority 1 - exceptional
-      } else if (marginPercent > 2 || item.roi > 4) {
+      } else if (item.roi > SIGNAL_GOOD_VALUE_ROI) {
         signals.push("Good Value"); // Priority 3
       }
-      
-      // Risk/Reward signals (Priority 1, 3)
-      if (riskRewardRatio > 2) {
-        signals.push("Favorable R/R"); // Priority 1
-      }
-      if (riskRewardRatio > 3) {
-        signals.push("High Reward"); // Priority 3
-      }
-      
+
+      // ponytail: "Favorable R/R" and "High Reward" deleted. Once the unit bug above is
+      // fixed the ratio is just margin% / 2, so both restated the value signals and fired
+      // on every item that already had one — measured: identical item set with and without
+      // them, they only crowded the top-3 display.
+
       // Sort signals by priority and take top 3
       const sortedSignals = signals
         .sort((a, b) => (SIGNAL_PRIORITY[a] || 99) - (SIGNAL_PRIORITY[b] || 99))
@@ -1026,25 +1040,31 @@ export default function Scanner() {
       return true;
     });
 
-    result.sort((a, b) => {
-      const aVal = a[sortKey];
-      const bVal = b[sortKey];
-      
+    // ponytail: several sortable columns are buckets, not continuous values — trend and
+    // volatility have 3 each, priceTier and confidence 4, and suggestedMarginPct resolves to
+    // one constant per price tier while calculateSmartPricing gets no real indicators. Ties
+    // kept whatever order they already had, so clicking those headers looked like it did
+    // nothing. Falling back to netProfit gives every tie a meaningful, stable order.
+    const compare = (a: ProcessedScannerItem, b: ProcessedScannerItem, key: SortKey) => {
+      const aVal = a[key];
+      const bVal = b[key];
+
       if (typeof aVal === "string" && typeof bVal === "string") {
-        return sortDirection === "asc" 
-          ? aVal.localeCompare(bVal)
-          : bVal.localeCompare(aVal);
+        return aVal.localeCompare(bVal);
       }
-      
       if (typeof aVal === "boolean" && typeof bVal === "boolean") {
-        return sortDirection === "asc" 
-          ? (aVal ? 1 : 0) - (bVal ? 1 : 0)
-          : (bVal ? 1 : 0) - (aVal ? 1 : 0);
+        return (aVal ? 1 : 0) - (bVal ? 1 : 0);
       }
-      
-      const numA = Number(aVal) || 0;
-      const numB = Number(bVal) || 0;
-      return sortDirection === "asc" ? numA - numB : numB - numA;
+      // null sorts as absent, not as zero — a missing 24h change is not "no change".
+      const numA = aVal == null ? Number.NEGATIVE_INFINITY : Number(aVal) || 0;
+      const numB = bVal == null ? Number.NEGATIVE_INFINITY : Number(bVal) || 0;
+      return numA - numB;
+    };
+
+    result.sort((a, b) => {
+      const primary = compare(a, b, sortKey);
+      if (primary !== 0) return sortDirection === "asc" ? primary : -primary;
+      return sortKey === "netProfit" ? 0 : b.netProfit - a.netProfit;
     });
 
     return result;
@@ -1097,7 +1117,7 @@ export default function Scanner() {
 
   const exportData = () => {
     const csv = [
-      ["Item", "Buy", "Sell", "Margin", "ROI%", "Net Profit", "Volume", "Cap Eff", "Trend", "Volatility", "7D Range%", "AI Est.%", "Price Tier", "Confidence"].join(","),
+      ["Item", "Buy", "Sell", "Margin", "ROI%", "Net Profit", "Volume", "Cap Eff", "Trend", "24h Change%", "Volatility", "AI Est.%", "Price Tier", "Confidence"].join(","),
       ...filteredAndSortedItems.map(item => [
         `"${item.name}"`,
         item.buyPrice,
@@ -1108,8 +1128,8 @@ export default function Scanner() {
         item.volume,
         item.capitalEfficiency,
         item.trend,
+        item.changePct24h ?? "",
         item.volatility,
-        item.range7dSpreadPct ?? "",
         item.suggestedMarginPct,
         item.priceTier,
         item.confidence,
@@ -1472,14 +1492,7 @@ export default function Scanner() {
                 {viewMode === "detailed" && (
                   <TableHead className="text-center text-muted-foreground">STATUS</TableHead>
                 )}
-                <TableHead 
-                  className="cursor-pointer select-none text-muted-foreground hover:text-foreground text-right"
-                  onClick={() => handleSort("range7dSpreadPct" as SortKey)}
-                  data-testid="header-7d-range"
-                >
-                  7D RANGE <SortIcon columnKey={"range7dSpreadPct" as SortKey} />
-                </TableHead>
-                <TableHead 
+                <TableHead
                   className="cursor-pointer select-none text-muted-foreground hover:text-foreground text-right"
                   onClick={() => handleSort("suggestedMarginPct" as SortKey)}
                   data-testid="header-suggested"
@@ -1631,20 +1644,6 @@ export default function Scanner() {
                           </div>
                         </TableCell>
                       )}
-                      <TableCell className="text-right py-2" data-testid={`cell-7d-range-${item.id}`}>
-                        {item.range7dSpreadPct !== null && item.range7dSpreadPct !== undefined ? (
-                          <span className={`font-mono text-sm font-medium ${
-                            item.range7dSpreadPct >= 10 ? "text-emerald-400" 
-                            : item.range7dSpreadPct >= 5 ? "text-cyan-400" 
-                            : item.range7dSpreadPct >= 2 ? "text-yellow-400" 
-                            : "text-muted-foreground"
-                          }`}>
-                            {item.range7dSpreadPct.toFixed(1)}%
-                          </span>
-                        ) : (
-                          <span className="font-mono text-xs text-muted-foreground/50">N/A</span>
-                        )}
-                      </TableCell>
                       <TableCell className="text-right py-2" data-testid={`cell-suggested-${item.id}`}>
                         <div className="flex items-center justify-end gap-1">
                           <span className="font-mono text-sm text-muted-foreground">{item.suggestedMarginPct.toFixed(1)}%</span>
