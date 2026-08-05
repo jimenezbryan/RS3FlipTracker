@@ -218,7 +218,14 @@ async function refreshItemCache(): Promise<void> {
       getHourly(),
     ]);
 
-    const items: CachedItem[] = [];
+    // ponytail: keyed by id, not an array, because /mapping ships the same id twice for a
+    // dozen items — a base name and a tier alias ("Deathdealer robe top" and
+    // "Deathdealer robe top (tier 90)") sharing id 55468 and identical prices. Pushing both
+    // gave the scanner two rows with the same React key, which broke reconciliation: rows
+    // went stale and survived filter changes, so every filter looked broken at once.
+    // On a collision keep the shorter name — that is the base item, which is what the GE
+    // shows and what people search for.
+    const byId = new Map<number, CachedItem>();
     const prices = new Map<number, CachedPrice>();
     const idsByName = new Map<string, number>();
 
@@ -226,14 +233,17 @@ async function refreshItemCache(): Promise<void> {
       if (!entry?.id || !entry.name) continue;
 
       const nameLower = entry.name.toLowerCase();
-      items.push({
-        id: entry.id,
-        name: entry.name,
-        nameLower,
-        isMembers: entry.members,
-        geLimit: entry.limit,
-        examine: entry.examine,
-      });
+      const existing = byId.get(entry.id);
+      if (!existing || entry.name.length < existing.name.length) {
+        byId.set(entry.id, {
+          id: entry.id,
+          name: entry.name,
+          nameLower,
+          isMembers: entry.members,
+          geLimit: entry.limit,
+          examine: entry.examine,
+        });
+      }
       if (!idsByName.has(nameLower)) idsByName.set(nameLower, entry.id);
 
       const tick = latest[String(entry.id)];
@@ -267,11 +277,13 @@ async function refreshItemCache(): Promise<void> {
       });
     }
 
-    itemCache = items;
+    itemCache = Array.from(byId.values());
     itemPriceCache = prices;
     itemIdByNameLower = idsByName;
     cacheLastUpdated = now;
-    console.log(`[ge-api] Cached ${items.length} items, ${prices.size} priced`);
+    console.log(
+      `[ge-api] Cached ${itemCache.length} items (${mapping.length} mapping entries), ${prices.size} priced`,
+    );
   } catch (error) {
     console.error("[ge-api] Failed to refresh item cache:", error);
   }
@@ -874,10 +886,13 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
     // (with a freshness guard) covers the rest.
     let low: number | undefined;
     let high: number | undefined;
+    // Which source won decides how much the observed spread can be trusted below.
+    let quoteSource: "hourly" | "latest" = "latest";
 
     if (priceData.hourVolume && priceData.hourLow != null && priceData.hourHigh != null) {
       low = priceData.hourLow;
       high = priceData.hourHigh;
+      quoteSource = "hourly";
     } else {
       // A quote nobody has traded against in 24h is not a price you can transact at.
       const staleAfter = Date.now() - SCANNER_MAX_QUOTE_AGE_MS;
@@ -927,7 +942,32 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
     const marginPercent = margin / price;
     const volatility: "low" | "medium" | "high" = marginPercent > 0.03 ? "high" : marginPercent > 0.01 ? "medium" : "low";
     
-    const smartPricing = calculateSmartPricing(price, null, null);
+    // ponytail: this used to be calculateSmartPricing(price, null, null), which with no
+    // indicators and no trade history returns TIER_MARGINS[tier].base unchanged — one
+    // constant per price bracket, so all 2188 items showed 4 distinct values and every
+    // confidence read "low". A per-item estimate presented as AI output that never looked
+    // at the item. The observed spread is the real signal now, so blend toward it by how
+    // much the quote can be trusted, and let confidence say which happened.
+    const tierPricing = calculateSmartPricing(price, null, null);
+    const tierBasePct = tierPricing.suggestedMarginPct / 100;
+    const observedPct = margin / buyPrice;
+    // Hourly averages need both sides traded within the hour, so they survive a single
+    // mis-click; a lone /latest pair does not, and gets pulled harder toward the baseline.
+    const observedWeight = quoteSource === "hourly" ? 0.8 : 0.5;
+    const suggestedPct = Math.min(
+      SCANNER_MAX_SPREAD_RATIO,
+      observedPct * observedWeight + tierBasePct * (1 - observedWeight),
+    );
+    const confidence: "low" | "medium" | "high" =
+      quoteSource === "hourly" ? "high" : observedPct > 0 ? "medium" : "low";
+    const halfMargin = suggestedPct / 2;
+    const smartPricing = {
+      suggestedBuyPrice: Math.round(price * (1 - halfMargin)),
+      suggestedSellPrice: Math.round(price * (1 + halfMargin)),
+      suggestedMarginPct: Math.round(suggestedPct * 10000) / 100,
+      priceTier: tierPricing.priceTier,
+      confidence,
+    };
 
     results.push({
       id: item.id,

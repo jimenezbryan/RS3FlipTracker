@@ -2041,20 +2041,23 @@ async function refreshItemCache() {
       getVolumes(),
       getHourly()
     ]);
-    const items = [];
+    const byId = /* @__PURE__ */ new Map();
     const prices = /* @__PURE__ */ new Map();
     const idsByName = /* @__PURE__ */ new Map();
     for (const entry of mapping) {
       if (!entry?.id || !entry.name) continue;
       const nameLower = entry.name.toLowerCase();
-      items.push({
-        id: entry.id,
-        name: entry.name,
-        nameLower,
-        isMembers: entry.members,
-        geLimit: entry.limit,
-        examine: entry.examine
-      });
+      const existing = byId.get(entry.id);
+      if (!existing || entry.name.length < existing.name.length) {
+        byId.set(entry.id, {
+          id: entry.id,
+          name: entry.name,
+          nameLower,
+          isMembers: entry.members,
+          geLimit: entry.limit,
+          examine: entry.examine
+        });
+      }
       if (!idsByName.has(nameLower)) idsByName.set(nameLower, entry.id);
       const tick = latest[String(entry.id)];
       const high = gp(tick?.high);
@@ -2079,11 +2082,13 @@ async function refreshItemCache() {
         examine: entry.examine
       });
     }
-    itemCache = items;
+    itemCache = Array.from(byId.values());
     itemPriceCache = prices;
     itemIdByNameLower = idsByName;
     cacheLastUpdated = now;
-    console.log(`[ge-api] Cached ${items.length} items, ${prices.size} priced`);
+    console.log(
+      `[ge-api] Cached ${itemCache.length} items (${mapping.length} mapping entries), ${prices.size} priced`
+    );
   } catch (error) {
     console.error("[ge-api] Failed to refresh item cache:", error);
   }
@@ -2522,9 +2527,11 @@ async function getAllItemsForScanner() {
     const volume = priceData.volume ?? 0;
     let low;
     let high;
+    let quoteSource = "latest";
     if (priceData.hourVolume && priceData.hourLow != null && priceData.hourHigh != null) {
       low = priceData.hourLow;
       high = priceData.hourHigh;
+      quoteSource = "hourly";
     } else {
       const staleAfter = Date.now() - SCANNER_MAX_QUOTE_AGE_MS;
       if ((priceData.highTime ?? 0) >= staleAfter && (priceData.lowTime ?? 0) >= staleAfter) {
@@ -2551,7 +2558,23 @@ async function getAllItemsForScanner() {
     const trend = changePct == null ? "stable" : changePct > 1 ? "up" : changePct < -1 ? "down" : "stable";
     const marginPercent = margin / price;
     const volatility = marginPercent > 0.03 ? "high" : marginPercent > 0.01 ? "medium" : "low";
-    const smartPricing = calculateSmartPricing(price, null, null);
+    const tierPricing = calculateSmartPricing(price, null, null);
+    const tierBasePct = tierPricing.suggestedMarginPct / 100;
+    const observedPct = margin / buyPrice;
+    const observedWeight = quoteSource === "hourly" ? 0.8 : 0.5;
+    const suggestedPct = Math.min(
+      SCANNER_MAX_SPREAD_RATIO,
+      observedPct * observedWeight + tierBasePct * (1 - observedWeight)
+    );
+    const confidence = quoteSource === "hourly" ? "high" : observedPct > 0 ? "medium" : "low";
+    const halfMargin = suggestedPct / 2;
+    const smartPricing = {
+      suggestedBuyPrice: Math.round(price * (1 - halfMargin)),
+      suggestedSellPrice: Math.round(price * (1 + halfMargin)),
+      suggestedMarginPct: Math.round(suggestedPct * 1e4) / 100,
+      priceTier: tierPricing.priceTier,
+      confidence
+    };
     results.push({
       id: item.id,
       name: item.name,

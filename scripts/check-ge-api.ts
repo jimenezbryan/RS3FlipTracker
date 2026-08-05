@@ -57,6 +57,34 @@ assert.ok(exact!.high != null && exact!.low != null, "no bid/ask on the whip");
 const items = await getAllItemsForScanner();
 assert.ok(items.length > 500, `only ${items.length} scanner items`);
 
+// Ids must be unique. /mapping ships a dozen ids twice (a base name and a tier alias
+// sharing one id), and the scanner renders rows keyed by id — duplicates collided React's
+// keys, which broke reconciliation so rows went stale and survived filter changes. Every
+// filter looked broken at once. This is the assertion that catches it coming back.
+assert.equal(
+  new Set(items.map((i) => i.id)).size,
+  items.length,
+  "duplicate item ids — scanner rows share a React key and reconciliation breaks",
+);
+
+// Money arithmetic, end to end. netProfit and roi are what the user trades on.
+for (const i of items) {
+  const taxPerItem = i.sellPrice <= 49 ? 0 : Math.floor(i.sellPrice * 0.02);
+  assert.equal(
+    i.netProfit,
+    (i.margin - taxPerItem) * i.geLimit,
+    `netProfit is not (margin - 2% tax) * buy limit on ${i.name}`,
+  );
+  const investment = i.buyPrice * i.geLimit;
+  if (investment > 0) {
+    const expected = Math.round((i.netProfit / investment) * 10000) / 100;
+    assert.ok(
+      Math.abs(expected - i.roi) <= 0.02,
+      `roi ${i.roi} does not match netProfit/investment ${expected} on ${i.name}`,
+    );
+  }
+}
+
 const onePct = items.filter((i) => i.margin === Math.round(i.buyPrice * 0.01));
 assert.ok(
   onePct.length < items.length * 0.05,
@@ -89,6 +117,30 @@ assert.ok(
 assert.ok(
   withChange.some((i) => i.changePct24h! < 0) && withChange.some((i) => i.changePct24h! > 0),
   "changePct24h never goes both directions",
+);
+
+// ── 3c. The AI estimate actually looks at the item ──────────────────────────────
+// It used to be calculateSmartPricing(price, null, null), which returns the tier baseline
+// unchanged: 4 distinct values across every item, confidence "low" on all of them, shown in
+// the UI as a per-item estimate. These fail if it regresses to a per-tier constant.
+assert.ok(
+  new Set(items.map((i) => i.suggestedMarginPct)).size > 100,
+  "suggestedMarginPct is a per-tier constant again, not a per-item estimate",
+);
+assert.ok(
+  new Set(items.map((i) => i.confidence)).size > 1,
+  "confidence is constant — it conveys nothing",
+);
+assert.ok(
+  items.every((i) => i.suggestedBuyPrice <= i.suggestedSellPrice),
+  "suggested buy price exceeds suggested sell price",
+);
+assert.ok(
+  items.every(
+    (i) =>
+      Number.isInteger(i.suggestedBuyPrice) && Number.isInteger(i.suggestedSellPrice),
+  ),
+  "suggested prices carry decimals — price columns are bigint",
 );
 
 // ── 4. Decimal boundary ─────────────────────────────────────────────────────────

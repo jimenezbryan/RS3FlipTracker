@@ -647,6 +647,11 @@ export default function Scanner() {
   const [viewMode, setViewMode] = useState<ViewMode>("standard");
   const [watchlistOnly, setWatchlistOnly] = useState(false);
   const [signalsOnly, setSignalsOnly] = useState(false);
+  // ponytail: hidden by default — ~24% of priced items lose money once the 2% GE tax is
+  // taken off, and a flip scanner that lists guaranteed losses by default is answering a
+  // question nobody asked. Still one click away, because "why is this item not here" is
+  // a fair question and the answer should be visible rather than silently filtered.
+  const [showUnprofitable, setShowUnprofitable] = useState(false);
   const [highScoreOnly, setHighScoreOnly] = useState(false);
   const [expandedItemId, setExpandedItemId] = useState<number | null>(null);
   
@@ -899,8 +904,13 @@ export default function Scanner() {
     });
   }, [items]);
 
-  const signalsCount = useMemo(() => 
+  const signalsCount = useMemo(() =>
     processedItems.filter(i => i.signals.length > 0).length,
+    [processedItems]
+  );
+
+  const unprofitableCount = useMemo(() =>
+    processedItems.filter(i => i.netProfit <= 0).length,
     [processedItems]
   );
 
@@ -999,6 +1009,10 @@ export default function Scanner() {
       result = result.filter(item => favoriteItemIds.has(item.id));
     }
 
+    if (!showUnprofitable) {
+      result = result.filter(item => item.netProfit > 0);
+    }
+
     if (signalsOnly) {
       result = result.filter(item => item.signals.length > 0);
     }
@@ -1068,7 +1082,7 @@ export default function Scanner() {
     });
 
     return result;
-  }, [processedItems, searchQuery, sortKey, sortDirection, f2pOnly, watchlistOnly, signalsOnly, highScoreOnly, favoriteItemIds, selectedBuyLimit, selectedPriceRange, filters]);
+  }, [processedItems, searchQuery, sortKey, sortDirection, f2pOnly, watchlistOnly, signalsOnly, showUnprofitable, highScoreOnly, favoriteItemIds, selectedBuyLimit, selectedPriceRange, filters]);
 
   const totalPages = Math.ceil(filteredAndSortedItems.length / ITEMS_PER_PAGE);
   const paginatedItems = filteredAndSortedItems.slice(
@@ -1279,6 +1293,26 @@ export default function Scanner() {
             High Score Only
             <Badge variant="outline" className="ml-1 text-xs border-cyan-500/50 text-cyan-400" data-testid="badge-high-score-count">
               {highScoreCount}
+            </Badge>
+          </Label>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Checkbox
+            id="show-unprofitable"
+            checked={showUnprofitable}
+            onCheckedChange={(checked) => {
+              setShowUnprofitable(checked === true);
+              setCurrentPage(1);
+            }}
+            className="border-slate-600"
+            data-testid="checkbox-show-unprofitable"
+          />
+          <Label htmlFor="show-unprofitable" className="text-sm cursor-pointer text-muted-foreground flex items-center gap-1">
+            <TrendingDown className="h-3 w-3" />
+            Show Unprofitable
+            <Badge variant="outline" className="ml-1 text-xs border-rose-500/50 text-rose-400" data-testid="badge-unprofitable-count">
+              {unprofitableCount}
             </Badge>
           </Label>
         </div>
