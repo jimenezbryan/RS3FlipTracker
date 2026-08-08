@@ -65,7 +65,6 @@ interface CachedPrice {
   hourHigh?: number;    // hourly average instant-buy — outlier-resistant
   hourLow?: number;     // hourly average instant-sell
   hourVolume?: number;  // min(high, low) volume traded this hour; 0 if one-sided
-  last?: number;
   volume?: number;
   isMembers?: boolean;
   geLimit?: number;
@@ -844,6 +843,12 @@ export interface ScannerItem {
   sellPrice: number;
   margin: number;
   volume: number;
+  /** Two-sided volume in the last hourly block; 0 when only one side traded. The
+   *  "can I flip this right now" number — 24h volume can be a single burst. */
+  hourVolume: number;
+  /** Units you can realistically clear in one 4h buy-limit window:
+   *  min(geLimit, volume / 6). Every profit figure below is scaled to this. */
+  fillQty: number;
   potentialProfit: number;
   marginVolume: number;
   roi: number;
@@ -876,7 +881,6 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
     if (!priceData || priceData.price <= 0) continue;
     
     const price = priceData.price;
-    const lastPrice = priceData.last ?? price;
     const geLimit = item.geLimit ?? 0;
     const volume = priceData.volume ?? 0;
 
@@ -912,23 +916,31 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
     const buyPrice = low;
     const sellPrice = high;
     const margin = high - low;
-    const potentialProfit = margin * geLimit;
     const marginVolume = margin * volume;
-    
+
+    // ponytail: profit used to be margin * geLimit — what you'd make if you filled the
+    // entire buy limit. Buy limits reset every 4h and the median item trades 421 units a
+    // DAY, so for 57% of rows that quantity does not exist. Measured against the live
+    // API: 6 of the top 12 by netProfit could not move a single unit in a 4h window
+    // ("Sceptre of enchantment", 2 traded per day, ranked #2 at 2,290M). Cap the
+    // quantity at what actually trades in one window — a sixth of the 24h figure.
+    // Upgrade path: /timeseries gives real per-window volume if the sixth is too crude.
+    const fillQty = Math.min(geLimit, Math.floor(volume / 6));
+
     // Calculate tax (2% of sell price, no cap)
     const taxPerItem = sellPrice <= 49 ? 0 : Math.floor(sellPrice * 0.02);
-    const totalTax = taxPerItem * geLimit;
-    
-    // Net profit after tax for one limit cycle
-    const grossProfit = margin * geLimit;
-    const netProfit = grossProfit - totalTax;
-    
-    // ROI after tax (percentage)
-    const totalInvestment = buyPrice * geLimit;
-    const roi = totalInvestment > 0 ? ((netProfit / totalInvestment) * 100) : 0;
-    
+    const netPerUnit = margin - taxPerItem;
+
+    const potentialProfit = margin * fillQty;
+    const netProfit = netPerUnit * fillQty;
+
+    // Per-unit, so ROI stays defined for the 7% of items with fillQty 0 — an item you
+    // cannot move in bulk still has a real margin, and geLimit always cancelled here
+    // anyway. It is a rate, not a total; netProfit is the total.
+    const roi = buyPrice > 0 ? (netPerUnit / buyPrice) * 100 : 0;
+
     // Capital efficiency (profit per 1M GP invested, as basis points)
-    const capitalEfficiency = totalInvestment > 0 ? (netProfit / totalInvestment) * 10000 : 0;
+    const capitalEfficiency = buyPrice > 0 ? (netPerUnit / buyPrice) * 10000 : 0;
     
     // Real 24h price direction: mid now vs the mid of the same hourly block yesterday.
     // Previously this was derived from the fabricated margin, so it described spread
@@ -979,6 +991,8 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
       sellPrice,
       margin,
       volume,
+      hourVolume: priceData.hourVolume ?? 0,
+      fillQty,
       potentialProfit,
       marginVolume,
       roi: Math.round(roi * 100) / 100,

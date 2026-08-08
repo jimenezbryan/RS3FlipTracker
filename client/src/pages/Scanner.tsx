@@ -54,6 +54,10 @@ interface ScannerItem {
   sellPrice: number;
   margin: number;
   volume: number;
+  /** Two-sided volume in the last hourly block; 0 when only one side traded. */
+  hourVolume: number;
+  /** Units clearable in one 4h buy-limit window. netProfit is scaled to this. */
+  fillQty: number;
   potentialProfit: number;
   marginVolume: number;
   roi: number;
@@ -795,18 +799,30 @@ export default function Scanner() {
   const processedItems = useMemo((): ProcessedScannerItem[] => {
     if (items.length === 0) return [];
     
-    // Calculate global average volume ONCE as baseline
-    const totalVolume = items.reduce((sum, item) => sum + item.volume, 0);
-    const globalAvgVolume = totalVolume / items.length;
-    
+    // ponytail: volume was scored as a ratio to the global MEAN. Volume is power-law —
+    // measured live, mean 309,660 against a median of 421, a 735x gap — so
+    // min(100, ratio * 50) floored 1350 of 2158 items at exactly 0. The median item
+    // scored zero, which made 25% of tradeScore a constant for two thirds of the list.
+    // Percentile rank is scale-free and needs one sort.
+    const globalAvgVolume =
+      items.reduce((sum, item) => sum + item.volume, 0) / items.length;
+
+    const volumeRankById = new Map<number, number>();
+    [...items]
+      .sort((a, b) => a.volume - b.volume)
+      .forEach((item, i) => {
+        volumeRankById.set(item.id, items.length > 1 ? (i / (items.length - 1)) * 100 : 50);
+      });
+
     return items.map(item => {
       const marginPercent = item.buyPrice > 0 ? (item.margin / item.buyPrice) * 100 : 0;
       
       // 1. VOLUME ANALYSIS (Institutional Detection)
+      // Percentile of 24h volume across the scanned set: 100 = most traded item on screen.
+      const volumeScore = Math.round(volumeRankById.get(item.id) ?? 0);
+      // Kept for the detail panel, which shows "Nx average volume". The signals below no
+      // longer gate on it — against a mean this skewed, "2x average" meant top 4%.
       const volumeRatio = globalAvgVolume > 0 ? item.volume / globalAvgVolume : 0;
-      // Score: 0-100 based on how volume compares to average
-      // 2x average = 100, 1x average = 50, 0.5x average = 25
-      const volumeScore = Math.min(100, Math.round(volumeRatio * 50));
       
       // 2. MOMENTUM INDICATORS
       // Driven by the real 24h price direction. The RSI that used to weight this was
@@ -848,13 +864,16 @@ export default function Scanner() {
       const signals: string[] = [];
       
       // Volume signals (Priority 1-2)
-      if (volumeRatio > 2.0) {
+      // Gated on percentile, not on a ratio to the mean. The old ">2x average" gate was
+      // top 4% of items and ">1.5x" barely wider, because the mean sits at the 99th
+      // percentile of a power-law. Top decile / top quartile is what those meant to say.
+      if (volumeScore >= 90) {
         signals.push("Smart Money"); // Priority 1 - institutions moving
       }
-      if (volumeRatio > 1.5 && marginPercent > 0 && (item.trend === "stable" || item.trend === "down")) {
+      if (volumeScore >= 75 && marginPercent > 0 && (item.trend === "stable" || item.trend === "down")) {
         signals.push("Accumulation"); // Priority 2 - quiet buying
       }
-      if (volumeRatio > 1.5 && marginPercent < 0) {
+      if (volumeScore >= 75 && marginPercent < 0) {
         signals.push("Distribution"); // Priority 3 - selling pressure
       }
       
@@ -1131,7 +1150,7 @@ export default function Scanner() {
 
   const exportData = () => {
     const csv = [
-      ["Item", "Buy", "Sell", "Margin", "ROI%", "Net Profit", "Volume", "Cap Eff", "Trend", "24h Change%", "Volatility", "AI Est.%", "Price Tier", "Confidence"].join(","),
+      ["Item", "Buy", "Sell", "Margin", "ROI%", "Net Profit", "Volume", "Hour Volume", "Fillable", "Buy Limit", "Cap Eff", "Trend", "24h Change%", "Volatility", "AI Est.%", "Price Tier", "Confidence"].join(","),
       ...filteredAndSortedItems.map(item => [
         `"${item.name}"`,
         item.buyPrice,
@@ -1140,6 +1159,9 @@ export default function Scanner() {
         item.roi,
         item.netProfit,
         item.volume,
+        item.hourVolume,
+        item.fillQty,
+        item.geLimit,
         item.capitalEfficiency,
         item.trend,
         item.changePct24h ?? "",
@@ -1507,7 +1529,15 @@ export default function Scanner() {
                 >
                   VOLUME <SortIcon columnKey="volume" />
                 </TableHead>
-                <TableHead 
+                <TableHead
+                  className="cursor-pointer select-none text-muted-foreground hover:text-foreground text-right"
+                  onClick={() => handleSort("fillQty")}
+                  title="Units you can realistically clear in one 4h buy-limit window: min(limit, 24h volume / 6). Net profit is scaled to this, not to the full buy limit."
+                  data-testid="header-fill-qty"
+                >
+                  FILLABLE <SortIcon columnKey="fillQty" />
+                </TableHead>
+                <TableHead
                   className="cursor-pointer select-none text-muted-foreground hover:text-foreground text-right"
                   onClick={() => handleSort("netProfit")}
                   data-testid="header-net-profit"
@@ -1659,6 +1689,21 @@ export default function Scanner() {
                           )}
                           {item.volume.toLocaleString()}
                         </span>
+                      </TableCell>
+                      <TableCell
+                        className={`text-right py-2 ${
+                          item.fillQty === 0 ? "text-red-400" : "text-muted-foreground"
+                        }`}
+                        title={
+                          item.fillQty === 0
+                            ? "Trades too thinly to move a single unit in a 4h window"
+                            : `${item.hourVolume.toLocaleString()} traded on both sides last hour`
+                        }
+                        data-testid={`cell-fill-qty-${item.id}`}
+                      >
+                        {item.fillQty === 0
+                          ? "—"
+                          : `${item.fillQty.toLocaleString()} / ${item.geLimit.toLocaleString()}`}
                       </TableCell>
                       <TableCell className={`text-right py-2 font-mono font-bold ${
                         item.netProfit > 0 ? "text-emerald-400" : "text-red-400"

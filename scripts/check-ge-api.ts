@@ -71,19 +71,53 @@ assert.equal(
 for (const i of items) {
   const taxPerItem = i.sellPrice <= 49 ? 0 : Math.floor(i.sellPrice * 0.02);
   assert.equal(
-    i.netProfit,
-    (i.margin - taxPerItem) * i.geLimit,
-    `netProfit is not (margin - 2% tax) * buy limit on ${i.name}`,
+    i.fillQty,
+    Math.min(i.geLimit, Math.floor(i.volume / 6)),
+    `fillQty is not min(buy limit, 24h volume / 6) on ${i.name}`,
   );
-  const investment = i.buyPrice * i.geLimit;
-  if (investment > 0) {
-    const expected = Math.round((i.netProfit / investment) * 10000) / 100;
+  assert.equal(
+    i.netProfit,
+    (i.margin - taxPerItem) * i.fillQty,
+    `netProfit is not (margin - 2% tax) * fillQty on ${i.name}`,
+  );
+  if (i.buyPrice > 0) {
+    const expected = Math.round(((i.margin - taxPerItem) / i.buyPrice) * 10000) / 100;
     assert.ok(
       Math.abs(expected - i.roi) <= 0.02,
-      `roi ${i.roi} does not match netProfit/investment ${expected} on ${i.name}`,
+      `roi ${i.roi} does not match per-unit net/buyPrice ${expected} on ${i.name}`,
     );
   }
 }
+
+// ── 3a. Profit is capped by what the item actually trades ───────────────────────
+// netProfit used to be margin * geLimit — profit if you filled the whole buy limit. The
+// median item trades ~400 units a day against limits in the thousands, so the default
+// sort was topped by items nobody can buy: 6 of the top 12 could not move ONE unit in a
+// 4h window. These fail if the cap is removed or quietly widened back to geLimit.
+assert.ok(
+  items.every((i) => i.fillQty <= i.geLimit),
+  "fillQty exceeds the buy limit — you cannot buy more than the limit in one window",
+);
+const capped = items.filter((i) => i.fillQty < i.geLimit);
+assert.ok(
+  capped.length > items.length * 0.2,
+  `only ${capped.length}/${items.length} items are volume-capped — the cap is not binding`,
+);
+const topByNet = [...items].sort((a, b) => b.netProfit - a.netProfit).slice(0, 20);
+assert.ok(
+  topByNet.every((i) => i.fillQty > 0),
+  `an unfillable item ranks in the top 20 by netProfit: ${topByNet.find((i) => i.fillQty === 0)?.name}`,
+);
+
+// hourVolume is the "can I flip this right now" number. It was computed and discarded.
+assert.ok(
+  items.every((i) => Number.isInteger(i.hourVolume) && i.hourVolume >= 0),
+  "hourVolume is not a non-negative integer",
+);
+assert.ok(
+  items.filter((i) => i.hourVolume > 0).length > 100,
+  "hourVolume is zero everywhere — it is not being carried through from /1h",
+);
 
 const onePct = items.filter((i) => i.margin === Math.round(i.buyPrice * 0.01));
 assert.ok(
