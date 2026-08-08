@@ -1,4 +1,25 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { calculateSmartPricing, getPriceTier } from "./technical-indicators";
+import { UNCATEGORISED } from "@shared/scannerFilters";
+
+/**
+ * Jagex's GE categories, built by scripts/refresh-categories.ts. Read once, server-side only —
+ * it is ~7,000 entries and has no business in the client bundle, so the category rides along
+ * on each scanner row instead.
+ *
+ * Missing or unreadable is not an error: every item falls back to "Uncategorised" and the
+ * filter keeps working. That matters because the file is refreshed by hand and will lag new
+ * items by design.
+ */
+const itemCategories: Record<string, string> = (() => {
+  try {
+    return JSON.parse(readFileSync(join(import.meta.dirname, "..", "shared", "itemCategories.json"), "utf8"));
+  } catch {
+    console.warn("[ge-api] shared/itemCategories.json missing — run scripts/refresh-categories.ts");
+    return {};
+  }
+})();
 
 // Current prices, volume and buy limits come from the RuneScape Wiki real-time API.
 // ponytail: its RS3 dataset only starts 2026-07-23, so anything needing more than a
@@ -924,6 +945,9 @@ export interface ScannerItem {
   // move was 1.1% or 40%, so signal thresholds had nothing to gate on but direction.
   // null when the item has no hourly block 24h ago to compare against.
   changePct24h: number | null;
+  /** Jagex's own GE category, e.g. "Seeds". "Uncategorised" when the catalogue has not been
+   *  refreshed since the item shipped — never absent, so it stays filterable either way. */
+  category: string;
   volatility: "low" | "medium" | "high";
   suggestedBuyPrice: number;
   suggestedSellPrice: number;
@@ -1051,6 +1075,7 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
       name: item.name,
       icon: `${RS_ITEMDB_BASE}/obj_sprite.gif?id=${item.id}`,
       isMembers: item.isMembers ?? false,
+      category: itemCategories[String(item.id)] ?? UNCATEGORISED,
       geLimit,
       buyPrice,
       sellPrice,

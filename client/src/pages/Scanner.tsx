@@ -39,6 +39,8 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { ScannerFilters, EMPTY_NUMERIC, type NumericFilters } from "@/components/ScannerFilters";
+import { EMPTY_SELECTION, matchesSelection, type FilterSelection } from "@shared/scannerFilters";
 import { formatGP } from "@/lib/formatters";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -50,6 +52,8 @@ interface ScannerItem {
   name: string;
   icon: string;
   isMembers: boolean;
+  /** Jagex's GE category; "Uncategorised" when the catalogue predates the item. */
+  category: string;
   geLimit: number;
   buyPrice: number;
   sellPrice: number;
@@ -185,16 +189,7 @@ type SortKey = keyof ScannerItem | "tradeScore" | "volumeScore" | "momentumScore
 type SortDirection = "asc" | "desc";
 type ViewMode = "compact" | "standard" | "detailed";
 
-const BUY_LIMIT_OPTIONS = [1, 2, 5, 10, 100, 1000, 5000, 10000];
 
-const PRICE_RANGE_OPTIONS = [
-  { label: "Under 1K", min: 0, max: 999 },
-  { label: "1K-10K", min: 1000, max: 9999 },
-  { label: "10K-100K", min: 10000, max: 99999 },
-  { label: "100K-1M", min: 100000, max: 999999 },
-  { label: "1M-10M", min: 1000000, max: 9999999 },
-  { label: "10M+", min: 10000000, max: Infinity },
-];
 
 const ITEMS_PER_PAGE = 50;
 
@@ -677,18 +672,8 @@ export default function Scanner() {
     threshold: 0,
   });
   
-  const [selectedBuyLimit, setSelectedBuyLimit] = useState<number | null>(null);
-  const [selectedPriceRange, setSelectedPriceRange] = useState<number | null>(null);
-  const [filters, setFilters] = useState({
-    minMargin: "",
-    maxMargin: "",
-    minVolume: "",
-    maxVolume: "",
-    minPotentialProfit: "",
-    maxPotentialProfit: "",
-    minRoi: "",
-    maxRoi: "",
-  });
+  const [selection, setSelection] = useState<FilterSelection>(EMPTY_SELECTION);
+  const [filters, setFilters] = useState<NumericFilters>(EMPTY_NUMERIC);
 
   const { data: items = [], isLoading, dataUpdatedAt } = useQuery<ScannerItem[]>({
     queryKey: ["/api/scanner/items"],
@@ -1023,7 +1008,10 @@ export default function Scanner() {
       .slice(0, 5);
   };
 
-  const filteredAndSortedItems = useMemo((): ProcessedScannerItem[] => {
+  // Split deliberately: `baseItems` has every filter EXCEPT the band/category/numeric ones the
+  // filter panel owns. Facet counts are only truthful when computed over what is otherwise
+  // reachable, so the panel needs this set rather than the fully-filtered one.
+  const baseItems = useMemo((): ProcessedScannerItem[] => {
     let result = [...processedItems];
 
     if (searchQuery.trim()) {
@@ -1053,16 +1041,11 @@ export default function Scanner() {
       result = result.filter(item => item.tradeScore >= 60);
     }
 
-    if (selectedBuyLimit !== null) {
-      result = result.filter(item => item.geLimit === selectedBuyLimit);
-    }
+    return result;
+  }, [processedItems, searchQuery, f2pOnly, watchlistOnly, signalsOnly, showUnprofitable, highScoreOnly, favoriteItemIds]);
 
-    if (selectedPriceRange !== null) {
-      const range = PRICE_RANGE_OPTIONS[selectedPriceRange];
-      if (range) {
-        result = result.filter(item => item.buyPrice >= range.min && item.buyPrice <= range.max);
-      }
-    }
+  const filteredAndSortedItems = useMemo((): ProcessedScannerItem[] => {
+    let result = baseItems.filter(item => matchesSelection(item, selection));
 
     const parseNum = (val: string) => val ? parseFloat(val) : null;
     const minMargin = parseNum(filters.minMargin);
@@ -1114,7 +1097,7 @@ export default function Scanner() {
     });
 
     return result;
-  }, [processedItems, searchQuery, sortKey, sortDirection, f2pOnly, watchlistOnly, signalsOnly, showUnprofitable, highScoreOnly, favoriteItemIds, selectedBuyLimit, selectedPriceRange, filters]);
+  }, [baseItems, sortKey, sortDirection, selection, filters]);
 
   const totalPages = Math.ceil(filteredAndSortedItems.length / ITEMS_PER_PAGE);
   const paginatedItems = filteredAndSortedItems.slice(
@@ -1163,9 +1146,10 @@ export default function Scanner() {
 
   const exportData = () => {
     const csv = [
-      ["Item", "Buy", "Sell", "Margin", "ROI%", "Net Profit", "Volume", "Hour Volume", "Fillable", "Buy Limit", "Cap Eff", "Trend", "24h Change%", "Volatility", "AI Est.%", "Price Tier", "Confidence"].join(","),
+      ["Item", "Category", "Buy", "Sell", "Margin", "ROI%", "Net Profit", "Volume", "Hour Volume", "Fillable", "Buy Limit", "Cap Eff", "Trend", "24h Change%", "Volatility", "AI Est.%", "Price Tier", "Confidence"].join(","),
       ...filteredAndSortedItems.map(item => [
         `"${item.name}"`,
+        `"${item.category}"`,
         item.buyPrice,
         item.sellPrice,
         item.margin,
@@ -1352,16 +1336,6 @@ export default function Scanner() {
           </Label>
         </div>
 
-        <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen}>
-          <CollapsibleTrigger asChild>
-            <Button variant="outline" size="sm" className="border-border" data-testid="button-toggle-filters">
-              <Filter className="h-4 w-4 mr-2" />
-              Advanced Filters
-              <ChevronRight className={`h-4 w-4 ml-2 transition-transform ${filtersOpen ? 'rotate-90' : ''}`} />
-            </Button>
-          </CollapsibleTrigger>
-        </Collapsible>
-
         <Select value={viewMode} onValueChange={(v) => setViewMode(v as ViewMode)}>
           <SelectTrigger className="w-32 border-border bg-muted/50" data-testid="select-view-mode">
             <SelectValue />
@@ -1379,101 +1353,16 @@ export default function Scanner() {
         </div>
       </div>
 
-      {/* Collapsible Filters */}
-      <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen}>
-        <CollapsibleContent className="mb-4">
-          <div className="p-4 rounded-lg border border-border bg-card/50 backdrop-blur-sm space-y-4">
-            <div className="space-y-2">
-              <Label className="text-xs text-muted-foreground">Buy Limit</Label>
-              <div className="flex flex-wrap gap-2">
-                {BUY_LIMIT_OPTIONS.map((limit) => (
-                  <Button
-                    key={limit}
-                    variant={selectedBuyLimit === limit ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => {
-                      setSelectedBuyLimit(prev => prev === limit ? null : limit);
-                      setCurrentPage(1);
-                    }}
-                    className={selectedBuyLimit === limit ? "bg-primary hover:bg-primary/90" : "border-border"}
-                    data-testid={`button-buy-limit-${limit}`}
-                  >
-                    {limit >= 1000 ? `${limit / 1000}K` : limit}
-                  </Button>
-                ))}
-              </div>
-            </div>
-            
-            <div className="space-y-2">
-              <Label className="text-xs text-muted-foreground">Buy Price</Label>
-              <div className="flex flex-wrap gap-2">
-                {PRICE_RANGE_OPTIONS.map((range, index) => (
-                  <Button
-                    key={range.label}
-                    variant={selectedPriceRange === index ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => {
-                      setSelectedPriceRange(prev => prev === index ? null : index);
-                      setCurrentPage(1);
-                    }}
-                    className={selectedPriceRange === index ? "bg-primary hover:bg-primary/90" : "border-border"}
-                    data-testid={`button-price-range-${index}`}
-                  >
-                    {range.label}
-                  </Button>
-                ))}
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">Min ROI %</Label>
-                <Input
-                  type="number"
-                  placeholder="0"
-                  value={filters.minRoi}
-                  onChange={(e) => setFilters(prev => ({ ...prev, minRoi: e.target.value }))}
-                  className="h-8 bg-muted/50 border-border"
-                  data-testid="input-min-roi"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">Max ROI %</Label>
-                <Input
-                  type="number"
-                  placeholder="100"
-                  value={filters.maxRoi}
-                  onChange={(e) => setFilters(prev => ({ ...prev, maxRoi: e.target.value }))}
-                  className="h-8 bg-muted/50 border-border"
-                  data-testid="input-max-roi"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">Min Volume</Label>
-                <Input
-                  type="number"
-                  placeholder="0"
-                  value={filters.minVolume}
-                  onChange={(e) => setFilters(prev => ({ ...prev, minVolume: e.target.value }))}
-                  className="h-8 bg-muted/50 border-border"
-                  data-testid="input-min-volume"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">Max Volume</Label>
-                <Input
-                  type="number"
-                  placeholder="No limit"
-                  value={filters.maxVolume}
-                  onChange={(e) => setFilters(prev => ({ ...prev, maxVolume: e.target.value }))}
-                  className="h-8 bg-muted/50 border-border"
-                  data-testid="input-max-volume"
-                />
-              </div>
-            </div>
-          </div>
-        </CollapsibleContent>
-      </Collapsible>
+      <ScannerFilters
+        items={baseItems}
+        selection={selection}
+        onSelectionChange={(next) => { setSelection(next); setCurrentPage(1); }}
+        numeric={filters}
+        onNumericChange={(next) => { setFilters(next); setCurrentPage(1); }}
+        resultCount={filteredAndSortedItems.length}
+        open={filtersOpen}
+        onOpenChange={setFiltersOpen}
+      />
 
       {/* Data Table */}
       <div className="rounded-lg border border-border bg-card/50 backdrop-blur-sm overflow-hidden">
@@ -1628,7 +1517,14 @@ export default function Scanner() {
                       <TableCell className="font-medium py-2">
                         <div className="flex items-center gap-2">
                           <TrendArrow trend={item.trend} />
-                          <span className="truncate max-w-[200px]">{item.name}</span>
+                          <div className="min-w-0">
+                            <span className="block truncate max-w-[200px]">{item.name}</span>
+                            {/* Secondary line rather than a new column: the table is already
+                                14 columns wide, and this only needs to be scannable. */}
+                            <span className="block truncate max-w-[200px] text-xs font-normal text-muted-foreground">
+                              {item.category}
+                            </span>
+                          </div>
                         </div>
                       </TableCell>
                       <TableCell className="text-center py-2" data-testid={`cell-score-${item.id}`}>
