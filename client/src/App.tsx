@@ -20,6 +20,8 @@ import Recipes from "@/pages/Recipes";
 import Admin from "@/pages/Admin";
 import Profile from "@/pages/Profile";
 import Scanner from "@/pages/Scanner";
+import Alchemy from "@/pages/Alchemy";
+import UpdateRadar from "@/pages/UpdateRadar";
 import TradingJournal from "@/pages/TradingJournal";
 import MarketMovers from "@/pages/MarketMovers";
 import Auth from "@/pages/Auth";
@@ -95,6 +97,8 @@ function Router() {
         <Route path="/recipes" component={Recipes} />
         <Route path="/market">{() => <AdminRoute component={MarketInsights} />}</Route>
         <Route path="/scanner">{() => <AdminRoute component={Scanner} />}</Route>
+        <Route path="/alchemy">{() => <AdminRoute component={Alchemy} />}</Route>
+        <Route path="/radar">{() => <AdminRoute component={UpdateRadar} />}</Route>
         <Route path="/alerts" component={Alerts} />
         <Route path="/stats" component={Stats} />
         <Route path="/journal" component={TradingJournal} />
