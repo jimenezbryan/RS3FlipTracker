@@ -13,7 +13,7 @@ import { format, subDays } from "date-fns";
 import { cn } from "@/lib/utils";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import type { Favorite, RsAccount } from "@shared/schema";
+import type { Favorite, RsAccount, Flip } from "@shared/schema";
 import { PriceHistoryChart } from "./PriceHistoryChart";
 import { calculateFlipTax, formatGp } from "@shared/taxCalculator";
 import { parseGp } from "@shared/gpParser";
@@ -88,6 +88,9 @@ interface FlipFormProps {
     tradeType: "ge" | "street";
   }) => void;
   openPositions?: OpenPosition[];
+  /** Your past trades, so the inline chart can mark where you bought and sold this item
+   *  before. Passed down rather than re-queried — Home already holds them. */
+  userFlips?: Flip[];
 }
 
 const CATEGORIES = ["High Value", "Consumables", "Weapons", "Armor", "Skilling", "Misc"];
@@ -96,7 +99,7 @@ const STRATEGIES = ["Fast Flip", "Slow Flip", "Bulk", "High Margin", "Speculativ
 
 const MEMBERSHIP_STATUSES = ["F2P", "Members", "Unknown"] as const;
 
-export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
+export function FlipForm({ onSubmit, openPositions = [], userFlips = [] }: FlipFormProps) {
   const [itemName, setItemName] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [buyPrice, setBuyPrice] = useState("");
@@ -1018,7 +1021,7 @@ export function FlipForm({ onSubmit, openPositions = [] }: FlipFormProps) {
                     </Button>
                     {showChart && (
                       <div className="rounded-md border bg-card p-2" data-testid="inline-price-chart">
-                        <PriceHistoryChart itemId={gePrice.id} itemName={gePrice.name} />
+                        <PriceHistoryChart itemId={gePrice.id} itemName={gePrice.name} userFlips={userFlips} />
                       </div>
                     )}
                   </div>

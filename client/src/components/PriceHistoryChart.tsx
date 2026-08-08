@@ -10,33 +10,69 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart";
-import { XAxis, YAxis, CartesianGrid, Area, Scatter, ComposedChart, Cell, ZAxis } from "recharts";
+import { XAxis, YAxis, CartesianGrid, Area, Line, Scatter, ComposedChart, Cell, ZAxis, ReferenceArea } from "recharts";
 import { TrendingUp, TrendingDown, Minus, X, CircleDot } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import type { Flip } from "@shared/schema";
+import { calculatePriceZones, movingAverage, ZONE_LABELS, type Zone } from "@shared/priceZones";
 
 interface PriceHistoryPoint {
   date: string;
   price: number;
   volume?: number;
+  /** Instant-buy / instant-sell. Intraday periods only. */
+  high?: number;
+  low?: number;
   userBuy?: number;
   userSell?: number;
 }
 
 interface UserTrade {
-  date: string;
+  /** Full timestamp, not a date. Two flips on the same day are two points. */
+  timestamp: number;
   price: number;
   type: "buy" | "sell";
   quantity: number;
 }
 
-type ChartPeriod = "daily" | "weekly" | "monthly" | "yearly";
+type ChartPeriod = "24h" | "7d" | "daily" | "weekly" | "monthly" | "yearly";
 
 const PERIOD_LABELS: Record<ChartPeriod, string> = {
+  "24h": "24H",
+  "7d": "7D",
   daily: "90D",
   weekly: "6M",
   monthly: "1Y",
   yearly: "ALL",
+};
+
+/** Moving-average window per timeframe, chosen so the line spans a meaningful unit of time
+ *  rather than a fixed point count: 6h on the 24H view, 1 day on 7D, 1 week on 90D. */
+const MA_PERIOD: Record<ChartPeriod, number> = {
+  "24h": 6,
+  "7d": 24,
+  daily: 7,
+  weekly: 4,
+  monthly: 3,
+  yearly: 3,
+};
+
+const MA_LABEL: Record<ChartPeriod, string> = {
+  "24h": "6h avg",
+  "7d": "24h avg",
+  daily: "7d avg",
+  weekly: "4w avg",
+  monthly: "3m avg",
+  yearly: "3m avg",
+};
+
+const isIntraday = (p: ChartPeriod) => p === "24h" || p === "7d";
+
+const ZONE_BADGE_CLASS: Record<Zone, string> = {
+  buy: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
+  sell: "bg-red-500/10 text-red-400 border-red-500/30",
+  accumulation: "bg-amber-500/10 text-amber-400 border-amber-500/30",
+  neutral: "bg-muted text-muted-foreground border-transparent",
 };
 
 interface PriceHistoryChartProps {
@@ -100,13 +136,17 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
     enabled: !!effectiveItemId,
   });
 
+  // buyDate/sellDate are full timestamps in the schema. This used to round them to
+  // "yyyy-MM-dd" and re-parse, which put every trade at local midnight — two flips on one
+  // day stacked on a single x position, and on an intraday view they would all pile onto
+  // the same tick. Keep the real time.
   const userTrades: UserTrade[] = userFlips
     .filter(f => f.itemName.toLowerCase() === itemName.toLowerCase())
     .flatMap(flip => {
       const trades: UserTrade[] = [];
       if (flip.buyDate) {
         trades.push({
-          date: format(new Date(flip.buyDate), "yyyy-MM-dd"),
+          timestamp: new Date(flip.buyDate).getTime(),
           price: flip.buyPrice,
           type: "buy",
           quantity: flip.quantity,
@@ -114,14 +154,15 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
       }
       if (flip.sellDate && flip.sellPrice) {
         trades.push({
-          date: format(new Date(flip.sellDate), "yyyy-MM-dd"),
+          timestamp: new Date(flip.sellDate).getTime(),
           price: flip.sellPrice,
           type: "sell",
           quantity: flip.quantity,
         });
       }
       return trades;
-    });
+    })
+    .filter(t => Number.isFinite(t.timestamp));
 
   const formatPrice = (price: number) => {
     if (price >= 1000000000) {
@@ -220,13 +261,12 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
   const maxPrice = Math.max(...allPrices);
   const padding = (maxPrice - minPrice) * 0.1 || maxPrice * 0.05;
 
-  const sortedTrades = [...userTrades].sort((a, b) => 
-    new Date(a.date).getTime() - new Date(b.date).getTime()
-  );
-  
+  const sortedTrades = [...userTrades].sort((a, b) => a.timestamp - b.timestamp);
+
+  // Nudge exact collisions apart by a second so two trades at the same instant both render.
   const tradesWithUniqueTimestamps = sortedTrades.map((t, globalIndex) => ({
     ...t,
-    uniqueTimestamp: new Date(t.date).getTime() + globalIndex * 1000,
+    uniqueTimestamp: t.timestamp + globalIndex,
   }));
 
   const buyScatterData = tradesWithUniqueTimestamps
@@ -247,10 +287,22 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
       label: `Sell: ${t.quantity.toLocaleString()} @ ${formatFullPrice(t.price)} gp`
     }));
 
-  const chartDataWithTimestamps = history.map(h => ({
+  // Zones and the moving average are both computed from the VISIBLE window, so switching
+  // timeframe recomputes them. Deliberate: the bands always describe the candles on screen.
+  // The cost is that 24H and 90D can disagree about the same item at the same moment.
+  const zones = calculatePriceZones(history);
+  const maSeries = movingAverage(history.map(h => h.price), MA_PERIOD[period]);
+
+  const chartDataWithTimestamps = history.map((h, i) => ({
     ...h,
     timestamp: new Date(h.date).getTime(),
+    ma: maSeries[i],
   }));
+
+  const firstPrice = history[0]?.price;
+  const lastPrice = history[history.length - 1]?.price;
+  const windowChangePct =
+    firstPrice && firstPrice > 0 ? ((lastPrice - firstPrice) / firstPrice) * 100 : null;
 
   const allTimestamps = [
     ...chartDataWithTimestamps.map(d => d.timestamp),
@@ -273,6 +325,21 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
                   {trend.changePercent >= 0 ? "+" : ""}{trend.changePercent.toFixed(1)}%
                 </span>
               </div>
+            )}
+            {zones && (
+              <span
+                className={`rounded-full border px-2 py-0.5 text-xs font-medium ${ZONE_BADGE_CLASS[zones.zone]}`}
+                title={
+                  `Where the current price sits in the ${PERIOD_LABELS[period]} window. ` +
+                  `Buy at or below ${formatFullPrice(zones.buyMax)} gp (bottom 25%), ` +
+                  `sell at or above ${formatFullPrice(zones.sellMin)} gp (top 25%). ` +
+                  `Accumulation = mid-range with volume above the window median. ` +
+                  `Recomputed per timeframe, so other tabs may read differently.`
+                }
+                data-testid="badge-price-zone"
+              >
+                {ZONE_LABELS[zones.zone]}
+              </span>
             )}
           </div>
           {onClose && (
@@ -306,10 +373,41 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
               </linearGradient>
             </defs>
             <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+            {/* Zones sit behind everything. Quartiles of the visible window: bottom 25%
+                buy, top 25% sell, and the middle band only counts as Accumulation when
+                recent volume is above the window median — the same meaning Scanner gives
+                the word. Rendered before the Area so price draws on top. */}
+            {zones && (
+              <>
+                <ReferenceArea
+                  y1={minPrice - padding}
+                  y2={zones.buyMax}
+                  fill="#22c55e"
+                  fillOpacity={0.10}
+                  ifOverflow="extendDomain"
+                />
+                <ReferenceArea
+                  y1={zones.buyMax}
+                  y2={zones.sellMin}
+                  fill={zones.accumulating ? "#f59e0b" : "#94a3b8"}
+                  fillOpacity={zones.accumulating ? 0.12 : 0.04}
+                  ifOverflow="extendDomain"
+                />
+                <ReferenceArea
+                  y1={zones.sellMin}
+                  y2={maxPrice + padding}
+                  fill="#ef4444"
+                  fillOpacity={0.10}
+                  ifOverflow="extendDomain"
+                />
+              </>
+            )}
             <XAxis
               dataKey="timestamp"
               tickFormatter={(ts) => {
                 const d = new Date(ts);
+                if (period === "24h") return format(d, "HH:mm");
+                if (period === "7d") return format(d, "EEE HH:mm");
                 if (period === "yearly") return format(d, "MMM yyyy");
                 if (period === "monthly") return format(d, "MMM yy");
                 if (period === "weekly") return format(d, "MMM d");
@@ -340,7 +438,7 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
                       const numTs = Number(ts);
                       const date = isNaN(numTs) ? new Date(ts as string) : new Date(numTs);
                       if (isNaN(date.getTime())) return String(ts);
-                      return format(date, "MMM d, yyyy");
+                      return format(date, isIntraday(period) ? "MMM d, HH:mm" : "MMM d, yyyy");
                     } catch {
                       return String(ts);
                     }
@@ -354,6 +452,9 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
                       const label = props?.payload?.label || "";
                       return [label, "Sell Trade"];
                     }
+                    if (name === MA_LABEL[period]) {
+                      return [formatFullPrice(value as number) + " gp", MA_LABEL[period]];
+                    }
                     return [formatFullPrice(value as number) + " gp", "GE Price"];
                   }}
                 />
@@ -365,6 +466,20 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
               stroke="hsl(var(--chart-1))"
               strokeWidth={2}
               fill={`url(#gradient-${effectiveItemId || 'pending'})`}
+            />
+            {/* Dashed and muted so it reads as secondary to price. connectNulls={false}
+                keeps the line from being drawn across the leading nulls, where there is not
+                yet a full window to average. */}
+            <Line
+              type="monotone"
+              dataKey="ma"
+              name={MA_LABEL[period]}
+              stroke="hsl(var(--muted-foreground))"
+              strokeWidth={1.5}
+              strokeDasharray="4 4"
+              dot={false}
+              connectNulls={false}
+              isAnimationActive={false}
             />
             {buyScatterData.length > 0 && (
               <Scatter
@@ -387,18 +502,53 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
           </ComposedChart>
         </ChartContainer>
 
-        {userTrades.length > 0 && (
-          <div className="flex items-center gap-4 text-xs text-muted-foreground">
-            <div className="flex items-center gap-1">
-              <div className="h-3 w-3 rounded-full bg-green-500" />
-              <span>Your Buys</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="h-3 w-3 rounded-full bg-red-500" />
-              <span>Your Sells</span>
-            </div>
-            <span className="text-muted-foreground/70">|</span>
-            <span>{userTrades.length} trade{userTrades.length !== 1 ? "s" : ""} shown</span>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          {userTrades.length > 0 && (
+            <>
+              <div className="flex items-center gap-1">
+                <div className="h-3 w-3 rounded-full bg-green-500" />
+                <span>Your Buys</span>
+              </div>
+              <div className="flex items-center gap-1">
+                <div className="h-3 w-3 rounded-full bg-red-500" />
+                <span>Your Sells</span>
+              </div>
+              <span>{userTrades.length} trade{userTrades.length !== 1 ? "s" : ""} shown</span>
+              <span className="text-muted-foreground/70">|</span>
+            </>
+          )}
+          <div className="flex items-center gap-1">
+            <div className="h-0 w-4 border-t border-dashed border-muted-foreground" />
+            <span>{MA_LABEL[period]}</span>
+          </div>
+          {zones && (
+            <>
+              <span className="text-muted-foreground/70">|</span>
+              <span className="text-emerald-400">Buy &le; {formatFullPrice(zones.buyMax)}</span>
+              <span className="text-red-400">Sell &ge; {formatFullPrice(zones.sellMin)}</span>
+            </>
+          )}
+        </div>
+
+        {/* Window change, from the visible series rather than the trend endpoint — so the
+            number always describes the timeframe the user is actually looking at. */}
+        {windowChangePct !== null && (
+          <div className="flex items-center gap-2 text-sm">
+            <span className="text-muted-foreground">{PERIOD_LABELS[period]} change</span>
+            <span
+              className={`font-mono font-medium ${
+                windowChangePct > 0 ? "text-success" : windowChangePct < 0 ? "text-destructive" : "text-muted-foreground"
+              }`}
+              data-testid="text-window-change"
+            >
+              {windowChangePct >= 0 ? "+" : ""}{windowChangePct.toFixed(2)}%
+            </span>
+            <span className="text-muted-foreground">
+              {formatFullPrice(history[0].price)} &rarr; {formatFullPrice(lastPrice)} gp
+            </span>
+            <span className="text-muted-foreground/70">
+              ({history.length} point{history.length !== 1 ? "s" : ""})
+            </span>
           </div>
         )}
 

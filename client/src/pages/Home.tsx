@@ -531,7 +531,7 @@ export default function Home() {
         )}
 
         <div className="space-y-8">
-          <FlipForm onSubmit={handleAddFlip} openPositions={openPositions} />
+          <FlipForm onSubmit={handleAddFlip} openPositions={openPositions} userFlips={flips} />
           
           <FlipCardGrid 
             flips={flips.map(flip => ({
