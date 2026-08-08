@@ -3,7 +3,9 @@ import { createServer, type Server } from "http";
 import multer from "multer";
 import { storage } from "./storage";
 import { insertFlipSchema, insertWatchlistSchema, insertPriceAlertSchema, insertFavoriteSchema, insertProfitGoalSchema, insertPortfolioCategorySchema, insertPortfolioHoldingSchema, updatePortfolioHoldingSchema, insertHoldingTransactionSchema, insertRsAccountSchema, insertRecipeSchema, insertRecipeComponentSchema, insertRecipeRunSchema, insertRecipeRunComponentSchema } from "@shared/schema";
-import { getItemPrice, searchItems, getItemTrend, getItemPriceHistory, getItemPriceHistoryFull, getItemSuggestions, getAllItemsForScanner, getMarketMovers, type ScannerItem, type ChartPeriod } from "./ge-api";
+import { getItemPrice, searchItems, getItemTrend, getItemPriceHistory, getItemPriceHistoryFull, getItemIntraday, getItemSuggestions, getAllItemsForScanner, getMarketMovers, type ScannerItem, type ChartPeriod } from "./ge-api";
+import { getAlchOpportunities } from "./alch";
+import { getUpdateRadar } from "./update-radar";
 import { calculateTechnicalIndicators, calculateSmartPricing, calculateTradeHistoryStats, calculateObservableRange, type TechnicalIndicators, type SmartPricing, type TradeHistoryStats, type ValueGapAnalysis, type ObservableRange } from "./technical-indicators";
 import { setupAuth, isAuthenticated } from "./replitAuth";
 import { processScreenshot, matchItemsToGE, processGEHistoryScreenshot } from "./ocr";
@@ -536,12 +538,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const period = (req.query.period as ChartPeriod) || "daily";
-      const validPeriods: ChartPeriod[] = ["daily", "weekly", "monthly", "yearly"];
+      const validPeriods: ChartPeriod[] = ["24h", "7d", "daily", "weekly", "monthly", "yearly"];
       if (!validPeriods.includes(period)) {
-        return res.status(400).json({ error: "Invalid period. Use: daily, weekly, monthly, yearly" });
+        return res.status(400).json({ error: "Invalid period. Use: 24h, 7d, daily, weekly, monthly, yearly" });
       }
-      
-      const history = await getItemPriceHistory(itemId, period);
+
+      // Sub-daily windows come from the wiki's hourly /timeseries; everything else from
+      // WeirdGloop, which only stores one point per day.
+      const history =
+        period === "24h" || period === "7d"
+          ? await getItemIntraday(itemId, period === "24h" ? 24 : 24 * 7)
+          : await getItemPriceHistory(itemId, period);
       if (!history) {
         return res.status(404).json({ error: "Price history not found" });
       }
@@ -1407,6 +1414,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Error fetching scanner items:", error);
       res.status(500).json({ error: "Failed to fetch scanner items" });
+    }
+  });
+
+  // High-alchemy opportunities. Same admin gate as the scanner it sits beside.
+  app.get("/api/alch/scan", isAuthenticated, async (req: any, res) => {
+    try {
+      const user = await storage.getUser(req.user.claims.sub);
+      const isAdminUser = user && (ADMIN_EMAILS.includes(user.email ?? "") || user.isAdmin === true);
+      if (!isAdminUser) return res.status(403).json({ error: "Admin access required" });
+
+      const minVolume = Number(req.query.minVolume);
+      const limit = Number(req.query.limit);
+      res.json(
+        await getAlchOpportunities(
+          Number.isFinite(minVolume) && minVolume >= 0 ? minVolume : undefined,
+          Number.isFinite(limit) && limit > 0 ? Math.min(limit, 100) : undefined,
+        ),
+      );
+    } catch (error) {
+      console.error("Error building alch scan:", error);
+      res.status(500).json({ error: "Failed to build alch scan" });
+    }
+  });
+
+  // What the market is reacting to — clusters of items moving together.
+  app.get("/api/radar/themes", isAuthenticated, async (req: any, res) => {
+    try {
+      const user = await storage.getUser(req.user.claims.sub);
+      const isAdminUser = user && (ADMIN_EMAILS.includes(user.email ?? "") || user.isAdmin === true);
+      if (!isAdminUser) return res.status(403).json({ error: "Admin access required" });
+
+      res.json(await getUpdateRadar());
+    } catch (error) {
+      console.error("Error building update radar:", error);
+      res.status(500).json({ error: "Failed to build update radar" });
     }
   });
 

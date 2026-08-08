@@ -124,30 +124,33 @@ async function wikiFetch(path: string): Promise<any> {
   return res.json();
 }
 
-interface MappingEntry {
+export interface MappingEntry {
   id: number;
   name: string;
   examine?: string;
   members?: boolean;
   limit?: number;
+  /** High Alchemy value. Absent on ~1,300 of 7,322 items (untradeable-for-alch, quest items). */
+  highalch?: number;
+  lowalch?: number;
 }
 
 /** ~7300 items. Only changes on game-update days. */
-const getMapping = memo<MappingEntry[]>(24 * 60 * 60 * 1000, () => wikiFetch("/mapping"));
+export const getMapping = memo<MappingEntry[]>(24 * 60 * 60 * 1000, () => wikiFetch("/mapping"));
 
 /** Real instant-buy/instant-sell for every item, one call. */
-const getLatest = memo<Record<string, { high: number | null; highTime: number | null; low: number | null; lowTime: number | null }>>(
+export const getLatest = memo<Record<string, { high: number | null; highTime: number | null; low: number | null; lowTime: number | null }>>(
   60 * 1000,
   async () => (await wikiFetch("/latest")).data ?? {},
 );
 
 /** Real 24h traded volume per item. */
-const getVolumes = memo<Record<string, number>>(5 * 60 * 1000, async () => {
+export const getVolumes = memo<Record<string, number>>(5 * 60 * 1000, async () => {
   const body = await wikiFetch("/volumes");
   return body.data ?? {};
 });
 
-interface HourlyTick {
+export interface HourlyTick {
   avgHighPrice: number | null;
   avgLowPrice: number | null;
   highPriceVolume: number;
@@ -158,7 +161,7 @@ interface HourlyTick {
  *  trade on each side, so one mis-clicked buy turns a 200gp item into a 999,800 "margin".
  *  Averaging over an hour of real trades removes that. Only ~840 items trade both sides
  *  in a given hour, hence the /latest fallback. */
-const getHourly = memo<Record<string, HourlyTick>>(
+export const getHourly = memo<Record<string, HourlyTick>>(
   5 * 60 * 1000,
   async () => (await wikiFetch("/1h")).data ?? {},
 );
@@ -171,7 +174,7 @@ function hourBlockAgo(hours: number): number {
 
 /** The same hourly block 24h ago — the anchor for a real price trend, replacing a
  *  "trend" that was derived from the fabricated margin and so never varied. */
-const getHourly24hAgo = memo<Record<string, HourlyTick>>(
+export const getHourly24hAgo = memo<Record<string, HourlyTick>>(
   5 * 60 * 1000,
   async () => (await wikiFetch(`/1h?timestamp=${hourBlockAgo(24)}`)).data ?? {},
 );
@@ -507,6 +510,10 @@ export interface PriceHistoryPoint {
   date: string;
   price: number;
   volume?: number;
+  /** Instant-buy / instant-sell for the block. Only the intraday source carries these —
+   *  WeirdGloop's daily history has a single guide price and leaves them undefined. */
+  high?: number;
+  low?: number;
 }
 
 function parseTimestamp(h: any): string {
@@ -522,7 +529,65 @@ function parseTimestamp(h: any): string {
   return new Date().toISOString().split('T')[0];
 }
 
-export type ChartPeriod = "daily" | "weekly" | "monthly" | "yearly";
+export type ChartPeriod = "24h" | "7d" | "daily" | "weekly" | "monthly" | "yearly";
+
+/** Intraday history. WeirdGloop only stores one point per day, so anything shorter than a
+ *  day has to come from the wiki's /timeseries.
+ *
+ *  ponytail: ONE upstream request serves both intraday views. lookback=7d returns ~167
+ *  hourly blocks and lookback=1d is not a valid value (the API 400s), so 24H is the tail of
+ *  the 7D series rather than its own fetch. Note `timestep=` is the OSRS parameter — the RS3
+ *  API takes `lookback` and rejects the other. */
+const INTRADAY_TTL = 5 * 60 * 1000;
+const intradayCache = new Map<number, () => Promise<PriceHistoryPoint[]>>();
+
+export async function getItemIntraday(
+  itemId: number,
+  hours: number,
+): Promise<PriceHistoryPoint[] | null> {
+  let cached = intradayCache.get(itemId);
+  if (!cached) {
+    // memo() gives inflight dedupe and serve-stale-on-error, both of which matter here:
+    // a Scanner drawer and the Home chart can ask for the same item at once.
+    cached = memo<PriceHistoryPoint[]>(INTRADAY_TTL, async () => {
+      const body = await wikiFetch(`/timeseries?id=${itemId}&lookback=7d`);
+      const rows: any[] = body?.data ?? [];
+      const points: PriceHistoryPoint[] = [];
+      for (const r of rows) {
+        const high = gp(r.avgHighPrice);
+        const low = gp(r.avgLowPrice);
+        // Mid where both sides traded, otherwise whichever side did. Same rule as
+        // refreshItemCache, so the chart and the scanner agree on what "price" means.
+        const price = high != null && low != null ? Math.round((high + low) / 2) : (high ?? low);
+        if (price == null || price <= 0) continue;
+        points.push({
+          date: new Date(r.timestamp * 1000).toISOString(),
+          price,
+          // Two-sided volume, matching hourVolume in the scanner cache.
+          volume: Math.min(r.highPriceVolume ?? 0, r.lowPriceVolume ?? 0),
+          high: high ?? undefined,
+          low: low ?? undefined,
+        });
+      }
+      return points;
+    });
+    intradayCache.set(itemId, cached);
+  }
+  const fetcher = cached;
+
+  try {
+    const series = await fetcher();
+    if (series.length === 0) return null;
+    const cutoff = Date.now() - hours * 60 * 60 * 1000;
+    const window = series.filter((p) => new Date(p.date).getTime() >= cutoff);
+    // A thinly traded item can have no block inside the last 24h. Returning the untrimmed
+    // series would silently mislabel week-old prices as today's, so say nothing instead.
+    return window.length > 0 ? window : null;
+  } catch (error) {
+    console.error(`[ge-api] intraday fetch failed for ${itemId}:`, error);
+    return null;
+  }
+}
 
 export async function getItemPriceHistory(itemId: number, period: ChartPeriod = "daily"): Promise<PriceHistoryPoint[] | null> {
   try {
