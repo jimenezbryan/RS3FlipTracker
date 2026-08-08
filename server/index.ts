@@ -22,7 +22,9 @@ import { log } from "./log";
   server.listen({
     port,
     host: "0.0.0.0",
-    reusePort: true,
+    // macOS rejects SO_REUSEPORT on listen with ENOTSUP, so `npm run dev` cannot start there
+    // at all. Deploy targets are Linux and keep the original behaviour.
+    reusePort: process.platform !== "darwin",
   }, () => {
     log(`serving on port ${port}`);
   });
