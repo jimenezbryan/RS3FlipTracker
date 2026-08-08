@@ -4,7 +4,7 @@ import {
   Star, ChevronUp, ChevronDown, Filter, ChevronRight, 
   TrendingUp, TrendingDown, Minus, Bell, Download, Settings,
   BarChart3, Zap, Target, Clock, Plus, Eye, AlertTriangle,
-  Briefcase, ListFilter, Flame, ShieldCheck, History, ArrowUpDown
+  Briefcase, ListFilter, Flame, ShieldCheck, History, ArrowUpDown, Loader2
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -43,6 +43,7 @@ import { formatGP } from "@/lib/formatters";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { PriceHistoryChart } from "@/components/PriceHistoryChart";
+import type { Flip } from "@shared/schema";
 
 interface ScannerItem {
   id: number;
@@ -155,16 +156,16 @@ const SIGNAL_GOOD_VALUE_ROI = 15;   // post-tax ROI %, ~p75
 const SIGNAL_MIN_MOVE_PCT = 10;     // |24h move| %, ~p75
 
 const SIGNAL_STYLES: Record<string, string> = {
-  "Smart Money": "bg-amber-500/20 text-amber-400 border-amber-500/30",
-  "Deep Value": "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
-  "Favorable R/R": "bg-cyan-500/20 text-cyan-400 border-cyan-500/30",
-  "Accumulation": "bg-purple-500/20 text-purple-400 border-purple-500/30",
-  "Oversold": "bg-blue-500/20 text-blue-400 border-blue-500/30",
-  "Overbought": "bg-orange-500/20 text-orange-400 border-orange-500/30",
-  "Strong Trend": "bg-green-500/20 text-green-400 border-green-500/30",
-  "Good Value": "bg-teal-500/20 text-teal-400 border-teal-500/30",
-  "High Reward": "bg-lime-500/20 text-lime-400 border-lime-500/30",
-  "Distribution": "bg-red-500/20 text-red-400 border-red-500/30",
+  "Smart Money": "bg-amber-500/20 text-amber-600 border-amber-500/30",
+  "Deep Value": "bg-emerald-500/20 text-green-500 border-emerald-500/30",
+  "Favorable R/R": "bg-primary/15 text-primary border-primary/30",
+  "Accumulation": "bg-purple-500/20 text-purple-600 border-purple-500/30",
+  "Oversold": "bg-blue-500/20 text-blue-600 border-blue-500/30",
+  "Overbought": "bg-orange-500/20 text-orange-600 border-orange-500/30",
+  "Strong Trend": "bg-green-500/20 text-green-500 border-green-500/30",
+  "Good Value": "bg-teal-500/20 text-teal-600 border-teal-500/30",
+  "High Reward": "bg-lime-500/20 text-lime-600 border-lime-500/30",
+  "Distribution": "bg-red-500/20 text-red-500 border-red-500/30",
 };
 
 interface Favorite {
@@ -255,38 +256,39 @@ function StatCard({ label, value, icon: Icon, accent = "cyan" }: {
   icon: React.ElementType;
   accent?: "cyan" | "green" | "purple" | "yellow";
 }) {
+  // Flat card, colour carried by the icon alone. The old version tinted the whole surface with
+  // a gradient per accent, which is what made four neutral stat tiles read as decoration.
   const accentColors = {
-    cyan: "from-cyan-500/20 to-cyan-500/5 border-cyan-500/30 text-cyan-400",
-    green: "from-emerald-500/20 to-emerald-500/5 border-emerald-500/30 text-emerald-400",
-    purple: "from-purple-500/20 to-purple-500/5 border-purple-500/30 text-purple-400",
-    yellow: "from-yellow-500/20 to-yellow-500/5 border-yellow-500/30 text-yellow-400",
+    cyan: "text-primary",
+    green: "text-green-500",
+    purple: "text-purple-600",
+    yellow: "text-yellow-600",
   };
 
   return (
-    <div className={`relative overflow-hidden rounded-lg border bg-gradient-to-br ${accentColors[accent]} backdrop-blur-sm p-4`}>
+    <div className="rounded-lg border bg-card p-4">
       <div className="flex items-center justify-between">
         <div>
           <p className="text-xs text-muted-foreground uppercase tracking-wider">{label}</p>
           <p className="text-2xl font-bold mt-1">{value}</p>
         </div>
-        <Icon className="h-5 w-5 opacity-60" />
+        <Icon className={`h-5 w-5 ${accentColors[accent]}`} />
       </div>
-      <div className="absolute -right-4 -bottom-4 h-16 w-16 rounded-full bg-current opacity-5" />
     </div>
   );
 }
 
 function TrendArrow({ trend }: { trend: "up" | "down" | "stable" }) {
-  if (trend === "up") return <TrendingUp className="h-4 w-4 text-emerald-400" />;
-  if (trend === "down") return <TrendingDown className="h-4 w-4 text-red-400" />;
+  if (trend === "up") return <TrendingUp className="h-4 w-4 text-green-500" />;
+  if (trend === "down") return <TrendingDown className="h-4 w-4 text-red-500" />;
   return <Minus className="h-4 w-4 text-muted-foreground" />;
 }
 
 function VolatilityBadge({ level }: { level: "low" | "medium" | "high" }) {
   const styles = {
-    low: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
-    medium: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
-    high: "bg-red-500/20 text-red-400 border-red-500/30",
+    low: "bg-emerald-500/20 text-green-500 border-emerald-500/30",
+    medium: "bg-yellow-500/20 text-yellow-600 border-yellow-500/30",
+    high: "bg-red-500/20 text-red-500 border-red-500/30",
   };
   return (
     <span className={`px-2 py-0.5 rounded text-xs border ${styles[level]}`}>
@@ -301,16 +303,16 @@ function PulsingDot({ active }: { active: boolean }) {
       {active && (
         <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
       )}
-      <span className={`relative inline-flex rounded-full h-2 w-2 ${active ? "bg-emerald-500" : "bg-slate-500"}`} />
+      <span className={`relative inline-flex rounded-full h-2 w-2 ${active ? "bg-emerald-500" : "bg-muted-foreground"}`} />
     </span>
   );
 }
 
 function ConfidenceBadge({ level }: { level: "low" | "medium" | "high" }) {
   const styles = {
-    low: "bg-slate-500/20 text-slate-400 border-slate-500/30",
-    medium: "bg-yellow-500/20 text-yellow-400 border-yellow-500/30",
-    high: "bg-emerald-500/20 text-emerald-400 border-emerald-500/30",
+    low: "bg-muted text-muted-foreground border-border",
+    medium: "bg-yellow-500/20 text-yellow-600 border-yellow-500/30",
+    high: "bg-emerald-500/20 text-green-500 border-emerald-500/30",
   };
   const icons = { low: "?", medium: "~", high: "+" };
   return (
@@ -323,10 +325,10 @@ function ConfidenceBadge({ level }: { level: "low" | "medium" | "high" }) {
 
 function PriceTierBadge({ tier }: { tier: "low" | "mid" | "high" | "ultra" }) {
   const styles = {
-    low: "bg-slate-500/20 text-slate-400 border-slate-500/30",
-    mid: "bg-blue-500/20 text-blue-400 border-blue-500/30",
-    high: "bg-purple-500/20 text-purple-400 border-purple-500/30",
-    ultra: "bg-amber-500/20 text-amber-400 border-amber-500/30",
+    low: "bg-muted text-muted-foreground border-border",
+    mid: "bg-blue-500/20 text-blue-600 border-blue-500/30",
+    high: "bg-purple-500/20 text-purple-600 border-purple-500/30",
+    ultra: "bg-amber-500/20 text-amber-600 border-amber-500/30",
   };
   const labels = { low: "<1K", mid: "1K-1M", high: "1M-100M", ultra: "100M+" };
   return (
@@ -338,7 +340,7 @@ function PriceTierBadge({ tier }: { tier: "low" | "mid" | "high" | "ultra" }) {
 
 function ModelGapIndicator({ gap, tradeCount }: { gap: number; tradeCount: number }) {
   if (tradeCount === 0) return null;
-  const color = gap > 0 ? "text-emerald-400" : gap < 0 ? "text-red-400" : "text-muted-foreground";
+  const color = gap > 0 ? "text-green-500" : gap < 0 ? "text-red-500" : "text-muted-foreground";
   const label = gap > 0 ? "Outperforming" : gap < 0 ? "Underperforming" : "On Track";
   return (
     <div className="flex items-center gap-1">
@@ -352,8 +354,8 @@ function ModelGapIndicator({ gap, tradeCount }: { gap: number; tradeCount: numbe
 
 function PriceRangeBar({ range, label }: { range: ObservableRange; label: string }) {
   const markerPosition = Math.max(0, Math.min(100, range.percentile));
-  const spreadColor = range.spreadPct >= 10 ? "text-emerald-400" : range.spreadPct >= 5 ? "text-cyan-400" : range.spreadPct >= 2 ? "text-yellow-400" : "text-muted-foreground";
-  const barColor = range.spreadPct >= 10 ? "from-emerald-500/60 to-emerald-500/20" : range.spreadPct >= 5 ? "from-cyan-500/60 to-cyan-500/20" : "from-yellow-500/60 to-yellow-500/20";
+  const spreadColor = range.spreadPct >= 10 ? "text-green-500" : range.spreadPct >= 5 ? "text-primary" : range.spreadPct >= 2 ? "text-yellow-600" : "text-muted-foreground";
+  const barColor = range.spreadPct >= 10 ? "from-emerald-500/60 to-emerald-500/20" : range.spreadPct >= 5 ? "from-primary/60 to-primary/20" : "from-yellow-500/60 to-yellow-500/20";
 
   return (
     <div className="space-y-2" data-testid={`range-bar-${label.toLowerCase().replace(/\s/g, '-')}`}>
@@ -366,10 +368,10 @@ function PriceRangeBar({ range, label }: { range: ObservableRange; label: string
           <span className="font-mono">{formatGP(range.low)}</span>
           <span className="font-mono">{formatGP(range.high)}</span>
         </div>
-        <div className="relative h-3 bg-slate-700/50 rounded-full overflow-hidden">
+        <div className="relative h-3 bg-muted rounded-full overflow-hidden">
           <div className={`absolute inset-0 bg-gradient-to-r ${barColor} rounded-full`} />
           <div
-            className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-white border-2 border-slate-900 shadow-lg shadow-white/20"
+            className="absolute top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-foreground border-2 border-background shadow"
             style={{ left: `calc(${markerPosition}% - 6px)` }}
           />
         </div>
@@ -395,7 +397,7 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
       {(range7d || range30d) && (
         <div className="p-4 rounded-lg border border-emerald-500/30 bg-emerald-500/5" data-testid="observable-range-panel">
           <div className="flex items-center justify-between mb-3">
-            <h4 className="text-sm font-semibold text-emerald-400 flex items-center gap-2">
+            <h4 className="text-sm font-semibold text-green-500 flex items-center gap-2">
               <Eye className="h-4 w-4" />
               Observable Market Range
             </h4>
@@ -418,10 +420,10 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {ind ? (
           <>
-            <div className="p-3 rounded-lg border border-slate-700 bg-slate-800/50">
+            <div className="p-3 rounded-lg border border-border bg-muted/50">
               <p className="text-xs text-muted-foreground uppercase">RSI (14)</p>
               <p className={`text-lg font-bold ${
-                ind.rsi14 !== null ? (ind.rsi14 < 30 ? "text-emerald-400" : ind.rsi14 > 70 ? "text-red-400" : "text-cyan-400") : "text-muted-foreground"
+                ind.rsi14 !== null ? (ind.rsi14 < 30 ? "text-green-500" : ind.rsi14 > 70 ? "text-red-500" : "text-primary") : "text-muted-foreground"
               }`}>
                 {ind.rsi14 !== null ? ind.rsi14.toFixed(1) : "N/A"}
               </p>
@@ -429,10 +431,10 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
                 {ind.rsi14 !== null ? (ind.rsi14 < 30 ? "Oversold" : ind.rsi14 > 70 ? "Overbought" : "Neutral") : ""}
               </p>
             </div>
-            <div className="p-3 rounded-lg border border-slate-700 bg-slate-800/50">
+            <div className="p-3 rounded-lg border border-border bg-muted/50">
               <p className="text-xs text-muted-foreground uppercase">SMA Trend</p>
               <p className={`text-lg font-bold ${
-                ind.smaCrossover === "bullish" ? "text-emerald-400" : ind.smaCrossover === "bearish" ? "text-red-400" : "text-muted-foreground"
+                ind.smaCrossover === "bullish" ? "text-green-500" : ind.smaCrossover === "bearish" ? "text-red-500" : "text-muted-foreground"
               }`}>
                 {ind.smaCrossover === "bullish" ? "Bullish" : ind.smaCrossover === "bearish" ? "Bearish" : "Neutral"}
               </p>
@@ -440,10 +442,10 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
                 7: {ind.sma7 ? formatGP(ind.sma7) : "N/A"} | 30: {ind.sma30 ? formatGP(ind.sma30) : "N/A"} | 200: {ind.sma200 ? formatGP(ind.sma200) : "N/A"}
               </p>
             </div>
-            <div className="p-3 rounded-lg border border-slate-700 bg-slate-800/50">
+            <div className="p-3 rounded-lg border border-border bg-muted/50">
               <p className="text-xs text-muted-foreground uppercase">Volatility</p>
               <p className={`text-lg font-bold ${
-                ind.volatilityPct > 5 ? "text-red-400" : ind.volatilityPct > 3 ? "text-yellow-400" : "text-emerald-400"
+                ind.volatilityPct > 5 ? "text-red-500" : ind.volatilityPct > 3 ? "text-yellow-600" : "text-green-500"
               }`}>
                 {ind.volatilityPct.toFixed(1)}%
               </p>
@@ -451,15 +453,15 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
                 {ind.volatilityPct > 5 ? "High Risk" : ind.volatilityPct > 3 ? "Moderate" : "Stable"}
               </p>
             </div>
-            <div className="p-3 rounded-lg border border-slate-700 bg-slate-800/50">
+            <div className="p-3 rounded-lg border border-border bg-muted/50">
               <p className="text-xs text-muted-foreground uppercase">Support / Resistance</p>
               <div className="flex items-center gap-2">
-                <span className="text-sm font-bold text-red-400">{ind.support ? formatGP(ind.support) : "N/A"}</span>
+                <span className="text-sm font-bold text-red-500">{ind.support ? formatGP(ind.support) : "N/A"}</span>
                 <span className="text-muted-foreground">/</span>
-                <span className="text-sm font-bold text-emerald-400">{ind.resistance ? formatGP(ind.resistance) : "N/A"}</span>
+                <span className="text-sm font-bold text-green-500">{ind.resistance ? formatGP(ind.resistance) : "N/A"}</span>
               </div>
               <p className="text-xs text-muted-foreground">
-                Price vs 30d avg: <span className={ind.priceVsAvg30 > 0 ? "text-emerald-400" : "text-red-400"}>
+                Price vs 30d avg: <span className={ind.priceVsAvg30 > 0 ? "text-green-500" : "text-red-500"}>
                   {ind.priceVsAvg30 > 0 ? "+" : ""}{ind.priceVsAvg30.toFixed(2)}%
                 </span>
               </p>
@@ -467,7 +469,7 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
           </>
         ) : isLoading ? (
           <div className="col-span-4 flex items-center justify-center py-4">
-            <div className="animate-spin h-5 w-5 border-2 border-cyan-500 border-t-transparent rounded-full mr-2" />
+            <div className="animate-spin h-5 w-5 border-2 border-primary border-t-transparent rounded-full mr-2" />
             <span className="text-sm text-muted-foreground">Loading technical indicators...</span>
           </div>
         ) : (
@@ -481,19 +483,19 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
         <div className={`p-4 rounded-lg border ${
           ind.valueGap.gapDirection === "undervalued" ? "border-emerald-500/30 bg-emerald-500/5" 
           : ind.valueGap.gapDirection === "overvalued" ? "border-red-500/30 bg-red-500/5" 
-          : "border-slate-700 bg-slate-800/50"
+          : "border-border bg-muted/50"
         }`} data-testid="value-gap-panel">
           <div className="flex items-center justify-between mb-2">
             <h4 className="text-sm font-semibold flex items-center gap-2">
-              <BarChart3 className="h-4 w-4 text-cyan-400" />
+              <BarChart3 className="h-4 w-4 text-primary" />
               Value Gap Analysis
             </h4>
             <span className={`px-2 py-0.5 rounded text-xs border font-medium ${
-              ind.valueGap.signal === "strong_buy" ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
-              : ind.valueGap.signal === "buy" ? "bg-green-500/20 text-green-400 border-green-500/30"
-              : ind.valueGap.signal === "strong_sell" ? "bg-red-500/20 text-red-400 border-red-500/30"
-              : ind.valueGap.signal === "sell" ? "bg-orange-500/20 text-orange-400 border-orange-500/30"
-              : "bg-slate-500/20 text-slate-400 border-slate-500/30"
+              ind.valueGap.signal === "strong_buy" ? "bg-emerald-500/20 text-green-500 border-emerald-500/30"
+              : ind.valueGap.signal === "buy" ? "bg-green-500/20 text-green-500 border-green-500/30"
+              : ind.valueGap.signal === "strong_sell" ? "bg-red-500/20 text-red-500 border-red-500/30"
+              : ind.valueGap.signal === "sell" ? "bg-orange-500/20 text-orange-600 border-orange-500/30"
+              : "bg-muted text-muted-foreground border-border"
             }`}>
               {ind.valueGap.signal.replace("_", " ").toUpperCase()}
             </span>
@@ -501,7 +503,7 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
           <div className="grid grid-cols-3 gap-3">
             <div>
               <p className="text-xs text-muted-foreground">Fair Value</p>
-              <p className="text-sm font-bold font-mono text-cyan-400">{formatGP(ind.valueGap.fairValue)}</p>
+              <p className="text-sm font-bold font-mono text-primary">{formatGP(ind.valueGap.fairValue)}</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Current Price</p>
@@ -510,7 +512,7 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
             <div>
               <p className="text-xs text-muted-foreground">Gap</p>
               <p className={`text-sm font-bold font-mono ${
-                ind.valueGap.gapPct < 0 ? "text-emerald-400" : ind.valueGap.gapPct > 0 ? "text-red-400" : "text-muted-foreground"
+                ind.valueGap.gapPct < 0 ? "text-green-500" : ind.valueGap.gapPct > 0 ? "text-red-500" : "text-muted-foreground"
               }`}>
                 {ind.valueGap.gapPct > 0 ? "+" : ""}{ind.valueGap.gapPct.toFixed(2)}%
               </p>
@@ -527,7 +529,7 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="p-4 rounded-lg border border-slate-700 bg-slate-800/30" data-testid="ai-estimate-panel">
+        <div className="p-4 rounded-lg border border-border bg-muted/30" data-testid="ai-estimate-panel">
           <div className="flex items-center justify-between mb-3">
             <h4 className="text-sm font-semibold text-muted-foreground flex items-center gap-2">
               <Target className="h-4 w-4" />
@@ -542,26 +544,26 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
           <div className="grid grid-cols-3 gap-3">
             <div>
               <p className="text-xs text-muted-foreground">Buy At</p>
-              <p className="text-sm font-bold font-mono text-emerald-400/70">{formatGP(item.suggestedBuyPrice)}</p>
+              <p className="text-sm font-bold font-mono text-green-500/70">{formatGP(item.suggestedBuyPrice)}</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Sell At</p>
-              <p className="text-sm font-bold font-mono text-red-400/70">{formatGP(item.suggestedSellPrice)}</p>
+              <p className="text-sm font-bold font-mono text-red-500/70">{formatGP(item.suggestedSellPrice)}</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Target Margin</p>
               <p className="text-sm font-bold text-muted-foreground">{item.suggestedMarginPct.toFixed(2)}%</p>
             </div>
           </div>
-          <p className="text-xs text-muted-foreground/60 mt-2 border-t border-slate-700 pt-2">
+          <p className="text-xs text-muted-foreground/60 mt-2 border-t border-border pt-2">
             Model-based estimate. Use Observable Range above for data-backed spreads.
           </p>
         </div>
 
         {stats && stats.tradeCount > 0 ? (
-          <div className="p-4 rounded-lg border border-purple-500/30 bg-purple-500/5">
+          <div className="p-4 rounded-lg border bg-card">
             <div className="flex items-center justify-between mb-3">
-              <h4 className="text-sm font-semibold text-purple-400 flex items-center gap-2">
+              <h4 className="text-sm font-semibold text-primary flex items-center gap-2">
                 <History className="h-4 w-4" />
                 Your Trade History ({stats.tradeCount} trades)
               </h4>
@@ -570,33 +572,33 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div>
                 <p className="text-xs text-muted-foreground">Avg Margin</p>
-                <p className={`text-sm font-bold ${stats.avgActualMarginPct > 0 ? "text-emerald-400" : "text-red-400"}`}>
+                <p className={`text-sm font-bold ${stats.avgActualMarginPct > 0 ? "text-green-500" : "text-red-500"}`}>
                   {stats.avgActualMarginPct.toFixed(2)}%
                 </p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">Win Rate</p>
-                <p className={`text-sm font-bold ${stats.winRate >= 50 ? "text-emerald-400" : "text-red-400"}`}>
+                <p className={`text-sm font-bold ${stats.winRate >= 50 ? "text-green-500" : "text-red-500"}`}>
                   {stats.winRate.toFixed(0)}%
                 </p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">Avg ROI</p>
-                <p className={`text-sm font-bold ${stats.avgActualROI > 0 ? "text-emerald-400" : "text-red-400"}`}>
+                <p className={`text-sm font-bold ${stats.avgActualROI > 0 ? "text-green-500" : "text-red-500"}`}>
                   {stats.avgActualROI.toFixed(2)}%
                 </p>
               </div>
               <div>
                 <p className="text-xs text-muted-foreground">Avg Hold</p>
-                <p className="text-sm font-bold text-cyan-400">
+                <p className="text-sm font-bold text-primary">
                   {stats.avgHoldTimeHours < 24 ? `${stats.avgHoldTimeHours.toFixed(1)}h` : `${(stats.avgHoldTimeHours / 24).toFixed(1)}d`}
                 </p>
               </div>
             </div>
-            <div className="mt-3 pt-3 border-t border-purple-500/20">
+            <div className="mt-3 pt-3 border-t">
               <div className="flex items-center justify-between text-xs">
                 <span className="text-muted-foreground">Model Suggestion vs Your Actual</span>
-                <span className={stats.modelGap > 0 ? "text-emerald-400" : stats.modelGap < 0 ? "text-red-400" : "text-muted-foreground"}>
+                <span className={stats.modelGap > 0 ? "text-green-500" : stats.modelGap < 0 ? "text-red-500" : "text-muted-foreground"}>
                   {stats.modelGap > 0 
                     ? "You're beating the model - suggestion adjusted upward" 
                     : stats.modelGap < 0 
@@ -607,7 +609,7 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
             </div>
           </div>
         ) : (
-          <div className="p-4 rounded-lg border border-slate-700 bg-slate-800/50">
+          <div className="p-4 rounded-lg border border-border bg-muted/50">
             <h4 className="text-sm font-semibold text-muted-foreground flex items-center gap-2 mb-3">
               <History className="h-4 w-4" />
               No Trade History
@@ -624,13 +626,13 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
 
 function RelatedItemCard({ item }: { item: ScannerItem }) {
   return (
-    <div className="flex items-center gap-3 p-3 rounded-lg border border-slate-700 bg-slate-800/50 hover:border-cyan-500/30 transition-colors">
+    <div className="flex items-center gap-3 p-3 rounded-lg border border-border bg-muted/50 hover:border-primary/30 transition-colors">
       <img src={item.icon} alt={item.name} className="w-8 h-8 object-contain" />
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium truncate">{item.name}</p>
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           <span>{formatGP(item.buyPrice)}</span>
-          <span className={item.margin > 0 ? "text-emerald-400" : "text-red-400"}>
+          <span className={item.margin > 0 ? "text-green-500" : "text-red-500"}>
             {formatGP(item.margin)}
           </span>
         </div>
@@ -691,6 +693,17 @@ export default function Scanner() {
   const { data: items = [], isLoading, dataUpdatedAt } = useQuery<ScannerItem[]>({
     queryKey: ["/api/scanner/items"],
     refetchInterval: 60000,
+  });
+
+  // Your own trades on the item, so the detail drawer's chart can mark where you actually
+  // bought and sold. The chart already supported this; Scanner just never passed it.
+  const { data: flips = [] } = useQuery<Flip[]>({
+    queryKey: ["/api/flips"],
+    queryFn: async () => {
+      const res = await fetch("/api/flips", { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch flips");
+      return res.json();
+    },
   });
 
   const { data: favorites = [] } = useQuery<Favorite[]>({
@@ -1183,9 +1196,9 @@ export default function Scanner() {
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+      <div className="min-h-screen bg-background flex items-center justify-center">
         <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-cyan-500 mx-auto" />
+          <Loader2 className="h-12 w-12 animate-spin text-primary mx-auto" />
           <p className="mt-4 text-muted-foreground">Loading market data...</p>
         </div>
       </div>
@@ -1193,26 +1206,26 @@ export default function Scanner() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 p-6">
+    <div className="min-h-screen bg-background p-6">
       {/* Header */}
       <div className="mb-6">
         <div className="flex items-center justify-between mb-2">
           <div>
-            <h1 className="text-2xl font-bold bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent">
+            <h1 className="text-2xl font-bold text-foreground">
               RS3 Trading Terminal
             </h1>
             <p className="text-sm text-muted-foreground">Advanced Market Intelligence Platform</p>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="border-slate-700 hover:border-cyan-500/50" data-testid="button-alerts">
+            <Button variant="outline" size="sm" className="border-border hover:border-primary/50" data-testid="button-alerts">
               <Bell className="h-4 w-4 mr-2" />
               Alerts
             </Button>
-            <Button variant="outline" size="sm" onClick={exportData} className="border-slate-700 hover:border-cyan-500/50" data-testid="button-export">
+            <Button variant="outline" size="sm" onClick={exportData} className="border-border hover:border-primary/50" data-testid="button-export">
               <Download className="h-4 w-4 mr-2" />
               Export
             </Button>
-            <Button variant="outline" size="icon" className="border-slate-700 hover:border-cyan-500/50" data-testid="button-settings">
+            <Button variant="outline" size="icon" className="border-border hover:border-primary/50" data-testid="button-settings">
               <Settings className="h-4 w-4" />
             </Button>
           </div>
@@ -1229,7 +1242,7 @@ export default function Scanner() {
       </div>
 
       {/* Controls Bar */}
-      <div className="flex flex-wrap items-center gap-4 mb-4 p-4 rounded-lg border border-slate-800 bg-slate-900/50 backdrop-blur-sm">
+      <div className="flex flex-wrap items-center gap-4 mb-4 p-4 rounded-lg border border-border bg-card/50 backdrop-blur-sm">
         <div className="flex-1 min-w-[200px] max-w-md">
           <Input
             placeholder={`Search items... (${items.length} available)`}
@@ -1238,7 +1251,7 @@ export default function Scanner() {
               setSearchQuery(e.target.value);
               setCurrentPage(1);
             }}
-            className="bg-slate-800/50 border-slate-700 focus:border-cyan-500/50"
+            className="bg-muted/50 border-border focus:border-primary/50"
             data-testid="input-search-items"
           />
         </div>
@@ -1251,7 +1264,7 @@ export default function Scanner() {
               setF2pOnly(checked === true);
               setCurrentPage(1);
             }}
-            className="border-slate-600"
+            className="border-border"
             data-testid="checkbox-f2p-only"
           />
           <Label htmlFor="f2p-only" className="text-sm cursor-pointer text-muted-foreground">
@@ -1267,13 +1280,13 @@ export default function Scanner() {
               setWatchlistOnly(checked === true);
               setCurrentPage(1);
             }}
-            className="border-slate-600"
+            className="border-border"
             data-testid="checkbox-watchlist-only"
           />
           <Label htmlFor="watchlist-only" className="text-sm cursor-pointer text-muted-foreground flex items-center gap-1">
             <ListFilter className="h-3 w-3" />
             Watchlist Only
-            <Badge variant="outline" className="ml-1 text-xs border-yellow-500/50 text-yellow-400">
+            <Badge variant="outline" className="ml-1 text-xs border-yellow-500/50 text-yellow-600">
               {favorites.length}
             </Badge>
           </Label>
@@ -1287,13 +1300,13 @@ export default function Scanner() {
               setSignalsOnly(checked === true);
               setCurrentPage(1);
             }}
-            className="border-slate-600"
+            className="border-border"
             data-testid="checkbox-signals-only"
           />
           <Label htmlFor="signals-only" className="text-sm cursor-pointer text-muted-foreground flex items-center gap-1">
             <Zap className="h-3 w-3" />
             Show Signals Only
-            <Badge variant="outline" className="ml-1 text-xs border-emerald-500/50 text-emerald-400" data-testid="badge-signals-count">
+            <Badge variant="outline" className="ml-1 text-xs border-emerald-500/50 text-green-500" data-testid="badge-signals-count">
               {signalsCount}
             </Badge>
           </Label>
@@ -1307,13 +1320,13 @@ export default function Scanner() {
               setHighScoreOnly(checked === true);
               setCurrentPage(1);
             }}
-            className="border-slate-600"
+            className="border-border"
             data-testid="checkbox-high-score-only"
           />
           <Label htmlFor="high-score-only" className="text-sm cursor-pointer text-muted-foreground flex items-center gap-1">
             <Target className="h-3 w-3" />
             High Score Only
-            <Badge variant="outline" className="ml-1 text-xs border-cyan-500/50 text-cyan-400" data-testid="badge-high-score-count">
+            <Badge variant="outline" className="ml-1 text-xs border-primary/50 text-primary" data-testid="badge-high-score-count">
               {highScoreCount}
             </Badge>
           </Label>
@@ -1327,7 +1340,7 @@ export default function Scanner() {
               setShowUnprofitable(checked === true);
               setCurrentPage(1);
             }}
-            className="border-slate-600"
+            className="border-border"
             data-testid="checkbox-show-unprofitable"
           />
           <Label htmlFor="show-unprofitable" className="text-sm cursor-pointer text-muted-foreground flex items-center gap-1">
@@ -1341,7 +1354,7 @@ export default function Scanner() {
 
         <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen}>
           <CollapsibleTrigger asChild>
-            <Button variant="outline" size="sm" className="border-slate-700" data-testid="button-toggle-filters">
+            <Button variant="outline" size="sm" className="border-border" data-testid="button-toggle-filters">
               <Filter className="h-4 w-4 mr-2" />
               Advanced Filters
               <ChevronRight className={`h-4 w-4 ml-2 transition-transform ${filtersOpen ? 'rotate-90' : ''}`} />
@@ -1350,7 +1363,7 @@ export default function Scanner() {
         </Collapsible>
 
         <Select value={viewMode} onValueChange={(v) => setViewMode(v as ViewMode)}>
-          <SelectTrigger className="w-32 border-slate-700 bg-slate-800/50" data-testid="select-view-mode">
+          <SelectTrigger className="w-32 border-border bg-muted/50" data-testid="select-view-mode">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -1369,7 +1382,7 @@ export default function Scanner() {
       {/* Collapsible Filters */}
       <Collapsible open={filtersOpen} onOpenChange={setFiltersOpen}>
         <CollapsibleContent className="mb-4">
-          <div className="p-4 rounded-lg border border-slate-800 bg-slate-900/50 backdrop-blur-sm space-y-4">
+          <div className="p-4 rounded-lg border border-border bg-card/50 backdrop-blur-sm space-y-4">
             <div className="space-y-2">
               <Label className="text-xs text-muted-foreground">Buy Limit</Label>
               <div className="flex flex-wrap gap-2">
@@ -1382,7 +1395,7 @@ export default function Scanner() {
                       setSelectedBuyLimit(prev => prev === limit ? null : limit);
                       setCurrentPage(1);
                     }}
-                    className={selectedBuyLimit === limit ? "bg-cyan-600 hover:bg-cyan-700" : "border-slate-700"}
+                    className={selectedBuyLimit === limit ? "bg-primary hover:bg-primary/90" : "border-border"}
                     data-testid={`button-buy-limit-${limit}`}
                   >
                     {limit >= 1000 ? `${limit / 1000}K` : limit}
@@ -1403,7 +1416,7 @@ export default function Scanner() {
                       setSelectedPriceRange(prev => prev === index ? null : index);
                       setCurrentPage(1);
                     }}
-                    className={selectedPriceRange === index ? "bg-cyan-600 hover:bg-cyan-700" : "border-slate-700"}
+                    className={selectedPriceRange === index ? "bg-primary hover:bg-primary/90" : "border-border"}
                     data-testid={`button-price-range-${index}`}
                   >
                     {range.label}
@@ -1420,7 +1433,7 @@ export default function Scanner() {
                   placeholder="0"
                   value={filters.minRoi}
                   onChange={(e) => setFilters(prev => ({ ...prev, minRoi: e.target.value }))}
-                  className="h-8 bg-slate-800/50 border-slate-700"
+                  className="h-8 bg-muted/50 border-border"
                   data-testid="input-min-roi"
                 />
               </div>
@@ -1431,7 +1444,7 @@ export default function Scanner() {
                   placeholder="100"
                   value={filters.maxRoi}
                   onChange={(e) => setFilters(prev => ({ ...prev, maxRoi: e.target.value }))}
-                  className="h-8 bg-slate-800/50 border-slate-700"
+                  className="h-8 bg-muted/50 border-border"
                   data-testid="input-max-roi"
                 />
               </div>
@@ -1442,7 +1455,7 @@ export default function Scanner() {
                   placeholder="0"
                   value={filters.minVolume}
                   onChange={(e) => setFilters(prev => ({ ...prev, minVolume: e.target.value }))}
-                  className="h-8 bg-slate-800/50 border-slate-700"
+                  className="h-8 bg-muted/50 border-border"
                   data-testid="input-min-volume"
                 />
               </div>
@@ -1453,7 +1466,7 @@ export default function Scanner() {
                   placeholder="No limit"
                   value={filters.maxVolume}
                   onChange={(e) => setFilters(prev => ({ ...prev, maxVolume: e.target.value }))}
-                  className="h-8 bg-slate-800/50 border-slate-700"
+                  className="h-8 bg-muted/50 border-border"
                   data-testid="input-max-volume"
                 />
               </div>
@@ -1463,11 +1476,11 @@ export default function Scanner() {
       </Collapsible>
 
       {/* Data Table */}
-      <div className="rounded-lg border border-slate-800 bg-slate-900/50 backdrop-blur-sm overflow-hidden">
+      <div className="rounded-lg border border-border bg-card/50 backdrop-blur-sm overflow-hidden">
         <div className="overflow-x-auto">
           <Table>
             <TableHeader>
-              <TableRow className="border-slate-800 hover:bg-transparent">
+              <TableRow className="border-border hover:bg-transparent">
                 <TableHead className="w-8"></TableHead>
                 <TableHead className="w-10"></TableHead>
                 <TableHead className="w-12"></TableHead>
@@ -1575,17 +1588,17 @@ export default function Scanner() {
                 return (
                   <Fragment key={item.id}>
                     <TableRow 
-                      className={`border-slate-800 transition-all duration-200 cursor-pointer ${
+                      className={`border-border transition-all duration-200 cursor-pointer ${
                         isProfitable 
                           ? "hover:bg-emerald-500/5 hover:shadow-[0_0_20px_rgba(16,185,129,0.1)]" 
-                          : "hover:bg-slate-800/50"
-                      } ${isExpanded ? "bg-slate-800/30" : ""}`}
+                          : "hover:bg-muted/50"
+                      } ${isExpanded ? "bg-muted/30" : ""}`}
                       onClick={(e) => handleRowClick(item, e)}
                       data-testid={`row-item-${item.id}`}
                     >
                       <TableCell className="py-2">
                         {isExpanded ? (
-                          <ChevronDown className="h-4 w-4 text-cyan-400" />
+                          <ChevronDown className="h-4 w-4 text-primary" />
                         ) : (
                           <ChevronRight className="h-4 w-4 text-muted-foreground" />
                         )}
@@ -1600,7 +1613,7 @@ export default function Scanner() {
                           data-testid={`button-favorite-${item.id}`}
                         >
                           <Star 
-                            className={`h-4 w-4 transition-colors ${isFavorite ? 'fill-yellow-500 text-yellow-500' : 'text-slate-500 hover:text-yellow-500'}`} 
+                            className={`h-4 w-4 transition-colors ${isFavorite ? 'fill-yellow-500 text-yellow-600' : 'text-muted-foreground hover:text-yellow-600'}`} 
                           />
                         </Button>
                       </TableCell>
@@ -1626,24 +1639,24 @@ export default function Scanner() {
                           <div 
                             className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold border-2 ${
                               item.tradeScore >= 80 
-                                ? "bg-emerald-500/20 border-emerald-500/50 text-emerald-400" 
+                                ? "bg-emerald-500/20 border-emerald-500/50 text-green-500" 
                                 : item.tradeScore >= 60 
-                                  ? "bg-cyan-500/20 border-cyan-500/50 text-cyan-400"
+                                  ? "bg-primary/15 border-primary/50 text-primary"
                                   : item.tradeScore >= 40
-                                    ? "bg-yellow-500/20 border-yellow-500/50 text-yellow-400"
-                                    : "bg-red-500/20 border-red-500/50 text-red-400"
+                                    ? "bg-yellow-500/20 border-yellow-500/50 text-yellow-600"
+                                    : "bg-red-500/20 border-red-500/50 text-red-500"
                             }`}
                             data-testid={`badge-score-${item.id}`}
                           >
                             {item.tradeScore}
                           </div>
-                          <div className="invisible group-hover:visible absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 text-xs bg-slate-800 border border-slate-700 rounded-lg shadow-xl whitespace-nowrap">
+                          <div className="invisible group-hover:visible absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 text-xs bg-muted border border-border rounded-lg shadow-xl whitespace-nowrap">
                             <div className="text-muted-foreground mb-1">Score Breakdown:</div>
                             <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
-                              <span>Volume:</span><span className="text-cyan-400">{item.volumeScore}</span>
-                              <span>Momentum:</span><span className="text-purple-400">{item.momentumScore}</span>
-                              <span>Value:</span><span className="text-emerald-400">{item.valueScore}</span>
-                              <span>Risk/Reward:</span><span className="text-yellow-400">{item.riskScore}</span>
+                              <span>Volume:</span><span className="text-primary">{item.volumeScore}</span>
+                              <span>Momentum:</span><span className="text-primary">{item.momentumScore}</span>
+                              <span>Value:</span><span className="text-green-500">{item.valueScore}</span>
+                              <span>Risk/Reward:</span><span className="text-yellow-600">{item.riskScore}</span>
                             </div>
                           </div>
                         </div>
@@ -1658,9 +1671,9 @@ export default function Scanner() {
                         <Badge 
                           variant="outline" 
                           className={`text-xs ${
-                            item.isMembers 
-                              ? "border-purple-500/50 text-purple-400" 
-                              : "border-cyan-500/50 text-cyan-400"
+                            item.isMembers
+                              ? "border-amber-500/50 text-amber-600"
+                              : "border-border text-muted-foreground"
                           }`}
                         >
                           {item.isMembers ? "P2P" : "F2P"}
@@ -1673,26 +1686,26 @@ export default function Scanner() {
                         {formatGP(item.sellPrice)}
                       </TableCell>
                       <TableCell className={`text-right py-2 font-mono text-sm font-medium ${
-                        item.margin > 0 ? "text-emerald-400" : "text-red-400"
+                        item.margin > 0 ? "text-green-500" : "text-red-500"
                       }`}>
                         {formatGP(item.margin)}
                       </TableCell>
                       <TableCell className={`text-right py-2 font-medium ${
-                        item.roi > 5 ? "text-emerald-400" : item.roi > 0 ? "text-yellow-400" : "text-red-400"
+                        item.roi > 5 ? "text-green-500" : item.roi > 0 ? "text-yellow-600" : "text-red-500"
                       }`}>
                         {item.roi.toFixed(1)}%
                       </TableCell>
                       <TableCell className="text-right py-2 text-muted-foreground">
                         <span className="flex items-center justify-end gap-1">
                           {item.volumeRatio > 2.0 && (
-                            <Flame className="h-4 w-4 text-orange-400" data-testid={`icon-unusual-volume-${item.id}`} />
+                            <Flame className="h-4 w-4 text-orange-600" data-testid={`icon-unusual-volume-${item.id}`} />
                           )}
                           {item.volume.toLocaleString()}
                         </span>
                       </TableCell>
                       <TableCell
                         className={`text-right py-2 ${
-                          item.fillQty === 0 ? "text-red-400" : "text-muted-foreground"
+                          item.fillQty === 0 ? "text-red-500" : "text-muted-foreground"
                         }`}
                         title={
                           item.fillQty === 0
@@ -1706,7 +1719,7 @@ export default function Scanner() {
                           : `${item.fillQty.toLocaleString()} / ${item.geLimit.toLocaleString()}`}
                       </TableCell>
                       <TableCell className={`text-right py-2 font-mono font-bold ${
-                        item.netProfit > 0 ? "text-emerald-400" : "text-red-400"
+                        item.netProfit > 0 ? "text-green-500" : "text-red-500"
                       }`}>
                         {formatGP(item.netProfit)}
                       </TableCell>
@@ -1735,7 +1748,7 @@ export default function Scanner() {
                             <Badge 
                               key={signal} 
                               variant="outline" 
-                              className={`text-xs ${SIGNAL_STYLES[signal] || "bg-slate-500/20 text-slate-400 border-slate-500/30"}`}
+                              className={`text-xs ${SIGNAL_STYLES[signal] || "bg-muted text-muted-foreground border-border"}`}
                               data-testid={`badge-signal-${signal.toLowerCase().replace(/\s/g, '-')}-${item.id}`}
                             >
                               {signal}
@@ -1746,12 +1759,12 @@ export default function Scanner() {
                     </TableRow>
                     
                     {isExpanded && (
-                      <TableRow className="border-slate-800 bg-slate-900/80" data-testid={`row-expanded-${item.id}`}>
+                      <TableRow className="border-border bg-card/80" data-testid={`row-expanded-${item.id}`}>
                         <TableCell colSpan={viewMode === "detailed" ? 20 : viewMode === "compact" ? 17 : 18} className="p-0">
-                          <div className="p-4 space-y-4 border-l-2 border-cyan-500/50">
+                          <div className="p-4 space-y-4 border-l-2 border-primary/50">
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                               <div>
-                                <PriceHistoryChart itemId={item.id} itemName={item.name} />
+                                <PriceHistoryChart itemId={item.id} itemName={item.name} userFlips={flips} />
                               </div>
                               <div className="space-y-4">
                                 <ItemDetailPanel 
@@ -1762,7 +1775,7 @@ export default function Scanner() {
                                 <div className="flex flex-wrap gap-2">
                                   <Button 
                                     onClick={(e) => { e.stopPropagation(); openPortfolioDialog(item); }}
-                                    className="bg-cyan-600 hover:bg-cyan-700"
+                                    className="bg-primary hover:bg-primary/90"
                                     data-testid={`button-add-portfolio-${item.id}`}
                                   >
                                     <Briefcase className="h-4 w-4 mr-2" />
@@ -1771,7 +1784,7 @@ export default function Scanner() {
                                   <Button 
                                     variant="outline"
                                     onClick={(e) => { e.stopPropagation(); openAlertDialog(item); }}
-                                    className="border-yellow-500/50 text-yellow-400 hover:bg-yellow-500/10"
+                                    className="border-yellow-500/50 text-yellow-600 hover:bg-yellow-500/10"
                                     data-testid={`button-set-alert-${item.id}`}
                                   >
                                     <AlertTriangle className="h-4 w-4 mr-2" />
@@ -1792,7 +1805,7 @@ export default function Scanner() {
         </div>
 
         {/* Pagination */}
-        <div className="flex items-center justify-between px-4 py-3 border-t border-slate-800">
+        <div className="flex items-center justify-between px-4 py-3 border-t border-border">
           <div className="text-sm text-muted-foreground">
             Page {currentPage} of {totalPages}
           </div>
@@ -1802,7 +1815,7 @@ export default function Scanner() {
               size="sm"
               onClick={() => setCurrentPage(1)}
               disabled={currentPage === 1}
-              className="border-slate-700"
+              className="border-border"
               data-testid="button-first-page"
             >
               First
@@ -1812,7 +1825,7 @@ export default function Scanner() {
               size="sm"
               onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
               disabled={currentPage === 1}
-              className="border-slate-700"
+              className="border-border"
               data-testid="button-prev-page"
             >
               Previous
@@ -1822,7 +1835,7 @@ export default function Scanner() {
               size="sm"
               onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
               disabled={currentPage === totalPages}
-              className="border-slate-700"
+              className="border-border"
               data-testid="button-next-page"
             >
               Next
@@ -1832,7 +1845,7 @@ export default function Scanner() {
               size="sm"
               onClick={() => setCurrentPage(totalPages)}
               disabled={currentPage === totalPages}
-              className="border-slate-700"
+              className="border-border"
               data-testid="button-last-page"
             >
               Last
@@ -1845,16 +1858,16 @@ export default function Scanner() {
       {expandedItem && relatedItems.length > 0 && (
         <Collapsible defaultOpen className="mt-6">
           <CollapsibleTrigger asChild>
-            <Button variant="outline" className="w-full justify-between border-slate-700 mb-2" data-testid="button-toggle-related">
+            <Button variant="outline" className="w-full justify-between border-border mb-2" data-testid="button-toggle-related">
               <span className="flex items-center gap-2">
                 <Target className="h-4 w-4" />
                 Related Items - Similar to {expandedItem.name}
               </span>
-              <Badge variant="outline" className="border-cyan-500/50 text-cyan-400">{relatedItems.length}</Badge>
+              <Badge variant="outline" className="border-primary/50 text-primary">{relatedItems.length}</Badge>
             </Button>
           </CollapsibleTrigger>
           <CollapsibleContent>
-            <div className="p-4 rounded-lg border border-slate-800 bg-slate-900/50 backdrop-blur-sm">
+            <div className="p-4 rounded-lg border border-border bg-card/50 backdrop-blur-sm">
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                 {relatedItems.map(related => (
                   <RelatedItemCard key={related.id} item={related} />
@@ -1867,10 +1880,10 @@ export default function Scanner() {
 
       {/* Add to Portfolio Dialog */}
       <Dialog open={portfolioDialogOpen} onOpenChange={setPortfolioDialogOpen}>
-        <DialogContent className="bg-slate-900 border-slate-700">
+        <DialogContent className="bg-card border-border">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Briefcase className="h-5 w-5 text-cyan-400" />
+              <Briefcase className="h-5 w-5 text-primary" />
               Add to Portfolio
             </DialogTitle>
             <DialogDescription>
@@ -1880,7 +1893,7 @@ export default function Scanner() {
           
           {selectedItem && (
             <div className="space-y-4">
-              <div className="flex items-center gap-3 p-3 rounded-lg border border-slate-700 bg-slate-800/50">
+              <div className="flex items-center gap-3 p-3 rounded-lg border border-border bg-muted/50">
                 <img src={selectedItem.icon} alt={selectedItem.name} className="w-10 h-10 object-contain" />
                 <div>
                   <p className="font-medium">{selectedItem.name}</p>
@@ -1896,7 +1909,7 @@ export default function Scanner() {
                     min={1}
                     value={portfolioForm.quantity}
                     onChange={(e) => setPortfolioForm(prev => ({ ...prev, quantity: parseInt(e.target.value) || 1 }))}
-                    className="bg-slate-800 border-slate-700"
+                    className="bg-muted border-border"
                     data-testid="input-portfolio-quantity"
                   />
                 </div>
@@ -1907,7 +1920,7 @@ export default function Scanner() {
                     min={1}
                     value={portfolioForm.buyPrice}
                     onChange={(e) => setPortfolioForm(prev => ({ ...prev, buyPrice: parseInt(e.target.value) || 0 }))}
-                    className="bg-slate-800 border-slate-700"
+                    className="bg-muted border-border"
                     data-testid="input-portfolio-price"
                   />
                 </div>
@@ -1919,7 +1932,7 @@ export default function Scanner() {
                   value={portfolioForm.categoryId} 
                   onValueChange={(v) => setPortfolioForm(prev => ({ ...prev, categoryId: v }))}
                 >
-                  <SelectTrigger className="bg-slate-800 border-slate-700" data-testid="select-portfolio-category">
+                  <SelectTrigger className="bg-muted border-border" data-testid="select-portfolio-category">
                     <SelectValue placeholder="Select category..." />
                   </SelectTrigger>
                   <SelectContent>
@@ -1936,25 +1949,25 @@ export default function Scanner() {
                   placeholder="Add any notes..."
                   value={portfolioForm.notes}
                   onChange={(e) => setPortfolioForm(prev => ({ ...prev, notes: e.target.value }))}
-                  className="bg-slate-800 border-slate-700 resize-none"
+                  className="bg-muted border-border resize-none"
                   rows={2}
                   data-testid="input-portfolio-notes"
                 />
               </div>
               
-              <div className="p-3 rounded-lg border border-cyan-500/30 bg-cyan-500/10">
+              <div className="p-3 rounded-lg border border-primary/30 bg-primary/10">
                 <p className="text-sm text-muted-foreground">Total Cost</p>
-                <p className="text-xl font-bold text-cyan-400">{formatGP(portfolioForm.quantity * portfolioForm.buyPrice)}</p>
+                <p className="text-xl font-bold text-primary">{formatGP(portfolioForm.quantity * portfolioForm.buyPrice)}</p>
               </div>
               
               <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setPortfolioDialogOpen(false)} className="border-slate-700">
+                <Button variant="outline" onClick={() => setPortfolioDialogOpen(false)} className="border-border">
                   Cancel
                 </Button>
                 <Button 
                   onClick={handleAddToPortfolio}
                   disabled={addPortfolioMutation.isPending}
-                  className="bg-cyan-600 hover:bg-cyan-700"
+                  className="bg-primary hover:bg-primary/90"
                   data-testid="button-confirm-add-portfolio"
                 >
                   {addPortfolioMutation.isPending ? (
@@ -1977,10 +1990,10 @@ export default function Scanner() {
 
       {/* Alert Builder Dialog */}
       <Dialog open={alertDialogOpen} onOpenChange={setAlertDialogOpen}>
-        <DialogContent className="bg-slate-900 border-slate-700">
+        <DialogContent className="bg-card border-border">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <AlertTriangle className="h-5 w-5 text-yellow-400" />
+              <AlertTriangle className="h-5 w-5 text-yellow-600" />
               Set Price Alert
             </DialogTitle>
             <DialogDescription>
@@ -1990,7 +2003,7 @@ export default function Scanner() {
           
           {selectedItem && (
             <div className="space-y-4">
-              <div className="flex items-center gap-3 p-3 rounded-lg border border-slate-700 bg-slate-800/50">
+              <div className="flex items-center gap-3 p-3 rounded-lg border border-border bg-muted/50">
                 <img src={selectedItem.icon} alt={selectedItem.name} className="w-10 h-10 object-contain" />
                 <div>
                   <p className="font-medium">{selectedItem.name}</p>
@@ -2006,7 +2019,7 @@ export default function Scanner() {
                   value={alertForm.alertType} 
                   onValueChange={(v) => setAlertForm(prev => ({ ...prev, alertType: v }))}
                 >
-                  <SelectTrigger className="bg-slate-800 border-slate-700" data-testid="select-alert-type">
+                  <SelectTrigger className="bg-muted border-border" data-testid="select-alert-type">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -2024,7 +2037,7 @@ export default function Scanner() {
                   min={1}
                   value={alertForm.threshold}
                   onChange={(e) => setAlertForm(prev => ({ ...prev, threshold: parseInt(e.target.value) || 0 }))}
-                  className="bg-slate-800 border-slate-700"
+                  className="bg-muted border-border"
                   data-testid="input-alert-threshold"
                 />
                 <p className="text-xs text-muted-foreground">
@@ -2033,7 +2046,7 @@ export default function Scanner() {
               </div>
               
               <div className="flex justify-end gap-2">
-                <Button variant="outline" onClick={() => setAlertDialogOpen(false)} className="border-slate-700">
+                <Button variant="outline" onClick={() => setAlertDialogOpen(false)} className="border-border">
                   Cancel
                 </Button>
                 <Button 
