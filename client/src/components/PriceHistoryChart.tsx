@@ -330,9 +330,10 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
               <span
                 className={`rounded-full border px-2 py-0.5 text-xs font-medium ${ZONE_BADGE_CLASS[zones.zone]}`}
                 title={
-                  `Where the current price sits in the ${PERIOD_LABELS[period]} window. ` +
-                  `Buy at or below ${formatFullPrice(zones.buyMax)} gp (bottom 25%), ` +
-                  `sell at or above ${formatFullPrice(zones.sellMin)} gp (top 25%). ` +
+                  `Where the current price sits in the ${PERIOD_LABELS[period]} window — an ` +
+                  `observation, not a recommendation. Bottom 25% is at or below ` +
+                  `${formatFullPrice(zones.buyMax)} gp, top 25% at or above ` +
+                  `${formatFullPrice(zones.sellMin)} gp. ` +
                   `Accumulation = mid-range with volume above the window median. ` +
                   `Recomputed per timeframe, so other tabs may read differently.`
                 }
@@ -524,8 +525,8 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
           {zones && (
             <>
               <span className="text-muted-foreground/70">|</span>
-              <span className="text-emerald-400">Buy &le; {formatFullPrice(zones.buyMax)}</span>
-              <span className="text-red-400">Sell &ge; {formatFullPrice(zones.sellMin)}</span>
+              <span className="text-emerald-400">Bottom 25% &le; {formatFullPrice(zones.buyMax)}</span>
+              <span className="text-red-400">Top 25% &ge; {formatFullPrice(zones.sellMin)}</span>
             </>
           )}
         </div>

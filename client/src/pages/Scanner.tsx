@@ -1,4 +1,4 @@
-import { useState, useMemo, Fragment } from "react";
+import { useState, useMemo, useRef, useEffect, Fragment } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { 
   Star, ChevronUp, ChevronDown, Filter, ChevronRight, 
@@ -89,14 +89,15 @@ interface ValueGapAnalysis {
   signal: "strong_buy" | "buy" | "hold" | "sell" | "strong_sell";
 }
 
+/** Windows are days, not sample counts, and null means "not enough data" — never 0. */
 interface TechnicalIndicators {
   rsi14: number | null;
-  sma7: number | null;
-  sma30: number | null;
-  sma200: number | null;
+  avg7d: number | null;
+  avg30d: number | null;
+  avg90d: number | null;
   smaCrossover: "bullish" | "bearish" | "neutral";
-  volatilityPct: number;
-  priceVsAvg30: number;
+  volatilityPct: number | null;
+  priceVsAvg30: number | null;
   support: number | null;
   resistance: number | null;
   valueGap: ValueGapAnalysis | null;
@@ -427,25 +428,27 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
               </p>
             </div>
             <div className="p-3 rounded-lg border border-border bg-muted/50">
-              <p className="text-xs text-muted-foreground uppercase">SMA Trend</p>
+              <p className="text-xs text-muted-foreground uppercase">Average Trend</p>
               <p className={`text-lg font-bold ${
                 ind.smaCrossover === "bullish" ? "text-green-500" : ind.smaCrossover === "bearish" ? "text-red-500" : "text-muted-foreground"
               }`}>
                 {ind.smaCrossover === "bullish" ? "Bullish" : ind.smaCrossover === "bearish" ? "Bearish" : "Neutral"}
               </p>
               <p className="text-xs text-muted-foreground">
-                7: {ind.sma7 ? formatGP(ind.sma7) : "N/A"} | 30: {ind.sma30 ? formatGP(ind.sma30) : "N/A"} | 200: {ind.sma200 ? formatGP(ind.sma200) : "N/A"}
+                7d: {ind.avg7d ? formatGP(ind.avg7d) : "N/A"} | 30d: {ind.avg30d ? formatGP(ind.avg30d) : "N/A"} | 90d: {ind.avg90d ? formatGP(ind.avg90d) : "N/A"}
               </p>
             </div>
             <div className="p-3 rounded-lg border border-border bg-muted/50">
               <p className="text-xs text-muted-foreground uppercase">Volatility</p>
               <p className={`text-lg font-bold ${
-                ind.volatilityPct > 5 ? "text-red-500" : ind.volatilityPct > 3 ? "text-yellow-600" : "text-green-500"
+                ind.volatilityPct === null ? "text-muted-foreground"
+                  : ind.volatilityPct > 5 ? "text-red-500" : ind.volatilityPct > 3 ? "text-yellow-600" : "text-green-500"
               }`}>
-                {ind.volatilityPct.toFixed(1)}%
+                {ind.volatilityPct !== null ? `${ind.volatilityPct.toFixed(1)}%` : "N/A"}
               </p>
               <p className="text-xs text-muted-foreground">
-                {ind.volatilityPct > 5 ? "High Risk" : ind.volatilityPct > 3 ? "Moderate" : "Stable"}
+                {ind.volatilityPct === null ? "Not enough 30d history"
+                  : ind.volatilityPct > 5 ? "High Risk" : ind.volatilityPct > 3 ? "Moderate" : "Stable"}
               </p>
             </div>
             <div className="p-3 rounded-lg border border-border bg-muted/50">
@@ -456,9 +459,14 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
                 <span className="text-sm font-bold text-green-500">{ind.resistance ? formatGP(ind.resistance) : "N/A"}</span>
               </div>
               <p className="text-xs text-muted-foreground">
-                Price vs 30d avg: <span className={ind.priceVsAvg30 > 0 ? "text-green-500" : "text-red-500"}>
-                  {ind.priceVsAvg30 > 0 ? "+" : ""}{ind.priceVsAvg30.toFixed(2)}%
-                </span>
+                Price vs 30d avg:{" "}
+                {ind.priceVsAvg30 === null ? (
+                  <span>N/A</span>
+                ) : (
+                  <span className={ind.priceVsAvg30 > 0 ? "text-green-500" : "text-red-500"}>
+                    {ind.priceVsAvg30 > 0 ? "+" : ""}{ind.priceVsAvg30.toFixed(2)}%
+                  </span>
+                )}
               </p>
             </div>
           </>
@@ -674,6 +682,21 @@ export default function Scanner() {
   
   const [selection, setSelection] = useState<FilterSelection>(EMPTY_SELECTION);
   const [filters, setFilters] = useState<NumericFilters>(EMPTY_NUMERIC);
+
+  // The detail drawer is a table row, so it inherits the width of a 20-column table and its
+  // right-hand half sat off-screen until you scrolled sideways. The table has to scroll; the
+  // drawer does not. Pin the drawer to the visible width and let it stay put while the
+  // columns behind it scroll.
+  const tableScrollRef = useRef<HTMLDivElement>(null);
+  const [drawerWidth, setDrawerWidth] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    const el = tableScrollRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(() => setDrawerWidth(el.clientWidth));
+    observer.observe(el);
+    setDrawerWidth(el.clientWidth);
+    return () => observer.disconnect();
+  }, []);
 
   const { data: items = [], isLoading, dataUpdatedAt } = useQuery<ScannerItem[]>({
     queryKey: ["/api/scanner/items"],
@@ -1366,7 +1389,7 @@ export default function Scanner() {
 
       {/* Data Table */}
       <div className="rounded-lg border border-border bg-card/50 backdrop-blur-sm overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto" ref={tableScrollRef}>
           <Table>
             <TableHeader>
               <TableRow className="border-border hover:bg-transparent">
@@ -1414,13 +1437,17 @@ export default function Scanner() {
                   className="cursor-pointer select-none text-muted-foreground hover:text-foreground text-right"
                   onClick={() => handleSort("margin")}
                   data-testid="header-margin"
+                  // "MARGIN" beside a tax-adjusted ROI read as the same basis and was not:
+                  // this is the raw ask-minus-bid. SPREAD says which one it is.
+                  title="Ask minus bid, before the 2% Grand Exchange tax. ROI and net profit are after tax."
                 >
-                  MARGIN <SortIcon columnKey="margin" />
+                  SPREAD <SortIcon columnKey="margin" />
                 </TableHead>
                 <TableHead 
                   className="cursor-pointer select-none text-muted-foreground hover:text-foreground text-right"
                   onClick={() => handleSort("roi")}
                   data-testid="header-roi"
+                  title="Net profit per item after the 2% Grand Exchange tax, over the buy price."
                 >
                   ROI % <SortIcon columnKey="roi" />
                 </TableHead>
@@ -1657,7 +1684,10 @@ export default function Scanner() {
                     {isExpanded && (
                       <TableRow className="border-border bg-card/80" data-testid={`row-expanded-${item.id}`}>
                         <TableCell colSpan={viewMode === "detailed" ? 20 : viewMode === "compact" ? 17 : 18} className="p-0">
-                          <div className="p-4 space-y-4 border-l-2 border-primary/50">
+                          <div
+                            className="sticky left-0 p-4 space-y-4 border-l-2 border-primary/50"
+                            style={{ width: drawerWidth }}
+                          >
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                               <div>
                                 <PriceHistoryChart itemId={item.id} itemName={item.name} userFlips={flips} />

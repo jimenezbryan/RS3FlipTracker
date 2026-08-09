@@ -388,7 +388,7 @@ export function ScannerFilters({
               onMax={(v) => onNumericChange({ ...numeric, maxRoi: v })}
             />
             <RangeInput
-              label="Margin" hint="gp" testId="margin"
+              label="Spread" hint="gp, pre-tax" testId="margin"
               minValue={numeric.minMargin} maxValue={numeric.maxMargin}
               onMin={(v) => onNumericChange({ ...numeric, minMargin: v })}
               onMax={(v) => onNumericChange({ ...numeric, maxMargin: v })}

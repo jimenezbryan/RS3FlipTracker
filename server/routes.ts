@@ -1469,22 +1469,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let indicators: TechnicalIndicators | null = null;
       let range7d: ObservableRange | null = null;
       let range30d: ObservableRange | null = null;
+      let lastPrice = 0;
       try {
         const fullHistory = await getItemPriceHistoryFull(itemId);
         if (fullHistory) {
-          if (fullHistory.monthly.length > 0) {
-            indicators = calculateTechnicalIndicators(fullHistory.monthly);
-          }
+          // Daily, not monthly. The monthly series made every window here mean months —
+          // a "7-day average" over seven months, and support/resistance over the item's
+          // whole lifetime.
           if (fullHistory.daily.length > 0) {
+            indicators = calculateTechnicalIndicators(fullHistory.daily);
             range7d = calculateObservableRange(fullHistory.daily, 7);
             range30d = calculateObservableRange(fullHistory.daily, 30);
           }
+          lastPrice = fullHistory.daily.at(-1)?.price ?? fullHistory.monthly.at(-1)?.price ?? 0;
         }
       } catch (err) {
         console.error(`Failed to get price history for item ${itemId}:`, err);
       }
 
-      const currentPrice = indicators?.sma7 ?? 0;
+      // The last traded price. This used to read `indicators.sma7`, so every downstream
+      // suggestion was anchored to a seven-month average rather than to the market.
+      const currentPrice = lastPrice;
       const smartPricingBase = calculateSmartPricing(
         currentPrice,
         indicators,

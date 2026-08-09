@@ -1,16 +1,46 @@
 import type { PriceHistoryPoint } from "./ge-api";
 
+/**
+ * Every window here is a span of TIME, not a count of data points, and every field is
+ * nullable so a window with too little data reports nothing rather than something wrong.
+ *
+ * Both of those are scars. The previous shape had `sma7`/`sma30`/`sma200` fed from the
+ * MONTHLY-aggregated series, so "7" meant seven months and rendered in the UI beside a
+ * genuinely date-based "7-Day Avg" that disagreed with it by 25%. `priceVsAvg30` was a plain
+ * number initialised to 0 and only assigned when `sma30` existed — and with fewer than 30
+ * monthly points it never existed, so the panel displayed "0.00%" (a confident "price is
+ * exactly at its average") for what was really "no idea". A count-based window silently
+ * changes meaning with the sampling rate; a non-nullable number cannot say "unknown".
+ */
 export interface TechnicalIndicators {
   rsi14: number | null;
-  sma7: number | null;
-  sma30: number | null;
-  sma200: number | null;
+  avg7d: number | null;
+  avg30d: number | null;
+  avg90d: number | null;
+  /** avg7d against avg30d. */
   smaCrossover: "bullish" | "bearish" | "neutral";
-  volatilityPct: number;
-  priceVsAvg30: number;
+  volatilityPct: number | null;
+  priceVsAvg30: number | null;
   support: number | null;
   resistance: number | null;
   valueGap: ValueGapAnalysis | null;
+}
+
+/** An average of one point is that point. Two is the minimum that averages anything. */
+const MIN_POINTS_FOR_AVERAGE = 2;
+/** A standard deviation over two or three points is noise wearing a percentage sign. */
+const MIN_POINTS_FOR_VOLATILITY = 4;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Prices from the last `days` days. The whole point is that this is not `slice(-days)`. */
+export function pricesWithinDays(history: PriceHistoryPoint[], days: number): number[] {
+  const cutoff = Date.now() - days * DAY_MS;
+  return history.filter((h) => new Date(h.date).getTime() >= cutoff).map((h) => h.price);
+}
+
+function meanOrNull(prices: number[]): number | null {
+  if (prices.length < MIN_POINTS_FOR_AVERAGE) return null;
+  return Math.round(prices.reduce((a, b) => a + b, 0) / prices.length);
 }
 
 export interface ValueGapAnalysis {
@@ -49,10 +79,10 @@ export interface ObservableRange {
 
 export function calculateObservableRange(history: PriceHistoryPoint[], days: number): ObservableRange | null {
   if (history.length === 0) return null;
-  const recent = history.slice(-days);
-  if (recent.length < 2) return null;
+  // Same fix as the indicators: a "7-day range" must span seven days, not seven samples.
+  const prices = pricesWithinDays(history, days);
+  if (prices.length < MIN_POINTS_FOR_AVERAGE) return null;
 
-  const prices = recent.map(h => h.price);
   const low = Math.min(...prices);
   const high = Math.max(...prices);
   const current = prices[prices.length - 1];
@@ -86,27 +116,21 @@ export function calculateRSI(prices: number[], period: number = 14): number | nu
   return Math.round((100 - 100 / (1 + rs)) * 10) / 10;
 }
 
-export function calculateSMA(prices: number[], period: number): number | null {
-  if (prices.length < period) return null;
-  const recent = prices.slice(-period);
-  return Math.round(recent.reduce((a, b) => a + b, 0) / period);
-}
-
-export function calculateVolatility(prices: number[]): number {
-  if (prices.length < 2) return 0;
-  const recent = prices.slice(-30);
-  const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
-  if (mean === 0) return 0;
-  const squaredDiffs = recent.map(p => Math.pow(p - mean, 2));
-  const variance = squaredDiffs.reduce((a, b) => a + b, 0) / recent.length;
+/** Takes an already-windowed series — the caller decides the span, in days. */
+export function calculateVolatility(prices: number[]): number | null {
+  if (prices.length < MIN_POINTS_FOR_VOLATILITY) return null;
+  const mean = prices.reduce((a, b) => a + b, 0) / prices.length;
+  if (mean === 0) return null;
+  const squaredDiffs = prices.map(p => Math.pow(p - mean, 2));
+  const variance = squaredDiffs.reduce((a, b) => a + b, 0) / prices.length;
   const stdDev = Math.sqrt(variance);
   return Math.round((stdDev / mean) * 10000) / 100;
 }
 
+/** Takes an already-windowed series. Ten points is the floor for a meaningful decile. */
 export function findSupportResistance(prices: number[]): { support: number | null; resistance: number | null } {
   if (prices.length < 10) return { support: null, resistance: null };
-  const recent = prices.slice(-30);
-  const sorted = [...recent].sort((a, b) => a - b);
+  const sorted = [...prices].sort((a, b) => a - b);
   const q1Index = Math.floor(sorted.length * 0.1);
   const q3Index = Math.floor(sorted.length * 0.9);
   return {
@@ -117,12 +141,12 @@ export function findSupportResistance(prices: number[]): { support: number | nul
 
 export function calculateValueGap(
   currentPrice: number,
-  sma30: number | null,
-  sma200: number | null,
+  avg30d: number | null,
+  avg90d: number | null,
 ): ValueGapAnalysis | null {
   const anchors: number[] = [];
-  if (sma30 !== null) anchors.push(sma30);
-  if (sma200 !== null) anchors.push(sma200);
+  if (avg30d !== null) anchors.push(avg30d);
+  if (avg90d !== null) anchors.push(avg90d);
   if (anchors.length === 0) return null;
 
   const fairValue = Math.round(anchors.reduce((a, b) => a + b, 0) / anchors.length);
@@ -143,39 +167,58 @@ export function calculateValueGap(
   return { fairValue, currentPrice, gapPct, gapDirection, signal };
 }
 
+/**
+ * Pass the DAILY series. Passing the monthly one is what produced a "7-day" average covering
+ * seven months, so the windows below are cut by date and a monthly series simply yields nulls
+ * instead of quietly answering a different question.
+ */
 export function calculateTechnicalIndicators(history: PriceHistoryPoint[]): TechnicalIndicators {
   const prices = history.map(h => h.price);
+  const currentPrice = prices.length > 0 ? prices[prices.length - 1] : 0;
 
+  const window30d = pricesWithinDays(history, 30);
+
+  const avg7d = meanOrNull(pricesWithinDays(history, 7));
+  const avg30d = meanOrNull(window30d);
+  const avg90d = meanOrNull(pricesWithinDays(history, 90));
+
+  // RSI keeps period semantics — it is defined over consecutive periods, not a date span —
+  // but it is only meaningful on a regularly sampled series, which is why it gets the daily
+  // one. It already returns null below its minimum.
   const rsi14 = calculateRSI(prices);
-  const sma7 = calculateSMA(prices, 7);
-  const sma30 = calculateSMA(prices, 30);
-  const sma200 = calculateSMA(prices, 200);
 
   let smaCrossover: "bullish" | "bearish" | "neutral" = "neutral";
-  if (sma7 !== null && sma30 !== null) {
-    const diff = (sma7 - sma30) / sma30;
+  if (avg7d !== null && avg30d !== null) {
+    const diff = (avg7d - avg30d) / avg30d;
     if (diff > 0.01) smaCrossover = "bullish";
     else if (diff < -0.01) smaCrossover = "bearish";
   }
 
-  const volatilityPct = calculateVolatility(prices);
+  const volatilityPct = calculateVolatility(window30d);
 
-  let priceVsAvg30 = 0;
-  if (sma30 !== null && prices.length > 0) {
-    const currentPrice = prices[prices.length - 1];
-    priceVsAvg30 = Math.round(((currentPrice - sma30) / sma30) * 10000) / 100;
-  }
+  const priceVsAvg30 =
+    avg30d !== null && avg30d !== 0 && prices.length > 0
+      ? Math.round(((currentPrice - avg30d) / avg30d) * 10000) / 100
+      : null;
 
-  const { support, resistance } = findSupportResistance(prices);
+  // Support and resistance describe where price is trading now. Cut to 30 days for the same
+  // reason as the rest: over a multi-year window this returned a "support" above the current
+  // price and a "resistance" at five times it, which are not levels anyone can trade against.
+  //
+  // The window fixes the cause, but the deciles can still land the wrong side of price after
+  // a sharp move — and a "support" above the current price is a contradiction in terms, not a
+  // level. Report nothing rather than a number that cannot mean what its name says.
+  let { support, resistance } = findSupportResistance(window30d);
+  if (support !== null && support > currentPrice) support = null;
+  if (resistance !== null && resistance < currentPrice) resistance = null;
 
-  const currentPrice = prices.length > 0 ? prices[prices.length - 1] : 0;
-  const valueGap = calculateValueGap(currentPrice, sma30, sma200);
+  const valueGap = calculateValueGap(currentPrice, avg30d, avg90d);
 
   return {
     rsi14,
-    sma7,
-    sma30,
-    sma200,
+    avg7d,
+    avg30d,
+    avg90d,
     smaCrossover,
     volatilityPct,
     priceVsAvg30,
@@ -210,12 +253,16 @@ export function calculateSmartPricing(
   let marginPct = tierConfig.base;
 
   if (indicators) {
-    if (indicators.volatilityPct > 5) {
-      marginPct *= 1.3;
-    } else if (indicators.volatilityPct > 3) {
-      marginPct *= 1.15;
-    } else if (indicators.volatilityPct < 1) {
-      marginPct *= 0.85;
+    // Unknown volatility leaves the tier base alone. Treating null as 0 would have widened
+    // the margin as though the item were provably calm.
+    if (indicators.volatilityPct !== null) {
+      if (indicators.volatilityPct > 5) {
+        marginPct *= 1.3;
+      } else if (indicators.volatilityPct > 3) {
+        marginPct *= 1.15;
+      } else if (indicators.volatilityPct < 1) {
+        marginPct *= 0.85;
+      }
     }
 
     if (indicators.rsi14 !== null) {

@@ -118,9 +118,16 @@ export function movingAverage(values: number[], period: number): (number | null)
   return out;
 }
 
+/**
+ * Deliberately descriptive, not imperative. These bands say where price sits in the visible
+ * window — nothing more. Calling the bottom quartile a "Buy Zone" put an instruction on the
+ * same card as the recommendation engine's "HOLD — falling for 88 days", and the two
+ * contradicted each other while both being right about different things. A quartile is an
+ * observation; whether to act on it is the recommendation's job.
+ */
 export const ZONE_LABELS: Record<Zone, string> = {
-  buy: "Buy Zone",
-  sell: "Sell Zone",
+  buy: "Bottom 25%",
+  sell: "Top 25%",
   accumulation: "Accumulation",
-  neutral: "Neutral",
+  neutral: "Mid-range",
 };
