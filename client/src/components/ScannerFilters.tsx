@@ -7,6 +7,14 @@ import { Badge } from "@/components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
+  activeColumnCount,
+  describeColumnFilter,
+  isNoOp,
+  setColumnFilter,
+  type ColumnFilters,
+} from "@shared/columnFilters";
+import type { ColumnFilterSpec } from "@/components/ColumnFilter";
+import {
   BUY_LIMIT_BANDS,
   PRICE_BANDS,
   UNCATEGORISED,
@@ -17,23 +25,6 @@ import {
   type FilterSelection,
   type FilterableItem,
 } from "@shared/scannerFilters";
-
-/** The numeric range inputs. Kept as strings so a half-typed "-" or "" is not coerced to 0. */
-export interface NumericFilters {
-  minMargin: string;
-  maxMargin: string;
-  minVolume: string;
-  maxVolume: string;
-  minPotentialProfit: string;
-  maxPotentialProfit: string;
-  minRoi: string;
-  maxRoi: string;
-}
-
-export const EMPTY_NUMERIC: NumericFilters = {
-  minMargin: "", maxMargin: "", minVolume: "", maxVolume: "",
-  minPotentialProfit: "", maxPotentialProfit: "", minRoi: "", maxRoi: "",
-};
 
 /** How many categories sit inline before the rest move into the popover. Enough to cover the
  *  common ones without the row wrapping into a wall. */
@@ -79,38 +70,6 @@ function FilterChip({
   );
 }
 
-/** A labelled min/max pair. Four of these replace eight loose inputs. */
-function RangeInput({
-  label, hint, minValue, maxValue, onMin, onMax, testId,
-}: {
-  label: string; hint?: string; minValue: string; maxValue: string;
-  onMin: (v: string) => void; onMax: (v: string) => void; testId: string;
-}) {
-  return (
-    <div className="space-y-1.5">
-      <Label className="text-xs uppercase tracking-wider text-muted-foreground">
-        {label}
-        {hint && <span className="ml-1 normal-case tracking-normal opacity-70">{hint}</span>}
-      </Label>
-      <div className="flex items-center gap-1.5">
-        <Input
-          type="number" inputMode="numeric" placeholder="min" value={minValue}
-          onChange={(e) => onMin(e.target.value)}
-          className="h-8 bg-background font-mono text-sm tabular-nums"
-          data-testid={`input-${testId}-min`}
-        />
-        <span className="text-muted-foreground" aria-hidden>–</span>
-        <Input
-          type="number" inputMode="numeric" placeholder="max" value={maxValue}
-          onChange={(e) => onMax(e.target.value)}
-          className="h-8 bg-background font-mono text-sm tabular-nums"
-          data-testid={`input-${testId}-max`}
-        />
-      </div>
-    </div>
-  );
-}
-
 export interface ScannerFiltersProps {
   /** Rows with every OTHER filter already applied — search, F2P, watchlist, signals and so
    *  on. Facet counts are only honest if they are computed over what the user can actually
@@ -118,8 +77,12 @@ export interface ScannerFiltersProps {
   items: FilterableItem[];
   selection: FilterSelection;
   onSelectionChange: (next: FilterSelection) => void;
-  numeric: NumericFilters;
-  onNumericChange: (next: NumericFilters) => void;
+  /** Per-column filters, owned by the table headers. The panel shows them as pills and can
+   *  clear them, so "Clear all" means all and a filter set in a header is never invisible. */
+  columnFilters: ColumnFilters;
+  onColumnFiltersChange: (next: ColumnFilters) => void;
+  /** Labels and number formatting for the pills, keyed by column. */
+  columnSpecs: Record<string, ColumnFilterSpec>;
   /** Rows surviving everything, for the "N of M" readout. */
   resultCount: number;
   open: boolean;
@@ -127,15 +90,15 @@ export interface ScannerFiltersProps {
 }
 
 export function ScannerFilters({
-  items, selection, onSelectionChange, numeric, onNumericChange, resultCount, open, onOpenChange,
+  items, selection, onSelectionChange, columnFilters, onColumnFiltersChange, columnSpecs,
+  resultCount, open, onOpenChange,
 }: ScannerFiltersProps) {
   const [categoryQuery, setCategoryQuery] = useState("");
 
   const counts = useMemo(() => facetCounts(items, selection), [items, selection]);
   const categories = useMemo(() => categoriesByCount(counts.category), [counts.category]);
 
-  const numericActive = Object.values(numeric).filter((v) => v !== "").length;
-  const activeCount = activeFilterCount(selection) + (numericActive > 0 ? 1 : 0);
+  const activeCount = activeFilterCount(selection) + activeColumnCount(columnFilters);
 
   // Selected categories are pinned into the inline row, so a pick made inside the popover
   // never disappears from view the moment the popover closes.
@@ -172,7 +135,7 @@ export function ScannerFilters({
 
   const clearAll = () => {
     onSelectionChange({ buyLimitBandId: null, priceBandId: null, categories: [] });
-    onNumericChange(EMPTY_NUMERIC);
+    onColumnFiltersChange({});
   };
 
   const bandLabel = (bands: Band[], id: string | null) => bands.find((b) => b.id === id)?.label;
@@ -202,11 +165,14 @@ export function ScannerFilters({
       clear: () => onSelectionChange({ ...selection, priceBandId: null }),
     });
   }
-  if (numericActive > 0) {
+  for (const key of Object.keys(columnFilters)) {
+    const filter = columnFilters[key];
+    if (isNoOp(filter)) continue;
+    const spec = columnSpecs[key];
     activePills.push({
-      key: "numeric",
-      label: `${numericActive} numeric`,
-      clear: () => onNumericChange(EMPTY_NUMERIC),
+      key: `col-${key}`,
+      label: describeColumnFilter(spec?.label ?? key, filter, spec?.format),
+      clear: () => onColumnFiltersChange(setColumnFilter(columnFilters, key, null)),
     });
   }
 
@@ -380,32 +346,6 @@ export function ScannerFilters({
             </section>
           </div>
 
-          <div className="grid gap-4 border-t pt-4 sm:grid-cols-2 lg:grid-cols-4">
-            <RangeInput
-              label="ROI" hint="%" testId="roi"
-              minValue={numeric.minRoi} maxValue={numeric.maxRoi}
-              onMin={(v) => onNumericChange({ ...numeric, minRoi: v })}
-              onMax={(v) => onNumericChange({ ...numeric, maxRoi: v })}
-            />
-            <RangeInput
-              label="Spread" hint="gp, pre-tax" testId="margin"
-              minValue={numeric.minMargin} maxValue={numeric.maxMargin}
-              onMin={(v) => onNumericChange({ ...numeric, minMargin: v })}
-              onMax={(v) => onNumericChange({ ...numeric, maxMargin: v })}
-            />
-            <RangeInput
-              label="Volume" hint="24h" testId="volume"
-              minValue={numeric.minVolume} maxValue={numeric.maxVolume}
-              onMin={(v) => onNumericChange({ ...numeric, minVolume: v })}
-              onMax={(v) => onNumericChange({ ...numeric, maxVolume: v })}
-            />
-            <RangeInput
-              label="Profit" hint="per flip" testId="profit"
-              minValue={numeric.minPotentialProfit} maxValue={numeric.maxPotentialProfit}
-              onMin={(v) => onNumericChange({ ...numeric, minPotentialProfit: v })}
-              onMax={(v) => onNumericChange({ ...numeric, maxPotentialProfit: v })}
-            />
-          </div>
 
           {resultCount === 0 && (
             <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground" data-testid="text-filters-empty">

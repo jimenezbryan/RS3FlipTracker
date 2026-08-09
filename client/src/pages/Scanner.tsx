@@ -39,8 +39,17 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
-import { ScannerFilters, EMPTY_NUMERIC, type NumericFilters } from "@/components/ScannerFilters";
+import { ScannerFilters } from "@/components/ScannerFilters";
+import { ColumnFilter, type ColumnFilterSpec } from "@/components/ColumnFilter";
 import { EMPTY_SELECTION, matchesSelection, type FilterSelection } from "@shared/scannerFilters";
+import {
+  EMPTY_COLUMN_FILTERS,
+  matchesColumnFilters,
+  setColumnFilter,
+  type ColumnFilter as ColumnFilterValue,
+  type ColumnFilters,
+  type FilterableRow,
+} from "@shared/columnFilters";
 import { formatGP } from "@/lib/formatters";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -172,6 +181,59 @@ const SIGNAL_STYLES: Record<string, string> = {
   "High Reward": "bg-lime-500/20 text-lime-600 border-lime-500/30",
   "Distribution": "bg-red-500/20 text-red-500 border-red-500/30",
 };
+
+/**
+ * One filter per column, so every column the table shows is also a column you can narrow by.
+ *
+ * Numeric columns get a min/max whose placeholders are the values actually present in the
+ * current view; "set" columns list every value present with a count. Both are computed with
+ * the other columns' filters applied, so what you see is what you would get.
+ *
+ * `category` is deliberately bridged to `selection.categories` rather than kept here — the
+ * filter panel already owns categories with facet counts, and two independent stores for one
+ * filter is how they end up disagreeing. See changeColumnFilter below.
+ */
+/** ProcessedScannerItem is a fixed interface; FilterableRow is an index signature. The fields
+ *  the filters read are all CellValue-shaped, so the cast is safe and saves restating them. */
+const asRow = (item: ProcessedScannerItem) => item as unknown as FilterableRow;
+
+const gp = (n: number) => formatGP(Math.round(n));
+const pct = (n: number) => `${n.toFixed(1)}%`;
+const whole = (n: number) => Math.round(n).toLocaleString();
+
+const COLUMN_SPECS = {
+  category: { key: "category", label: "Category", kind: "set" },
+  tradeScore: { key: "tradeScore", label: "Score", kind: "range", format: whole },
+  trend: {
+    key: "trend",
+    label: "Trend",
+    kind: "set",
+    optionLabel: (v: string) => ({ up: "Rising", down: "Falling", stable: "Flat" })[v] ?? v,
+  },
+  geLimit: { key: "geLimit", label: "Buy limit", kind: "range", format: whole },
+  isMembers: {
+    key: "isMembers",
+    label: "Type",
+    kind: "set",
+    optionLabel: (v: string) => (v === "true" ? "P2P (members)" : "F2P (free)"),
+  },
+  buyPrice: { key: "buyPrice", label: "Buy", kind: "range", format: gp },
+  sellPrice: { key: "sellPrice", label: "Sell", kind: "range", format: gp },
+  margin: { key: "margin", label: "Spread", kind: "range", format: gp },
+  roi: { key: "roi", label: "ROI", kind: "range", format: pct },
+  volume: { key: "volume", label: "Volume", kind: "range", format: whole },
+  fillQty: { key: "fillQty", label: "Fillable", kind: "range", format: whole },
+  netProfit: { key: "netProfit", label: "Net profit", kind: "range", format: gp },
+  capitalEfficiency: { key: "capitalEfficiency", label: "Cap eff", kind: "range", format: pct },
+  volatility: {
+    key: "volatility",
+    label: "Volatility",
+    kind: "set",
+    optionLabel: (v: string) => v[0].toUpperCase() + v.slice(1),
+  },
+  suggestedMarginPct: { key: "suggestedMarginPct", label: "AI est.", kind: "range", format: pct },
+  signals: { key: "signals", label: "Signals", kind: "set" },
+} satisfies Record<string, ColumnFilterSpec>;
 
 interface Favorite {
   id: string;
@@ -681,7 +743,7 @@ export default function Scanner() {
   });
   
   const [selection, setSelection] = useState<FilterSelection>(EMPTY_SELECTION);
-  const [filters, setFilters] = useState<NumericFilters>(EMPTY_NUMERIC);
+  const [columnFilters, setColumnFilters] = useState<ColumnFilters>(EMPTY_COLUMN_FILTERS);
 
   // The detail drawer is a table row, so it inherits the width of a 20-column table and its
   // right-hand half sat off-screen until you scrolled sideways. The table has to scroll; the
@@ -1068,29 +1130,12 @@ export default function Scanner() {
   }, [processedItems, searchQuery, f2pOnly, watchlistOnly, signalsOnly, showUnprofitable, highScoreOnly, favoriteItemIds]);
 
   const filteredAndSortedItems = useMemo((): ProcessedScannerItem[] => {
-    let result = baseItems.filter(item => matchesSelection(item, selection));
-
-    const parseNum = (val: string) => val ? parseFloat(val) : null;
-    const minMargin = parseNum(filters.minMargin);
-    const maxMargin = parseNum(filters.maxMargin);
-    const minVolume = parseNum(filters.minVolume);
-    const maxVolume = parseNum(filters.maxVolume);
-    const minPotentialProfit = parseNum(filters.minPotentialProfit);
-    const maxPotentialProfit = parseNum(filters.maxPotentialProfit);
-    const minRoi = parseNum(filters.minRoi);
-    const maxRoi = parseNum(filters.maxRoi);
-
-    result = result.filter(item => {
-      if (minMargin !== null && item.margin < minMargin) return false;
-      if (maxMargin !== null && item.margin > maxMargin) return false;
-      if (minVolume !== null && item.volume < minVolume) return false;
-      if (maxVolume !== null && item.volume > maxVolume) return false;
-      if (minPotentialProfit !== null && item.potentialProfit < minPotentialProfit) return false;
-      if (maxPotentialProfit !== null && item.potentialProfit > maxPotentialProfit) return false;
-      if (minRoi !== null && item.roi < minRoi) return false;
-      if (maxRoi !== null && item.roi > maxRoi) return false;
-      return true;
-    });
+    // Band/category selection and the per-column filters compose by intersection: a band is a
+    // coarse preset, a column range is precise, and both narrowing at once is the expected
+    // reading of two active filters.
+    let result = baseItems.filter(
+      item => matchesSelection(item, selection) && matchesColumnFilters(asRow(item), columnFilters),
+    );
 
     // ponytail: several sortable columns are buckets, not continuous values — trend and
     // volatility have 3 each, priceTier and confidence 4, and suggestedMarginPct resolves to
@@ -1120,7 +1165,58 @@ export default function Scanner() {
     });
 
     return result;
-  }, [baseItems, sortKey, sortDirection, selection, filters]);
+  }, [baseItems, sortKey, sortDirection, selection, columnFilters]);
+
+  /**
+   * The rows the column popovers count over: the band selection applied, but NOT the category
+   * one. Categories reach the popovers through `headerFilters` instead, which is what lets
+   * columnOptions() drop the category filter when counting the category column itself. Apply
+   * it here as well and the category list would only ever show the categories already picked —
+   * the precise failure faceting exists to avoid.
+   */
+  const filterRows = useMemo(
+    () =>
+      baseItems
+        .filter(item => matchesSelection(item, { ...selection, categories: [] }))
+        .map(asRow),
+    [baseItems, selection.buyLimitBandId, selection.priceBandId],
+  );
+
+  /**
+   * Category routes to `selection` and everything else to `columnFilters`. One filter with two
+   * surfaces — the panel's chips and the ITEM column's popover — but a single store, so they
+   * cannot drift apart.
+   */
+  const headerFilters = useMemo((): ColumnFilters => {
+    if (selection.categories.length === 0) return columnFilters;
+    return { ...columnFilters, category: { kind: "set", values: selection.categories } };
+  }, [columnFilters, selection.categories]);
+
+  /**
+   * Called, not rendered as <Funnel/>. A component defined inside a render is a new type on
+   * every render, so React unmounts and remounts it — which would slam the popover shut on
+   * each keystroke. Returning elements from a plain call keeps the element type stable.
+   */
+  const funnel = (spec: ColumnFilterSpec) => (
+    <ColumnFilter
+      spec={spec}
+      rows={filterRows}
+      filters={headerFilters}
+      onChange={changeColumnFilter}
+    />
+  );
+
+  const changeColumnFilter = (key: string, filter: ColumnFilterValue | null) => {
+    if (key === "category") {
+      setSelection({
+        ...selection,
+        categories: filter && filter.kind === "set" ? filter.values : [],
+      });
+    } else {
+      setColumnFilters(prev => setColumnFilter(prev, key, filter));
+    }
+    setCurrentPage(1);
+  };
 
   const totalPages = Math.ceil(filteredAndSortedItems.length / ITEMS_PER_PAGE);
   const paginatedItems = filteredAndSortedItems.slice(
@@ -1380,8 +1476,9 @@ export default function Scanner() {
         items={baseItems}
         selection={selection}
         onSelectionChange={(next) => { setSelection(next); setCurrentPage(1); }}
-        numeric={filters}
-        onNumericChange={(next) => { setFilters(next); setCurrentPage(1); }}
+        columnFilters={columnFilters}
+        onColumnFiltersChange={(next) => { setColumnFilters(next); setCurrentPage(1); }}
+        columnSpecs={COLUMN_SPECS}
         resultCount={filteredAndSortedItems.length}
         open={filtersOpen}
         onOpenChange={setFiltersOpen}
@@ -1401,37 +1498,37 @@ export default function Scanner() {
                   onClick={() => handleSort("name")}
                   data-testid="header-name"
                 >
-                  ITEM <SortIcon columnKey="name" />
+                  ITEM <SortIcon columnKey="name" />{funnel(COLUMN_SPECS.category)}
                 </TableHead>
                 <TableHead 
                   className="cursor-pointer select-none text-muted-foreground hover:text-foreground text-center"
                   onClick={() => handleSort("tradeScore" as SortKey)}
                   data-testid="header-score"
                 >
-                  SCORE <SortIcon columnKey={"tradeScore" as SortKey} />
+                  SCORE <SortIcon columnKey={"tradeScore" as SortKey} />{funnel(COLUMN_SPECS.tradeScore)}
                 </TableHead>
-                <TableHead className="text-center text-muted-foreground w-12">TREND</TableHead>
+                <TableHead className="text-center text-muted-foreground w-12">TREND{funnel(COLUMN_SPECS.trend)}</TableHead>
                 <TableHead 
                   className="cursor-pointer select-none text-muted-foreground hover:text-foreground text-right"
                   onClick={() => handleSort("geLimit")}
                   data-testid="header-limit"
                 >
-                  LIMIT <SortIcon columnKey="geLimit" />
+                  LIMIT <SortIcon columnKey="geLimit" />{funnel(COLUMN_SPECS.geLimit)}
                 </TableHead>
-                <TableHead className="text-center text-muted-foreground">TYPE</TableHead>
+                <TableHead className="text-center text-muted-foreground">TYPE{funnel(COLUMN_SPECS.isMembers)}</TableHead>
                 <TableHead 
                   className="cursor-pointer select-none text-muted-foreground hover:text-foreground text-right"
                   onClick={() => handleSort("buyPrice")}
                   data-testid="header-buy"
                 >
-                  BUY <SortIcon columnKey="buyPrice" />
+                  BUY <SortIcon columnKey="buyPrice" />{funnel(COLUMN_SPECS.buyPrice)}
                 </TableHead>
                 <TableHead 
                   className="cursor-pointer select-none text-muted-foreground hover:text-foreground text-right"
                   onClick={() => handleSort("sellPrice")}
                   data-testid="header-sell"
                 >
-                  SELL <SortIcon columnKey="sellPrice" />
+                  SELL <SortIcon columnKey="sellPrice" />{funnel(COLUMN_SPECS.sellPrice)}
                 </TableHead>
                 <TableHead 
                   className="cursor-pointer select-none text-muted-foreground hover:text-foreground text-right"
@@ -1441,7 +1538,7 @@ export default function Scanner() {
                   // this is the raw ask-minus-bid. SPREAD says which one it is.
                   title="Ask minus bid, before the 2% Grand Exchange tax. ROI and net profit are after tax."
                 >
-                  SPREAD <SortIcon columnKey="margin" />
+                  SPREAD <SortIcon columnKey="margin" />{funnel(COLUMN_SPECS.margin)}
                 </TableHead>
                 <TableHead 
                   className="cursor-pointer select-none text-muted-foreground hover:text-foreground text-right"
@@ -1449,14 +1546,14 @@ export default function Scanner() {
                   data-testid="header-roi"
                   title="Net profit per item after the 2% Grand Exchange tax, over the buy price."
                 >
-                  ROI % <SortIcon columnKey="roi" />
+                  ROI % <SortIcon columnKey="roi" />{funnel(COLUMN_SPECS.roi)}
                 </TableHead>
                 <TableHead 
                   className="cursor-pointer select-none text-muted-foreground hover:text-foreground text-right"
                   onClick={() => handleSort("volume")}
                   data-testid="header-volume"
                 >
-                  VOLUME <SortIcon columnKey="volume" />
+                  VOLUME <SortIcon columnKey="volume" />{funnel(COLUMN_SPECS.volume)}
                 </TableHead>
                 <TableHead
                   className="cursor-pointer select-none text-muted-foreground hover:text-foreground text-right"
@@ -1464,14 +1561,14 @@ export default function Scanner() {
                   title="Units you can realistically clear in one 4h buy-limit window: min(limit, 24h volume / 6). Net profit is scaled to this, not to the full buy limit."
                   data-testid="header-fill-qty"
                 >
-                  FILLABLE <SortIcon columnKey="fillQty" />
+                  FILLABLE <SortIcon columnKey="fillQty" />{funnel(COLUMN_SPECS.fillQty)}
                 </TableHead>
                 <TableHead
                   className="cursor-pointer select-none text-muted-foreground hover:text-foreground text-right"
                   onClick={() => handleSort("netProfit")}
                   data-testid="header-net-profit"
                 >
-                  NET PROFIT <SortIcon columnKey="netProfit" />
+                  NET PROFIT <SortIcon columnKey="netProfit" />{funnel(COLUMN_SPECS.netProfit)}
                 </TableHead>
                 {viewMode !== "compact" && (
                   <TableHead 
@@ -1479,20 +1576,20 @@ export default function Scanner() {
                     onClick={() => handleSort("capitalEfficiency")}
                     data-testid="header-cap-eff"
                   >
-                    CAP EFF <SortIcon columnKey="capitalEfficiency" />
+                    CAP EFF <SortIcon columnKey="capitalEfficiency" />{funnel(COLUMN_SPECS.capitalEfficiency)}
                   </TableHead>
                 )}
                 {viewMode === "detailed" && (
-                  <TableHead className="text-center text-muted-foreground">STATUS</TableHead>
+                  <TableHead className="text-center text-muted-foreground">STATUS{funnel(COLUMN_SPECS.volatility)}</TableHead>
                 )}
                 <TableHead
                   className="cursor-pointer select-none text-muted-foreground hover:text-foreground text-right"
                   onClick={() => handleSort("suggestedMarginPct" as SortKey)}
                   data-testid="header-suggested"
                 >
-                  AI EST. % <SortIcon columnKey={"suggestedMarginPct" as SortKey} />
+                  AI EST. % <SortIcon columnKey={"suggestedMarginPct" as SortKey} />{funnel(COLUMN_SPECS.suggestedMarginPct)}
                 </TableHead>
-                <TableHead className="text-center text-muted-foreground" data-testid="header-signals">SIGNALS</TableHead>
+                <TableHead className="text-center text-muted-foreground" data-testid="header-signals">SIGNALS{funnel(COLUMN_SPECS.signals)}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>

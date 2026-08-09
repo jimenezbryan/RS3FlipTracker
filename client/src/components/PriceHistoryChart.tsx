@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,11 +10,12 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "@/components/ui/chart";
-import { XAxis, YAxis, CartesianGrid, Area, Line, Scatter, ComposedChart, Cell, ZAxis, ReferenceArea } from "recharts";
-import { TrendingUp, TrendingDown, Minus, X, CircleDot } from "lucide-react";
+import { XAxis, YAxis, CartesianGrid, Area, Line, Scatter, ComposedChart, ZAxis, ReferenceArea, Brush } from "recharts";
+import { TrendingUp, TrendingDown, Minus, X, ZoomOut } from "lucide-react";
 import { format, parseISO } from "date-fns";
 import type { Flip } from "@shared/schema";
 import { calculatePriceZones, movingAverage, ZONE_LABELS, type Zone } from "@shared/priceZones";
+import { chartWindow } from "@shared/chartWindow";
 
 interface PriceHistoryPoint {
   date: string;
@@ -68,6 +69,51 @@ const MA_LABEL: Record<ChartPeriod, string> = {
 
 const isIntraday = (p: ChartPeriod) => p === "24h" || p === "7d";
 
+/**
+ * Trade markers. Two circles differing only in colour asked the reader to hold a legend in
+ * their head, and red/green already mean falling/rising everywhere else on this page. Shape
+ * carries the meaning instead — an entry points up, an exit points down — so the markers stay
+ * legible in greyscale, to a colour-blind reader, and on top of the tinted zone bands.
+ *
+ * Module scope, not defined during render: recharts remounts a shape whose type identity
+ * changes, which restarts its animation on every parent render.
+ */
+function tradeMarkerPath(cx: number, cy: number, half: number, dir: "up" | "down"): string {
+  const h = half * 1.6;
+  return dir === "up"
+    ? `M ${cx} ${cy - h} L ${cx + half} ${cy + h * 0.6} L ${cx - half} ${cy + h * 0.6} Z`
+    : `M ${cx} ${cy + h} L ${cx + half} ${cy - h * 0.6} L ${cx - half} ${cy - h * 0.6} Z`;
+}
+
+/** ZAxis feeds `size` as an area in px²; back out a half-width, clamped so a 10M-unit flip
+ *  cannot swallow the plot and a single-unit one stays clickable. */
+const markerHalf = (size: unknown) =>
+  Math.max(4, Math.min(9, Math.sqrt((typeof size === "number" ? size : 100) / Math.PI) * 1.3));
+
+function BuyMarker({ cx, cy, size }: { cx?: number; cy?: number; size?: number }) {
+  if (cx == null || cy == null) return null;
+  return (
+    <path
+      d={tradeMarkerPath(cx, cy, markerHalf(size), "up")}
+      fill="#22c55e"
+      stroke="hsl(var(--background))"
+      strokeWidth={1.5}
+    />
+  );
+}
+
+function SellMarker({ cx, cy, size }: { cx?: number; cy?: number; size?: number }) {
+  if (cx == null || cy == null) return null;
+  return (
+    <path
+      d={tradeMarkerPath(cx, cy, markerHalf(size), "down")}
+      fill="#ef4444"
+      stroke="hsl(var(--background))"
+      strokeWidth={1.5}
+    />
+  );
+}
+
 const ZONE_BADGE_CLASS: Record<Zone, string> = {
   buy: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
   sell: "bg-red-500/10 text-red-400 border-red-500/30",
@@ -91,6 +137,12 @@ const chartConfig = {
 
 export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }: PriceHistoryChartProps) {
   const [period, setPeriod] = useState<ChartPeriod>("daily");
+  /** Index range of the series on screen. null is "all of it". */
+  const [zoom, setZoom] = useState<{ start: number; end: number } | null>(null);
+
+  // A timeframe switch swaps the series underneath the indices, and 24H's 24 points do not
+  // mean the same thing as ALL's few hundred. Dropping the zoom is the only honest reset.
+  useEffect(() => setZoom(null), [period, itemId, itemName]);
 
   const { data: resolvedItem, isLoading: isResolvingId } = useQuery<{ id: number; name: string }>({
     queryKey: ["/api/ge/resolve-id", itemName],
@@ -253,15 +305,27 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
     );
   }
 
-  const allPrices = [
-    ...history.map(h => h.price),
-    ...userTrades.map(t => t.price)
-  ];
-  const minPrice = Math.min(...allPrices);
-  const maxPrice = Math.max(...allPrices);
-  const padding = (maxPrice - minPrice) * 0.1 || maxPrice * 0.05;
+  // Zones and the moving average are computed from the whole selected timeframe, not from the
+  // zoom window. The timeframe is the frame of reference the user picked; zoom is navigation
+  // inside it, and recomputing quartiles on every drag would slide the bands under the cursor.
+  const zones = calculatePriceZones(history);
+  const maSeries = movingAverage(history.map(h => h.price), MA_PERIOD[period]);
 
-  const sortedTrades = [...userTrades].sort((a, b) => a.timestamp - b.timestamp);
+  const chartDataWithTimestamps = history.map((h, i) => ({
+    ...h,
+    timestamp: new Date(h.date).getTime(),
+    ma: maSeries[i],
+  }));
+
+  // Zoom slice, in-window trades and the y bounds they imply — see shared/chartWindow.ts for
+  // why an out-of-window trade must stay out of the domain. Non-null: history is non-empty by
+  // the guard above.
+  const view = chartWindow(chartDataWithTimestamps, userTrades, zoom)!;
+  const { visible, startIndex, endIndex, isZoomed, windowStart, windowEnd, yMin, yMax } = view;
+  const { visibleTrades, hiddenTradeCount } = view;
+  const lastIndex = chartDataWithTimestamps.length - 1;
+
+  const sortedTrades = [...visibleTrades].sort((a, b) => a.timestamp - b.timestamp);
 
   // Nudge exact collisions apart by a second so two trades at the same instant both render.
   const tradesWithUniqueTimestamps = sortedTrades.map((t, globalIndex) => ({
@@ -287,30 +351,11 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
       label: `Sell: ${t.quantity.toLocaleString()} @ ${formatFullPrice(t.price)} gp`
     }));
 
-  // Zones and the moving average are both computed from the VISIBLE window, so switching
-  // timeframe recomputes them. Deliberate: the bands always describe the candles on screen.
-  // The cost is that 24H and 90D can disagree about the same item at the same moment.
-  const zones = calculatePriceZones(history);
-  const maSeries = movingAverage(history.map(h => h.price), MA_PERIOD[period]);
-
-  const chartDataWithTimestamps = history.map((h, i) => ({
-    ...h,
-    timestamp: new Date(h.date).getTime(),
-    ma: maSeries[i],
-  }));
-
-  const firstPrice = history[0]?.price;
-  const lastPrice = history[history.length - 1]?.price;
+  // Change across what is on screen, so zooming re-reads it for the slice you are looking at.
+  const firstPrice = visible[0]?.price;
+  const lastPrice = visible[visible.length - 1]?.price;
   const windowChangePct =
     firstPrice && firstPrice > 0 ? ((lastPrice - firstPrice) / firstPrice) * 100 : null;
-
-  const allTimestamps = [
-    ...chartDataWithTimestamps.map(d => d.timestamp),
-    ...buyScatterData.map(d => d.timestamp),
-    ...sellScatterData.map(d => d.timestamp),
-  ];
-  const minTimestamp = Math.min(...allTimestamps);
-  const maxTimestamp = Math.max(...allTimestamps);
 
   return (
     <Card data-testid={`chart-price-history-${effectiveItemId || 'pending'}`}>
@@ -362,10 +407,22 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
               {PERIOD_LABELS[p]}
             </Button>
           ))}
+          {isZoomed && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setZoom(null)}
+              className="ml-auto gap-1 text-muted-foreground hover:text-foreground"
+              data-testid="button-reset-zoom"
+            >
+              <ZoomOut className="h-3.5 w-3.5" />
+              Reset zoom
+            </Button>
+          )}
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        <ChartContainer config={chartConfig} className="h-[200px] w-full">
+        <ChartContainer config={chartConfig} className="h-[240px] w-full">
           <ComposedChart data={chartDataWithTimestamps} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
             <defs>
               <linearGradient id={`gradient-${effectiveItemId || 'pending'}`} x1="0" y1="0" x2="0" y2="1">
@@ -378,28 +435,31 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
                 buy, top 25% sell, and the middle band only counts as Accumulation when
                 recent volume is above the window median — the same meaning Scanner gives
                 the word. Rendered before the Area so price draws on top. */}
+            {/* Clamped into the domain and ifOverflow="hidden", never "extendDomain". A band
+                is a backdrop describing the price axis; letting it push the axis out to reach
+                itself is how the sell band ended up covering most of the plot. */}
             {zones && (
               <>
                 <ReferenceArea
-                  y1={minPrice - padding}
-                  y2={zones.buyMax}
+                  y1={yMin}
+                  y2={Math.min(zones.buyMax, yMax)}
                   fill="#22c55e"
-                  fillOpacity={0.10}
-                  ifOverflow="extendDomain"
+                  fillOpacity={0.1}
+                  ifOverflow="hidden"
                 />
                 <ReferenceArea
-                  y1={zones.buyMax}
-                  y2={zones.sellMin}
+                  y1={Math.max(zones.buyMax, yMin)}
+                  y2={Math.min(zones.sellMin, yMax)}
                   fill={zones.accumulating ? "#f59e0b" : "#94a3b8"}
                   fillOpacity={zones.accumulating ? 0.12 : 0.04}
-                  ifOverflow="extendDomain"
+                  ifOverflow="hidden"
                 />
                 <ReferenceArea
-                  y1={zones.sellMin}
-                  y2={maxPrice + padding}
+                  y1={Math.max(zones.sellMin, yMin)}
+                  y2={yMax}
                   fill="#ef4444"
-                  fillOpacity={0.10}
-                  ifOverflow="extendDomain"
+                  fillOpacity={0.1}
+                  ifOverflow="hidden"
                 />
               </>
             )}
@@ -418,12 +478,12 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
               tickLine={false}
               axisLine={false}
               type="number"
-              domain={[minTimestamp, maxTimestamp]}
+              domain={[windowStart, windowEnd]}
               scale="time"
             />
             <YAxis
               dataKey="price"
-              domain={[minPrice - padding, maxPrice + padding]}
+              domain={[yMin, yMax]}
               tickFormatter={formatPrice}
               tick={{ fontSize: 10 }}
               tickLine={false}
@@ -483,38 +543,70 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
               isAnimationActive={false}
             />
             {buyScatterData.length > 0 && (
-              <Scatter
-                name="Your Buys"
-                data={buyScatterData}
-                dataKey="price"
-                fill="#22c55e"
-                shape="circle"
-              />
+              <Scatter name="Your Buys" data={buyScatterData} dataKey="price" shape={<BuyMarker />} />
             )}
             {sellScatterData.length > 0 && (
-              <Scatter
-                name="Your Sells"
-                data={sellScatterData}
-                dataKey="price"
-                fill="#ef4444"
-                shape="circle"
+              <Scatter name="Your Sells" data={sellScatterData} dataKey="price" shape={<SellMarker />} />
+            )}
+            {/* Drag a handle to zoom, drag the middle to pan. Controlled, so the Reset button
+                above and the timeframe switch can both put it back. */}
+            {chartDataWithTimestamps.length > 2 && (
+              <Brush
+                dataKey="timestamp"
+                height={22}
+                travellerWidth={8}
+                stroke="hsl(var(--muted-foreground))"
+                fill="transparent"
+                startIndex={startIndex}
+                endIndex={endIndex}
+                onChange={(range) => {
+                  const { startIndex: s, endIndex: e } = range as { startIndex?: number; endIndex?: number };
+                  if (s == null || e == null) return;
+                  setZoom(s === 0 && e === lastIndex ? null : { start: s, end: e });
+                }}
+                tickFormatter={(ts) =>
+                  format(new Date(ts as number), isIntraday(period) ? "HH:mm" : "MMM d")
+                }
               />
             )}
           </ComposedChart>
         </ChartContainer>
 
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          {userTrades.length > 0 && (
+          {/* Glyphs, not dots — the legend shows the same shape the plot draws, so the mark
+              is self-describing rather than a colour you have to look up. */}
+          {visibleTrades.length > 0 && (
             <>
-              <div className="flex items-center gap-1">
-                <div className="h-3 w-3 rounded-full bg-green-500" />
-                <span>Your Buys</span>
+              <div className="flex items-center gap-1" title="Your buy — a trade you entered">
+                <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>
+                  <path d="M6 1.5 L10.5 9.5 L1.5 9.5 Z" fill="#22c55e" />
+                </svg>
+                <span>Bought</span>
               </div>
-              <div className="flex items-center gap-1">
-                <div className="h-3 w-3 rounded-full bg-red-500" />
-                <span>Your Sells</span>
+              <div className="flex items-center gap-1" title="Your sell — a trade you exited">
+                <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden>
+                  <path d="M6 10.5 L10.5 2.5 L1.5 2.5 Z" fill="#ef4444" />
+                </svg>
+                <span>Sold</span>
               </div>
-              <span>{userTrades.length} trade{userTrades.length !== 1 ? "s" : ""} shown</span>
+              <span>
+                {visibleTrades.length} trade{visibleTrades.length !== 1 ? "s" : ""}
+                {/* Say so rather than silently dropping them — a trade that vanished when you
+                    changed timeframe reads as lost data. */}
+                {hiddenTradeCount > 0 && (
+                  <span className="text-muted-foreground/70">
+                    {" "}({hiddenTradeCount} outside this window)
+                  </span>
+                )}
+              </span>
+              <span className="text-muted-foreground/70">|</span>
+            </>
+          )}
+          {visibleTrades.length === 0 && hiddenTradeCount > 0 && (
+            <>
+              <span data-testid="text-trades-out-of-window">
+                {hiddenTradeCount} trade{hiddenTradeCount !== 1 ? "s" : ""} outside this window
+              </span>
               <span className="text-muted-foreground/70">|</span>
             </>
           )}
@@ -535,7 +627,9 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
             number always describes the timeframe the user is actually looking at. */}
         {windowChangePct !== null && (
           <div className="flex items-center gap-2 text-sm">
-            <span className="text-muted-foreground">{PERIOD_LABELS[period]} change</span>
+            <span className="text-muted-foreground">
+              {isZoomed ? "Selection" : PERIOD_LABELS[period]} change
+            </span>
             <span
               className={`font-mono font-medium ${
                 windowChangePct > 0 ? "text-success" : windowChangePct < 0 ? "text-destructive" : "text-muted-foreground"
@@ -545,10 +639,11 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
               {windowChangePct >= 0 ? "+" : ""}{windowChangePct.toFixed(2)}%
             </span>
             <span className="text-muted-foreground">
-              {formatFullPrice(history[0].price)} &rarr; {formatFullPrice(lastPrice)} gp
+              {formatFullPrice(firstPrice)} &rarr; {formatFullPrice(lastPrice)} gp
             </span>
             <span className="text-muted-foreground/70">
-              ({history.length} point{history.length !== 1 ? "s" : ""})
+              ({visible.length} point{visible.length !== 1 ? "s" : ""}
+              {isZoomed && ` of ${history.length}`})
             </span>
           </div>
         )}
