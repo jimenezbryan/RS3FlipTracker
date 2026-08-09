@@ -104,13 +104,13 @@ let expected = 0;
 /** Rows for an id already seen — see absorb(). */
 let duplicates = 0;
 /**
- * Buckets that served fewer rows than the summary advertised. Category 0 claims 13 items
- * under "#" and serves zero on every page across 30 attempts, so its counter is simply stale.
- * That is Jagex's bookkeeping, not data we dropped, and there is nothing to retry — so it is
- * reported rather than fatal. A page we could not fetch at all is the fatal case, and that is
- * `failures`.
+ * Buckets whose row count disagrees with what the summary advertised, in either direction.
+ * Category 0 claims 13 items under "#" and serves zero on every page across 30 attempts;
+ * other buckets serve *more* than they claim. Both are the same stale counter upstream, and
+ * neither is data we dropped, so both are reported rather than fatal. A page we could not
+ * fetch at all is the fatal case, and that is `failures`.
  */
-const shortfalls: Array<{ category: number; letter: string; claimed: number; served: number }> = [];
+const mismatches: Array<{ category: number; letter: string; claimed: number; served: number }> = [];
 /** Per-bucket tallies keyed "category|letter", reconciled after the sweeps rather than during
  *  the main pass — a page recovered by a sweep must retire the shortfall it caused. */
 const claimedByBucket = new Map<string, number>();
@@ -209,31 +209,39 @@ for (let sweep = 1; sweep <= SWEEPS && failures.length > 0; sweep++) {
 // shortfall it caused during the main pass.
 for (const [key, claimed] of Array.from(claimedByBucket.entries())) {
   const served = servedByBucket.get(key) ?? 0;
-  if (served < claimed) {
+  if (served !== claimed) {
     const [category, letter] = key.split("|");
-    shortfalls.push({ category: Number(category), letter, claimed, served });
+    mismatches.push({ category: Number(category), letter, claimed, served });
   }
 }
 
 const got = Object.keys(categories).length;
-const phantom = shortfalls.reduce((s, x) => s + (x.claimed - x.served), 0);
+const phantom = mismatches.reduce((s, x) => s + Math.max(0, x.claimed - x.served), 0);
+const extra = mismatches.reduce((s, x) => s + Math.max(0, x.served - x.claimed), 0);
 
-// Every advertised row is now accounted for as one of three things: an item we stored, a
-// repeat of one we already had, or a row the catalogue advertised and then declined to serve.
-// If that identity does not hold, a page went missing without being noticed.
-if (failures.length > 0 || got + duplicates + phantom !== expected) {
+/**
+ * The only thing that means we lost data is a page we could not fetch. An earlier version of
+ * this gate also required `got + duplicates + phantom === expected`, on the theory that every
+ * advertised row must end up stored, repeated, or unserved. That identity is not sound: it
+ * assumes the alpha counters only ever over-count. A clean run — 0 pages lost, 0 duplicates —
+ * failed it by 36 rows because buckets on the other side of the ledger served *more* than they
+ * advertised, and the identity had no term for that. With `extra` counted the equation is true
+ * by construction and so checks nothing; the honest check is `failures`, and the two counters
+ * below are reported for eyeballing rather than enforced.
+ */
+if (failures.length > 0) {
   console.error(
-    `\nINCOMPLETE: ${got} unique + ${duplicates} repeat + ${phantom} never served = ` +
-      `${got + duplicates + phantom} against ${expected} advertised, ${failures.length} pages lost.\n` +
+    `\nINCOMPLETE: ${failures.length} page(s) could not be fetched after ${SWEEPS} sweeps.\n` +
       `Not writing the file — a partial map would quietly file real items under "Uncategorised".`,
   );
   for (const f of failures) console.error(`  ${f.url}`);
   process.exit(1);
 }
 
-for (const s of shortfalls) {
+for (const m of mismatches) {
+  const verb = m.served < m.claimed ? "serves only" : "serves";
   console.warn(
-    `note: category ${s.category} bucket "${s.letter}" advertises ${s.claimed} but serves ${s.served} — stale counter upstream`,
+    `note: category ${m.category} bucket "${m.letter}" advertises ${m.claimed} but ${verb} ${m.served} — stale counter upstream`,
   );
 }
 
@@ -245,6 +253,7 @@ writeFileSync(out, JSON.stringify(sorted, null, 0) + "\n");
 
 console.log(
   `\nwrote ${got} items across ${seenTypes.size} categories in ${requests} requests ` +
-    `(${expected} rows advertised = ${got} stored + ${duplicates} repeats + ${phantom} never served)`,
+    `(${expected} rows advertised, ${duplicates} repeats, ${phantom} advertised but never served, ` +
+    `${extra} served but never advertised)`,
 );
 console.log(Array.from(seenTypes).sort().join(" · "));
