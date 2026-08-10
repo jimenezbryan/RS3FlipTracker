@@ -50,7 +50,7 @@ import {
   type ColumnFilters,
   type FilterableRow,
 } from "@shared/columnFilters";
-import { formatGP } from "@/lib/formatters";
+import { formatGP, formatGPExact } from "@/lib/formatters";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { PriceHistoryChart } from "@/components/PriceHistoryChart";
@@ -197,7 +197,7 @@ const SIGNAL_STYLES: Record<string, string> = {
  *  the filters read are all CellValue-shaped, so the cast is safe and saves restating them. */
 const asRow = (item: ProcessedScannerItem) => item as unknown as FilterableRow;
 
-const gp = (n: number) => formatGP(Math.round(n));
+const gp = (n: number) => formatGPExact(n);
 const pct = (n: number) => `${n.toFixed(1)}%`;
 const whole = (n: number) => Math.round(n).toLocaleString();
 
@@ -423,8 +423,8 @@ function PriceRangeBar({ range, label }: { range: ObservableRange; label: string
       </div>
       <div className="relative">
         <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
-          <span className="font-mono">{formatGP(range.low)}</span>
-          <span className="font-mono">{formatGP(range.high)}</span>
+          <span className="font-mono">{formatGPExact(range.low)}</span>
+          <span className="font-mono">{formatGPExact(range.high)}</span>
         </div>
         <div className="relative h-3 bg-muted rounded-full overflow-hidden">
           <div className={`absolute inset-0 bg-gradient-to-r ${barColor} rounded-full`} />
@@ -435,7 +435,7 @@ function PriceRangeBar({ range, label }: { range: ObservableRange; label: string
         </div>
         <div className="flex items-center justify-center mt-1">
           <span className="text-xs text-muted-foreground">
-            Current: <span className="font-mono font-medium text-foreground">{formatGP(range.current)}</span>
+            Current: <span className="font-mono font-medium text-foreground">{formatGPExact(range.current)}</span>
             <span className="ml-1 text-muted-foreground">({range.percentile}th percentile)</span>
           </span>
         </div>
@@ -497,7 +497,7 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
                 {ind.smaCrossover === "bullish" ? "Bullish" : ind.smaCrossover === "bearish" ? "Bearish" : "Neutral"}
               </p>
               <p className="text-xs text-muted-foreground">
-                7d: {ind.avg7d ? formatGP(ind.avg7d) : "N/A"} | 30d: {ind.avg30d ? formatGP(ind.avg30d) : "N/A"} | 90d: {ind.avg90d ? formatGP(ind.avg90d) : "N/A"}
+                7d: {ind.avg7d ? formatGPExact(ind.avg7d) : "N/A"} | 30d: {ind.avg30d ? formatGPExact(ind.avg30d) : "N/A"} | 90d: {ind.avg90d ? formatGPExact(ind.avg90d) : "N/A"}
               </p>
             </div>
             <div className="p-3 rounded-lg border border-border bg-muted/50">
@@ -516,9 +516,9 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
             <div className="p-3 rounded-lg border border-border bg-muted/50">
               <p className="text-xs text-muted-foreground uppercase">Support / Resistance</p>
               <div className="flex items-center gap-2">
-                <span className="text-sm font-bold text-red-500">{ind.support ? formatGP(ind.support) : "N/A"}</span>
+                <span className="text-sm font-bold text-red-500">{ind.support ? formatGPExact(ind.support) : "N/A"}</span>
                 <span className="text-muted-foreground">/</span>
-                <span className="text-sm font-bold text-green-500">{ind.resistance ? formatGP(ind.resistance) : "N/A"}</span>
+                <span className="text-sm font-bold text-green-500">{ind.resistance ? formatGPExact(ind.resistance) : "N/A"}</span>
               </div>
               <p className="text-xs text-muted-foreground">
                 Price vs 30d avg:{" "}
@@ -568,11 +568,11 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
           <div className="grid grid-cols-3 gap-3">
             <div>
               <p className="text-xs text-muted-foreground">Fair Value</p>
-              <p className="text-sm font-bold font-mono text-primary">{formatGP(ind.valueGap.fairValue)}</p>
+              <p className="text-sm font-bold font-mono text-primary">{formatGPExact(ind.valueGap.fairValue)}</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Current Price</p>
-              <p className="text-sm font-bold font-mono">{formatGP(ind.valueGap.currentPrice)}</p>
+              <p className="text-sm font-bold font-mono">{formatGPExact(ind.valueGap.currentPrice)}</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Gap</p>
@@ -609,11 +609,11 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
           <div className="grid grid-cols-3 gap-3">
             <div>
               <p className="text-xs text-muted-foreground">Buy At</p>
-              <p className="text-sm font-bold font-mono text-green-500/70">{formatGP(item.suggestedBuyPrice)}</p>
+              <p className="text-sm font-bold font-mono tabular-nums text-green-500/70">{formatGPExact(item.suggestedBuyPrice)}</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Sell At</p>
-              <p className="text-sm font-bold font-mono text-red-500/70">{formatGP(item.suggestedSellPrice)}</p>
+              <p className="text-sm font-bold font-mono tabular-nums text-red-500/70">{formatGPExact(item.suggestedSellPrice)}</p>
             </div>
             <div>
               <p className="text-xs text-muted-foreground">Target Margin</p>
@@ -1699,16 +1699,16 @@ export default function Scanner() {
                           {item.isMembers ? "P2P" : "F2P"}
                         </Badge>
                       </TableCell>
-                      <TableCell className="text-right py-2 font-mono text-sm">
-                        {formatGP(item.buyPrice)}
+                      <TableCell className="text-right py-2 font-mono text-sm tabular-nums whitespace-nowrap">
+                        {formatGPExact(item.buyPrice)}
                       </TableCell>
-                      <TableCell className="text-right py-2 font-mono text-sm">
-                        {formatGP(item.sellPrice)}
+                      <TableCell className="text-right py-2 font-mono text-sm tabular-nums whitespace-nowrap">
+                        {formatGPExact(item.sellPrice)}
                       </TableCell>
-                      <TableCell className={`text-right py-2 font-mono text-sm font-medium ${
+                      <TableCell className={`text-right py-2 font-mono text-sm font-medium tabular-nums whitespace-nowrap ${
                         item.margin > 0 ? "text-green-500" : "text-red-500"
                       }`}>
-                        {formatGP(item.margin)}
+                        {formatGPExact(item.margin)}
                       </TableCell>
                       <TableCell className={`text-right py-2 font-medium ${
                         item.roi > 5 ? "text-green-500" : item.roi > 0 ? "text-yellow-600" : "text-red-500"
@@ -1738,10 +1738,10 @@ export default function Scanner() {
                           ? "—"
                           : `${item.fillQty.toLocaleString()} / ${item.geLimit.toLocaleString()}`}
                       </TableCell>
-                      <TableCell className={`text-right py-2 font-mono font-bold ${
+                      <TableCell className={`text-right py-2 font-mono font-bold tabular-nums whitespace-nowrap ${
                         item.netProfit > 0 ? "text-green-500" : "text-red-500"
                       }`}>
-                        {formatGP(item.netProfit)}
+                        {formatGPExact(item.netProfit)}
                       </TableCell>
                       {viewMode !== "compact" && (
                         <TableCell className="text-right py-2 text-muted-foreground">
@@ -1920,7 +1920,7 @@ export default function Scanner() {
                 <img src={selectedItem.icon} alt={selectedItem.name} className="w-10 h-10 object-contain" />
                 <div>
                   <p className="font-medium">{selectedItem.name}</p>
-                  <p className="text-sm text-muted-foreground">Current: {formatGP(selectedItem.buyPrice)}</p>
+                  <p className="text-sm text-muted-foreground">Current: {formatGPExact(selectedItem.buyPrice)}</p>
                 </div>
               </div>
               
@@ -1980,7 +1980,7 @@ export default function Scanner() {
               
               <div className="p-3 rounded-lg border border-primary/30 bg-primary/10">
                 <p className="text-sm text-muted-foreground">Total Cost</p>
-                <p className="text-xl font-bold text-primary">{formatGP(portfolioForm.quantity * portfolioForm.buyPrice)}</p>
+                <p className="text-xl font-bold text-primary">{formatGPExact(portfolioForm.quantity * portfolioForm.buyPrice)}</p>
               </div>
               
               <div className="flex justify-end gap-2">
@@ -2031,7 +2031,7 @@ export default function Scanner() {
                 <div>
                   <p className="font-medium">{selectedItem.name}</p>
                   <p className="text-sm text-muted-foreground">
-                    Buy: {formatGP(selectedItem.buyPrice)} | Sell: {formatGP(selectedItem.sellPrice)}
+                    Buy: {formatGPExact(selectedItem.buyPrice)} | Sell: {formatGPExact(selectedItem.sellPrice)}
                   </p>
                 </div>
               </div>
