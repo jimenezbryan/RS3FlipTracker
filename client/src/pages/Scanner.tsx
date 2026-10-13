@@ -43,52 +43,28 @@ import { ScannerFilters } from "@/components/ScannerFilters";
 import { ColumnFilter, type ColumnFilterSpec } from "@/components/ColumnFilter";
 import { EMPTY_SELECTION, matchesSelection, type FilterSelection } from "@shared/scannerFilters";
 import {
+  scoreItems,
+  applyToggles,
+  applyFiltersAndSort,
+  asRow,
+  type ScannerItem,
+  type ScoredItem,
+  type SortKey,
+  type SortDirection,
+  type PresetFilters,
+} from "@shared/scannerPipeline";
+import { ScannerPresets } from "@/components/ScannerPresets";
+import {
   EMPTY_COLUMN_FILTERS,
-  matchesColumnFilters,
   setColumnFilter,
   type ColumnFilter as ColumnFilterValue,
   type ColumnFilters,
-  type FilterableRow,
 } from "@shared/columnFilters";
 import { formatGP, formatGPExact } from "@/lib/formatters";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { PriceHistoryChart } from "@/components/PriceHistoryChart";
 import type { Flip } from "@shared/schema";
-
-interface ScannerItem {
-  id: number;
-  name: string;
-  icon: string;
-  isMembers: boolean;
-  /** Jagex's GE category; "Uncategorised" when the catalogue predates the item. */
-  category: string;
-  geLimit: number;
-  buyPrice: number;
-  sellPrice: number;
-  margin: number;
-  volume: number;
-  /** Two-sided volume in the last hourly block; 0 when only one side traded. */
-  hourVolume: number;
-  /** Units clearable in one 4h buy-limit window. netProfit is scaled to this. */
-  fillQty: number;
-  potentialProfit: number;
-  marginVolume: number;
-  roi: number;
-  netProfit: number;
-  capitalEfficiency: number;
-  trend: "up" | "down" | "stable";
-  changePct24h: number | null;
-  volatility: "low" | "medium" | "high";
-  suggestedBuyPrice: number;
-  suggestedSellPrice: number;
-  suggestedMarginPct: number;
-  priceTier: "low" | "mid" | "high" | "ultra";
-  confidence: "low" | "medium" | "high";
-  range7dLow: number | null;
-  range7dHigh: number | null;
-  range7dSpreadPct: number | null;
-}
 
 interface ValueGapAnalysis {
   fairValue: number;
@@ -138,36 +114,9 @@ interface ItemDetail {
   range30d: ObservableRange | null;
 }
 
-interface ProcessedScannerItem extends ScannerItem {
-  volumeRatio: number;
-  volumeScore: number;
-  momentumScore: number;
-  valueScore: number;
-  riskScore: number;
-  riskRewardRatio: number;
-  tradeScore: number;
-  signals: string[];
-}
-
-const SIGNAL_PRIORITY: Record<string, number> = {
-  "Smart Money": 1,
-  "Deep Value": 1,
-  "Accumulation": 2,
-  "Strong Trend": 2,
-  "Good Value": 3,
-  "Distribution": 3,
-  "Pullback": 2,
-};
-
-// ponytail: every one of these used to be compared against a margin the server hardcoded to
-// 1% of price, so the margin-gated conditions effectively never fired and the ones that did
-// fired on volume alone. With real spreads (median ~7%) the same thresholds fired on 93% of
-// items, which is why "signals only" filtered almost nothing. Recalibrated against the live
-// distribution: each marks roughly the top quartile-to-decile of its own axis.
-// Tighten these to make the scanner pickier — they are the only dial that matters here.
-const SIGNAL_DEEP_VALUE_ROI = 30;   // post-tax ROI %, ~p90
-const SIGNAL_GOOD_VALUE_ROI = 15;   // post-tax ROI %, ~p75
-const SIGNAL_MIN_MOVE_PCT = 10;     // |24h move| %, ~p75
+// Scoring, signals and their thresholds live in shared/scannerPipeline.ts now, so the alert
+// runner and this page cannot drift. ProcessedScannerItem is kept as the local name.
+type ProcessedScannerItem = ScoredItem;
 
 const SIGNAL_STYLES: Record<string, string> = {
   "Smart Money": "bg-amber-500/20 text-amber-600 border-amber-500/30",
@@ -193,9 +142,6 @@ const SIGNAL_STYLES: Record<string, string> = {
  * filter panel already owns categories with facet counts, and two independent stores for one
  * filter is how they end up disagreeing. See changeColumnFilter below.
  */
-/** ProcessedScannerItem is a fixed interface; FilterableRow is an index signature. The fields
- *  the filters read are all CellValue-shaped, so the cast is safe and saves restating them. */
-const asRow = (item: ProcessedScannerItem) => item as unknown as FilterableRow;
 
 const gp = (n: number) => formatGPExact(n);
 const pct = (n: number) => `${n.toFixed(1)}%`;
@@ -248,8 +194,6 @@ interface PortfolioCategory {
   color?: string;
 }
 
-type SortKey = keyof ScannerItem | "tradeScore" | "volumeScore" | "momentumScore" | "valueScore" | "riskScore" | "suggestedMarginPct";
-type SortDirection = "asc" | "desc";
 type ViewMode = "compact" | "standard" | "detailed";
 
 
@@ -728,6 +672,7 @@ export default function Scanner() {
   
   const [portfolioDialogOpen, setPortfolioDialogOpen] = useState(false);
   const [alertDialogOpen, setAlertDialogOpen] = useState(false);
+  const [presetsOpen, setPresetsOpen] = useState(false);
   const [selectedItem, setSelectedItem] = useState<ScannerItem | null>(null);
   
   const [portfolioForm, setPortfolioForm] = useState({
@@ -879,132 +824,7 @@ export default function Scanner() {
     [favorites]
   );
 
-  const processedItems = useMemo((): ProcessedScannerItem[] => {
-    if (items.length === 0) return [];
-    
-    // ponytail: volume was scored as a ratio to the global MEAN. Volume is power-law —
-    // measured live, mean 309,660 against a median of 421, a 735x gap — so
-    // min(100, ratio * 50) floored 1350 of 2158 items at exactly 0. The median item
-    // scored zero, which made 25% of tradeScore a constant for two thirds of the list.
-    // Percentile rank is scale-free and needs one sort.
-    const globalAvgVolume =
-      items.reduce((sum, item) => sum + item.volume, 0) / items.length;
-
-    const volumeRankById = new Map<number, number>();
-    [...items]
-      .sort((a, b) => a.volume - b.volume)
-      .forEach((item, i) => {
-        volumeRankById.set(item.id, items.length > 1 ? (i / (items.length - 1)) * 100 : 50);
-      });
-
-    return items.map(item => {
-      const marginPercent = item.buyPrice > 0 ? (item.margin / item.buyPrice) * 100 : 0;
-      
-      // 1. VOLUME ANALYSIS (Institutional Detection)
-      // Percentile of 24h volume across the scanned set: 100 = most traded item on screen.
-      const volumeScore = Math.round(volumeRankById.get(item.id) ?? 0);
-      // Kept for the detail panel, which shows "Nx average volume". The signals below no
-      // longer gate on it — against a mean this skewed, "2x average" meant top 4%.
-      const volumeRatio = globalAvgVolume > 0 ? item.volume / globalAvgVolume : 0;
-      
-      // 2. MOMENTUM INDICATORS
-      // Driven by the real 24h price direction. The RSI that used to weight this was
-      // synthesised server-side from volume, so it carried no information the volume
-      // score above didn't already have. Real RSI lives in the detail drawer.
-      const momentumScore = item.trend === "up" ? 90 : item.trend === "stable" ? 55 : 20;
-      
-      // 3. VALUE METRICS
-      let valueScore = 0;
-      if (marginPercent > 5 || item.roi > 8) {
-        valueScore = 100; // Deep Value
-      } else if (marginPercent > 2 || item.roi > 4) {
-        valueScore = 75; // Good Value
-      } else if (marginPercent > 0) {
-        valueScore = 50; // Fair Value
-      } else {
-        valueScore = Math.max(0, 30 + marginPercent * 5); // Negative margin
-      }
-      
-      // 4. RISK/REWARD ANALYSIS
-      // ponytail: reward and risk have to be the same unit. This compared potentialProfit —
-      // margin across the whole buy limit — against a stop loss on a SINGLE unit, so the
-      // ratio was inflated by roughly geLimit and "Favorable R/R" fired on 93% of items.
-      // Per-unit margin against per-unit stop loss is the comparison that was intended.
-      const stopLossAmount = item.buyPrice * 0.02; // 2% stop loss assumption, per unit
-      const riskRewardRatio = stopLossAmount > 0 ? item.margin / stopLossAmount : 0;
-      // R/R scoring: ratio > 3 = 100, ratio > 2 = 75, ratio > 1 = 50
-      const riskScore = Math.min(100, Math.max(0, Math.round(riskRewardRatio * 25)));
-      
-      // 5. COMPOSITE TRADE SCORE (weighted average)
-      const tradeScore = Math.round(
-        volumeScore * 0.25 +      // 25% weight on volume
-        momentumScore * 0.25 +    // 25% weight on momentum
-        valueScore * 0.30 +       // 30% weight on value (most important)
-        riskScore * 0.20          // 20% weight on risk/reward
-      );
-      
-      // 6. SIGNAL GENERATION with priority system
-      const signals: string[] = [];
-      
-      // Volume signals (Priority 1-2)
-      // Gated on percentile, not on a ratio to the mean. The old ">2x average" gate was
-      // top 4% of items and ">1.5x" barely wider, because the mean sits at the 99th
-      // percentile of a power-law. Top decile / top quartile is what those meant to say.
-      if (volumeScore >= 90) {
-        signals.push("Smart Money"); // Priority 1 - institutions moving
-      }
-      if (volumeScore >= 75 && marginPercent > 0 && (item.trend === "stable" || item.trend === "down")) {
-        signals.push("Accumulation"); // Priority 2 - quiet buying
-      }
-      if (volumeScore >= 75 && marginPercent < 0) {
-        signals.push("Distribution"); // Priority 3 - selling pressure
-      }
-      
-      // Momentum signals (Priority 2)
-      // "Oversold"/"Overbought" used to come from the synthesised RSI, so they fired on
-      // volume alone and meant nothing. Real overbought/oversold is in the detail drawer.
-      // These gate on the SIZE of the 24h move, not just its direction — "trend is down and
-      // the spread is over 2%" was true of nearly every falling item once spreads were real.
-      const move = Math.abs(item.changePct24h ?? 0);
-      if (item.trend === "down" && move > SIGNAL_MIN_MOVE_PCT) {
-        signals.push("Pullback"); // Priority 2 - meaningful drop, not noise
-      }
-      if (item.trend === "up" && move > SIGNAL_MIN_MOVE_PCT) {
-        signals.push("Strong Trend"); // Priority 2
-      }
-
-      // Value signals (Priority 1, 3)
-      // Post-tax ROI only. The old margin-percent arm double-counted the same quantity and
-      // was set for a 1% world, so it fired on ~60% of items.
-      if (item.roi > SIGNAL_DEEP_VALUE_ROI) {
-        signals.push("Deep Value"); // Priority 1 - exceptional
-      } else if (item.roi > SIGNAL_GOOD_VALUE_ROI) {
-        signals.push("Good Value"); // Priority 3
-      }
-
-      // ponytail: "Favorable R/R" and "High Reward" deleted. Once the unit bug above is
-      // fixed the ratio is just margin% / 2, so both restated the value signals and fired
-      // on every item that already had one — measured: identical item set with and without
-      // them, they only crowded the top-3 display.
-
-      // Sort signals by priority and take top 3
-      const sortedSignals = signals
-        .sort((a, b) => (SIGNAL_PRIORITY[a] || 99) - (SIGNAL_PRIORITY[b] || 99))
-        .slice(0, 3);
-      
-      return {
-        ...item,
-        volumeRatio,
-        volumeScore,
-        momentumScore,
-        valueScore,
-        riskScore,
-        riskRewardRatio,
-        tradeScore,
-        signals: sortedSignals,
-      };
-    });
-  }, [items]);
+  const processedItems = useMemo(() => scoreItems(items), [items]);
 
   const signalsCount = useMemo(() =>
     processedItems.filter(i => i.signals.length > 0).length,
@@ -1096,76 +916,33 @@ export default function Scanner() {
   // Split deliberately: `baseItems` has every filter EXCEPT the band/category/numeric ones the
   // filter panel owns. Facet counts are only truthful when computed over what is otherwise
   // reachable, so the panel needs this set rather than the fully-filtered one.
-  const baseItems = useMemo((): ProcessedScannerItem[] => {
-    let result = [...processedItems];
+  // The whole filter state as one JSON value: what a saved preset stores, and what the three
+  // pipeline calls below read. Changing a filter here and not in a preset is impossible.
+  const currentFilters = useMemo((): PresetFilters => ({
+    searchQuery, f2pOnly, watchlistOnly, signalsOnly, showUnprofitable, highScoreOnly,
+    selection, columnFilters, sortKey, sortDirection,
+  }), [searchQuery, f2pOnly, watchlistOnly, signalsOnly, showUnprofitable, highScoreOnly, selection, columnFilters, sortKey, sortDirection]);
 
-    if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase();
-      result = result.filter(item => 
-        item.name.toLowerCase().includes(query)
-      );
-    }
+  const applyPreset = (f: PresetFilters) => {
+    setSearchQuery(f.searchQuery);
+    setF2pOnly(f.f2pOnly);
+    setWatchlistOnly(f.watchlistOnly);
+    setSignalsOnly(f.signalsOnly);
+    setShowUnprofitable(f.showUnprofitable);
+    setHighScoreOnly(f.highScoreOnly);
+    setSelection(f.selection);
+    setColumnFilters(f.columnFilters);
+    setSortKey(f.sortKey);
+    setSortDirection(f.sortDirection);
+    setCurrentPage(1);
+  };
 
-    if (f2pOnly) {
-      result = result.filter(item => !item.isMembers);
-    }
+  const baseItems = useMemo(
+    () => applyToggles(processedItems, currentFilters, favoriteItemIds),
+    [processedItems, currentFilters, favoriteItemIds],
+  );
 
-    if (watchlistOnly) {
-      result = result.filter(item => favoriteItemIds.has(item.id));
-    }
-
-    if (!showUnprofitable) {
-      result = result.filter(item => item.netProfit > 0);
-    }
-
-    if (signalsOnly) {
-      result = result.filter(item => item.signals.length > 0);
-    }
-
-    if (highScoreOnly) {
-      result = result.filter(item => item.tradeScore >= 60);
-    }
-
-    return result;
-  }, [processedItems, searchQuery, f2pOnly, watchlistOnly, signalsOnly, showUnprofitable, highScoreOnly, favoriteItemIds]);
-
-  const filteredAndSortedItems = useMemo((): ProcessedScannerItem[] => {
-    // Band/category selection and the per-column filters compose by intersection: a band is a
-    // coarse preset, a column range is precise, and both narrowing at once is the expected
-    // reading of two active filters.
-    let result = baseItems.filter(
-      item => matchesSelection(item, selection) && matchesColumnFilters(asRow(item), columnFilters),
-    );
-
-    // ponytail: several sortable columns are buckets, not continuous values — trend and
-    // volatility have 3 each, priceTier and confidence 4, and suggestedMarginPct resolves to
-    // one constant per price tier while calculateSmartPricing gets no real indicators. Ties
-    // kept whatever order they already had, so clicking those headers looked like it did
-    // nothing. Falling back to netProfit gives every tie a meaningful, stable order.
-    const compare = (a: ProcessedScannerItem, b: ProcessedScannerItem, key: SortKey) => {
-      const aVal = a[key];
-      const bVal = b[key];
-
-      if (typeof aVal === "string" && typeof bVal === "string") {
-        return aVal.localeCompare(bVal);
-      }
-      if (typeof aVal === "boolean" && typeof bVal === "boolean") {
-        return (aVal ? 1 : 0) - (bVal ? 1 : 0);
-      }
-      // null sorts as absent, not as zero — a missing 24h change is not "no change".
-      const numA = aVal == null ? Number.NEGATIVE_INFINITY : Number(aVal) || 0;
-      const numB = bVal == null ? Number.NEGATIVE_INFINITY : Number(bVal) || 0;
-      return numA - numB;
-    };
-
-    result.sort((a, b) => {
-      const primary = compare(a, b, sortKey);
-      if (primary !== 0) return sortDirection === "asc" ? primary : -primary;
-      return sortKey === "netProfit" ? 0 : b.netProfit - a.netProfit;
-    });
-
-    return result;
-  }, [baseItems, sortKey, sortDirection, selection, columnFilters]);
+  const filteredAndSortedItems = useMemo(() => applyFiltersAndSort(baseItems, currentFilters), [baseItems, currentFilters]);
 
   /**
    * The rows the column popovers count over: the band selection applied, but NOT the category
@@ -1320,7 +1097,7 @@ export default function Scanner() {
             <p className="text-sm text-muted-foreground">Advanced Market Intelligence Platform</p>
           </div>
           <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" className="border-border hover:border-primary/50" data-testid="button-alerts">
+            <Button variant="outline" size="sm" onClick={() => setPresetsOpen(true)} className="border-border hover:border-primary/50" data-testid="button-alerts">
               <Bell className="h-4 w-4 mr-2" />
               Alerts
             </Button>
@@ -2095,6 +1872,13 @@ export default function Scanner() {
           )}
         </DialogContent>
       </Dialog>
+
+      <ScannerPresets
+        open={presetsOpen}
+        onOpenChange={setPresetsOpen}
+        currentFilters={currentFilters}
+        onLoad={applyPreset}
+      />
     </div>
   );
 }

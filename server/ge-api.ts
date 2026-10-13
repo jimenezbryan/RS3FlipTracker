@@ -919,45 +919,9 @@ function formatPriceSimple(price: number): string {
   return price.toLocaleString();
 }
 
-export interface ScannerItem {
-  id: number;
-  name: string;
-  icon: string;
-  isMembers: boolean;
-  geLimit: number;
-  buyPrice: number;
-  sellPrice: number;
-  margin: number;
-  volume: number;
-  /** Two-sided volume in the last hourly block; 0 when only one side traded. The
-   *  "can I flip this right now" number — 24h volume can be a single burst. */
-  hourVolume: number;
-  /** Units you can realistically clear in one 4h buy-limit window:
-   *  min(geLimit, volume / 6). Every profit figure below is scaled to this. */
-  fillQty: number;
-  potentialProfit: number;
-  marginVolume: number;
-  roi: number;
-  netProfit: number;
-  capitalEfficiency: number;
-  trend: "up" | "down" | "stable";
-  // ponytail: the signed 24h move behind `trend`. The bucket alone cannot say whether a
-  // move was 1.1% or 40%, so signal thresholds had nothing to gate on but direction.
-  // null when the item has no hourly block 24h ago to compare against.
-  changePct24h: number | null;
-  /** Jagex's own GE category, e.g. "Seeds". "Uncategorised" when the catalogue has not been
-   *  refreshed since the item shipped — never absent, so it stays filterable either way. */
-  category: string;
-  volatility: "low" | "medium" | "high";
-  suggestedBuyPrice: number;
-  suggestedSellPrice: number;
-  suggestedMarginPct: number;
-  priceTier: "low" | "mid" | "high" | "ultra";
-  confidence: "low" | "medium" | "high";
-  range7dLow: number | null;
-  range7dHigh: number | null;
-  range7dSpreadPct: number | null;
-}
+// Moved to shared/ so the alert runner and the Scanner page share one definition.
+export type { ScannerItem } from "@shared/scannerPipeline";
+import type { ScannerItem } from "@shared/scannerPipeline";
 
 export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
   await refreshItemCache();

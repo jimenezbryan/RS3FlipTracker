@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import { pgTable, text, varchar, integer, bigint, timestamp, index, jsonb, boolean, pgEnum } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import { presetFiltersSchema, SCANNER_ALERT_INTERVALS, SCANNER_ALERT_MAX_TOP_N, type PresetFilters } from "./scannerPipeline";
 
 // Enums
 export const membershipStatusEnum = pgEnum("membership_status", ["F2P", "Members", "Unknown"]);
@@ -200,6 +201,54 @@ export const insertFavoriteSchema = createInsertSchema(favorites).omit({
 
 export type InsertFavorite = z.infer<typeof insertFavoriteSchema>;
 export type Favorite = typeof favorites.$inferSelect;
+
+// Saved Scanner filters. A preset IS a potential alert: flip alertEnabled and the cron runner
+// (server/scannerAlerts.ts) evaluates it every intervalMinutes and posts to Discord. One table,
+// because every alert needs a filter and a filter with alertEnabled=false is just a preset.
+export const scannerPresets = pgTable("scanner_presets", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  name: text("name").notNull(),
+  /** PresetFilters from shared/scannerPipeline.ts, as JSON. */
+  filters: jsonb("filters").$type<PresetFilters>().notNull(),
+  alertEnabled: boolean("alert_enabled").notNull().default(false),
+  intervalMinutes: integer("interval_minutes").notNull().default(60),
+  mode: varchar("mode", { length: 10 }).notNull().default("new"), // 'new' | 'summary'
+  topN: integer("top_n").notNull().default(10),
+  /** Per-alert Discord webhook. Null falls back to DISCORD_WEBHOOK_URL. */
+  webhookUrl: text("webhook_url"),
+  lastRunAt: timestamp("last_run_at"),
+  /** Item ids of the last full result, so mode 'new' can diff against it. */
+  lastItemIds: jsonb("last_item_ids").$type<number[]>(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const insertScannerPresetSchema = createInsertSchema(scannerPresets).omit({
+  id: true,
+  userId: true,
+  lastRunAt: true,
+  lastItemIds: true,
+  createdAt: true,
+}).extend({
+  name: z.string().trim().min(1).max(60),
+  filters: presetFiltersSchema,
+  alertEnabled: z.boolean().default(false),
+  intervalMinutes: z.coerce.number().int().refine(
+    (n) => (SCANNER_ALERT_INTERVALS as readonly number[]).includes(n),
+    { message: `intervalMinutes must be one of ${SCANNER_ALERT_INTERVALS.join(", ")}` },
+  ).default(60),
+  mode: z.enum(["new", "summary"]).default("new"),
+  topN: z.coerce.number().int().min(1).max(SCANNER_ALERT_MAX_TOP_N).default(10),
+  // Prefix-checked, not just url(): the server POSTs to this, so anything else would make the
+  // endpoint an SSRF proxy for whoever holds an admin session.
+  webhookUrl: z.string().trim().regex(
+    /^https:\/\/(discord|discordapp)\.com\/api\/webhooks\/\S+$/,
+    "Must be a Discord webhook URL",
+  ).nullable().optional().transform((v) => (v === "" ? null : v ?? null)),
+});
+
+export type InsertScannerPreset = z.infer<typeof insertScannerPresetSchema>;
+export type ScannerPreset = typeof scannerPresets.$inferSelect;
 
 // Profit goals for tracking targets
 export const profitGoals = pgTable("profit_goals", {

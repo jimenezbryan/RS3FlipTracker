@@ -44,6 +44,7 @@ SESSION_SECRET=your_session_secret
 PORT=5000
 OPENAI_API_KEY=your_openai_api_key
 DISCORD_WEBHOOK_URL=your_discord_webhook_url
+CRON_SECRET=shared_secret_for_the_scanner_alerts_cron
 REPL_ID=your_replit_app_id
 ISSUER_URL=https://replit.com/oidc
 ```
