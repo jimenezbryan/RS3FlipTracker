@@ -1,10 +1,12 @@
 import type { Flip } from "@shared/schema";
 import { formatGpShorthand } from "@shared/gpParser";
 import type { IStorage } from "./storage";
+import type { ScoredItem } from "@shared/scannerPipeline";
 
 interface DiscordEmbed {
   title: string;
   color: number;
+  description?: string;
   fields: { name: string; value: string; inline?: boolean }[];
   timestamp?: string;
   footer?: { text: string };
@@ -418,4 +420,63 @@ export async function sendGoalAchievementToDiscord(achievement: GoalAchievement)
     console.error("[Discord] Error sending goal achievement webhook:", error);
     return false;
   }
+}
+
+/** One webhook POST. The four senders above each inline this; new senders go through here. */
+export async function postEmbed(webhookUrl: string, embed: DiscordEmbed): Promise<boolean> {
+  try {
+    const response = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ embeds: [embed] } satisfies DiscordWebhookPayload),
+    });
+    if (!response.ok) {
+      console.error("[Discord] Webhook failed:", response.status, await response.text());
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.error("[Discord] Error sending webhook:", error);
+    return false;
+  }
+}
+
+const pct = (n: number) => `${n.toFixed(1)}%`;
+
+/**
+ * A Scanner alert: one line per item, in the preset's own order. `items` is already capped by
+ * the caller; `totalCount` is the uncapped size so the footer can say "+N more".
+ */
+export async function sendScannerAlertToDiscord(
+  webhookUrl: string | null | undefined,
+  presetName: string,
+  mode: "new" | "summary",
+  items: ScoredItem[],
+  totalCount: number,
+): Promise<boolean> {
+  const url = webhookUrl || process.env.DISCORD_WEBHOOK_URL;
+  if (!url) {
+    console.log("[Discord] No webhook for scanner alert, skipping:", presetName);
+    return false;
+  }
+
+  const lines = items.map(
+    (i) =>
+      `**${i.name}** · ${formatGpShorthand(i.buyPrice)} → ${formatGpShorthand(i.sellPrice)} · ` +
+      `${i.margin >= 0 ? "+" : ""}${formatGpShorthand(i.margin)}/u · ROI ${pct(i.roi)} · ` +
+      `score ${i.tradeScore} · vol ${formatGpShorthand(i.volume)}`,
+  );
+  const more = totalCount - items.length;
+  if (more > 0) lines.push(`…and ${more} more`);
+
+  const embed: DiscordEmbed = {
+    title: mode === "new" ? `🔔 ${presetName}: ${totalCount} new` : `📋 ${presetName}: top ${items.length} of ${totalCount}`,
+    color: mode === "new" ? 0xf59e0b : 0x3b82f6,
+    // Discord caps description at 4096 chars; 25 lines of ~80 fits with room to spare.
+    description: lines.join("\n").slice(0, 4000),
+    fields: [],
+    timestamp: new Date().toISOString(),
+    footer: { text: "RS3 Flip Tracker · Scanner alert" },
+  };
+  return postEmbed(url, embed);
 }

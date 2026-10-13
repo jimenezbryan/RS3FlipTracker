@@ -2,7 +2,7 @@ import type { Express, Request } from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
 import { storage } from "./storage";
-import { insertFlipSchema, insertWatchlistSchema, insertPriceAlertSchema, insertFavoriteSchema, insertProfitGoalSchema, insertPortfolioCategorySchema, insertPortfolioHoldingSchema, updatePortfolioHoldingSchema, insertHoldingTransactionSchema, insertRsAccountSchema, insertRecipeSchema, insertRecipeComponentSchema, insertRecipeRunSchema, insertRecipeRunComponentSchema } from "@shared/schema";
+import { insertFlipSchema, insertWatchlistSchema, insertPriceAlertSchema, insertFavoriteSchema, insertProfitGoalSchema, insertPortfolioCategorySchema, insertPortfolioHoldingSchema, updatePortfolioHoldingSchema, insertHoldingTransactionSchema, insertRsAccountSchema, insertRecipeSchema, insertRecipeComponentSchema, insertRecipeRunSchema, insertRecipeRunComponentSchema, insertScannerPresetSchema } from "@shared/schema";
 import { getItemPrice, searchItems, getItemTrend, getItemPriceHistory, getItemPriceHistoryFull, getItemIntraday, getItemSuggestions, getAllItemsForScanner, getMarketMovers, type ScannerItem, type ChartPeriod } from "./ge-api";
 import { getAlchOpportunities } from "./alch";
 import { getUpdateRadar } from "./update-radar";
@@ -17,6 +17,7 @@ import { startOfDay, startOfWeek, startOfMonth, isAfter } from "date-fns";
 import { z } from "zod";
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { getDatabaseUrl } from "./databaseUrl";
+import { runDueAlerts, runPresetNow } from "./scannerAlerts";
 
 const upload = multer({ 
   storage: multer.memoryStorage(),
@@ -3037,6 +3038,75 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error) {
       console.error("Market movers error:", error);
       res.status(500).json({ error: "Failed to fetch market movers" });
+    }
+  });
+
+  // ── Saved Scanner presets + Discord alerts ─────────────────────────────────────
+  // Admin-gated like the Scanner itself. See server/scannerAlerts.ts for the runner.
+  app.get("/api/scanner/presets", isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      res.json(await storage.getScannerPresets(req.user.claims.sub));
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch presets" });
+    }
+  });
+
+  app.post("/api/scanner/presets", isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const preset = insertScannerPresetSchema.parse(req.body);
+      res.status(201).json(await storage.createScannerPreset(req.user.claims.sub, preset));
+    } catch (error) {
+      res.status(400).json({ error: error instanceof z.ZodError ? error.errors[0]?.message : "Invalid preset" });
+    }
+  });
+
+  app.patch("/api/scanner/presets/:id", isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const patch = insertScannerPresetSchema.partial().parse(req.body);
+      const updated = await storage.updateScannerPreset(req.params.id, req.user.claims.sub, patch);
+      if (!updated) return res.status(404).json({ error: "Preset not found" });
+      res.json(updated);
+    } catch (error) {
+      res.status(400).json({ error: error instanceof z.ZodError ? error.errors[0]?.message : "Invalid preset" });
+    }
+  });
+
+  app.delete("/api/scanner/presets/:id", isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const ok = await storage.deleteScannerPreset(req.params.id, req.user.claims.sub);
+      if (!ok) return res.status(404).json({ error: "Preset not found" });
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete preset" });
+    }
+  });
+
+  // Run one preset right now, ignoring its schedule. The way to prove a webhook works.
+  app.post("/api/scanner/presets/:id/test", isAuthenticated, isAdmin, async (req: any, res) => {
+    try {
+      const preset = await storage.getScannerPreset(req.params.id, req.user.claims.sub);
+      if (!preset) return res.status(404).json({ error: "Preset not found" });
+      const items = await getAllItemsForScanner();
+      res.json(await runPresetNow(preset, items, new Date(), { force: true }));
+    } catch (error) {
+      console.error("Preset test error:", error);
+      res.status(500).json({ error: "Failed to run preset" });
+    }
+  });
+
+  // Cron entry point. No session — GitHub Actions calls it with a bearer CRON_SECRET.
+  app.post("/api/cron/alerts", async (req, res) => {
+    const secret = process.env.CRON_SECRET;
+    const token = getBearerToken(req);
+    const ok =
+      !!secret && !!token && token.length === secret.length &&
+      timingSafeEqual(Buffer.from(token), Buffer.from(secret));
+    if (!ok) return res.status(401).json({ error: "Unauthorized" });
+    try {
+      res.json(await runDueAlerts());
+    } catch (error) {
+      console.error("Cron alerts error:", error);
+      res.status(500).json({ error: "Failed to run alerts" });
     }
   });
 

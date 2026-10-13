@@ -1,7 +1,8 @@
-import { users, flips, watchlist, priceAlerts, favorites, profitGoals, portfolioCategories, portfolioHoldings, portfolioHoldingTransactions, portfolioSnapshots, portfolioSnapshotItems, flipTransactions, itemVolumeDaily, userSessions, rsAccounts, recipes, recipeComponents, recipeRuns, recipeRunComponents, type User, type UpsertUser, type Flip, type InsertFlip, type FlipWithUser, type WatchlistItem, type InsertWatchlistItem, type PriceAlert, type InsertPriceAlert, type Favorite, type InsertFavorite, type ProfitGoal, type InsertProfitGoal, type PortfolioCategory, type InsertPortfolioCategory, type PortfolioHolding, type InsertPortfolioHolding, type UpdatePortfolioHolding, type PortfolioSnapshot, type PortfolioSnapshotItem, type FlipTransaction, type ItemVolumeDaily, type UserSession, type RsAccount, type InsertRsAccount, type HoldingTransaction, type InsertHoldingTransaction, type Recipe, type InsertRecipe, type RecipeComponent, type InsertRecipeComponent, type RecipeRun, type InsertRecipeRun, type RecipeRunComponent, type InsertRecipeRunComponent, type RecipeWithComponents, type RecipeRunWithDetails } from "@shared/schema";
+import { users, flips, watchlist, priceAlerts, favorites, profitGoals, portfolioCategories, portfolioHoldings, portfolioHoldingTransactions, portfolioSnapshots, portfolioSnapshotItems, flipTransactions, itemVolumeDaily, userSessions, rsAccounts, recipes, recipeComponents, recipeRuns, recipeRunComponents, scannerPresets, type ScannerPreset, type InsertScannerPreset, type User, type UpsertUser, type Flip, type InsertFlip, type FlipWithUser, type WatchlistItem, type InsertWatchlistItem, type PriceAlert, type InsertPriceAlert, type Favorite, type InsertFavorite, type ProfitGoal, type InsertProfitGoal, type PortfolioCategory, type InsertPortfolioCategory, type PortfolioHolding, type InsertPortfolioHolding, type UpdatePortfolioHolding, type PortfolioSnapshot, type PortfolioSnapshotItem, type FlipTransaction, type ItemVolumeDaily, type UserSession, type RsAccount, type InsertRsAccount, type HoldingTransaction, type InsertHoldingTransaction, type Recipe, type InsertRecipe, type RecipeComponent, type InsertRecipeComponent, type RecipeRun, type InsertRecipeRun, type RecipeRunComponent, type InsertRecipeRunComponent, type RecipeWithComponents, type RecipeRunWithDetails } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, isNull, sql, gte, lte, inArray } from "drizzle-orm";
 import { randomUUID } from "crypto";
+import { isDue } from "@shared/scannerPipeline";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -29,6 +30,15 @@ export interface IStorage {
   getPriceAlert(id: string): Promise<PriceAlert | undefined>;
   updatePriceAlert(id: string, userId: string, alert: Partial<InsertPriceAlert & { isActive?: number, triggeredAt?: Date }>): Promise<PriceAlert | undefined>;
   deletePriceAlert(id: string, userId: string): Promise<boolean>;
+  
+  createScannerPreset(userId: string, preset: InsertScannerPreset): Promise<ScannerPreset>;
+  getScannerPresets(userId: string): Promise<ScannerPreset[]>;
+  getScannerPreset(id: string, userId: string): Promise<ScannerPreset | undefined>;
+  updateScannerPreset(id: string, userId: string, preset: Partial<InsertScannerPreset>): Promise<ScannerPreset | undefined>;
+  deleteScannerPreset(id: string, userId: string): Promise<boolean>;
+  /** Alert-enabled presets whose interval has elapsed since lastRunAt (never run counts as due). */
+  getDueAlertPresets(now: Date): Promise<ScannerPreset[]>;
+  markScannerPresetRun(id: string, now: Date, itemIds: number[]): Promise<void>;
   
   createFavorite(userId: string, favorite: InsertFavorite): Promise<Favorite>;
   getFavorites(userId: string): Promise<Favorite[]>;
@@ -865,6 +875,13 @@ export class MemStorage implements IStorage {
   async getRecipeRunComponents(): Promise<RecipeRunComponent[]> { return []; }
   async updateRecipeRunComponent(): Promise<RecipeRunComponent | undefined> { return undefined; }
   async deleteRecipeRunComponent(): Promise<boolean> { return false; }
+  async createScannerPreset(): Promise<ScannerPreset> { throw new Error("Not implemented"); }
+  async getScannerPresets(): Promise<ScannerPreset[]> { return []; }
+  async getScannerPreset(): Promise<ScannerPreset | undefined> { return undefined; }
+  async updateScannerPreset(): Promise<ScannerPreset | undefined> { return undefined; }
+  async deleteScannerPreset(): Promise<boolean> { return false; }
+  async getDueAlertPresets(): Promise<ScannerPreset[]> { return []; }
+  async markScannerPresetRun(): Promise<void> {}
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1079,6 +1096,46 @@ export class DatabaseStorage implements IStorage {
       .values({ ...favorite, userId })
       .returning();
     return newFavorite;
+  }
+
+  async createScannerPreset(userId: string, preset: InsertScannerPreset): Promise<ScannerPreset> {
+    const [row] = await db.insert(scannerPresets).values({ ...preset, userId }).returning();
+    return row;
+  }
+
+  async getScannerPresets(userId: string): Promise<ScannerPreset[]> {
+    return await db.select().from(scannerPresets).where(eq(scannerPresets.userId, userId)).orderBy(desc(scannerPresets.createdAt));
+  }
+
+  async getScannerPreset(id: string, userId: string): Promise<ScannerPreset | undefined> {
+    const [row] = await db.select().from(scannerPresets).where(and(eq(scannerPresets.id, id), eq(scannerPresets.userId, userId)));
+    return row || undefined;
+  }
+
+  async updateScannerPreset(id: string, userId: string, preset: Partial<InsertScannerPreset>): Promise<ScannerPreset | undefined> {
+    const [row] = await db
+      .update(scannerPresets)
+      .set(preset)
+      .where(and(eq(scannerPresets.id, id), eq(scannerPresets.userId, userId)))
+      .returning();
+    return row || undefined;
+  }
+
+  async deleteScannerPreset(id: string, userId: string): Promise<boolean> {
+    const result = await db.delete(scannerPresets).where(and(eq(scannerPresets.id, id), eq(scannerPresets.userId, userId))).returning();
+    return result.length > 0;
+  }
+
+  async getDueAlertPresets(now: Date): Promise<ScannerPreset[]> {
+    // ponytail: the interval test lives in isDue(), not in SQL. Alert-enabled presets are a
+    // handful of rows, and one rule shared with the check script beats a timestamp-vs-interval
+    // expression whose parameter typing differed between drizzle and Postgres (it threw).
+    const enabled = await db.select().from(scannerPresets).where(eq(scannerPresets.alertEnabled, true));
+    return enabled.filter((p) => isDue(p, now));
+  }
+
+  async markScannerPresetRun(id: string, now: Date, itemIds: number[]): Promise<void> {
+    await db.update(scannerPresets).set({ lastRunAt: now, lastItemIds: itemIds }).where(eq(scannerPresets.id, id));
   }
 
   async getFavorites(userId: string): Promise<Favorite[]> {

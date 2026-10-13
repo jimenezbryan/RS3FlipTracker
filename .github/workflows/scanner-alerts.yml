@@ -1,0 +1,21 @@
+# Ticks the Scanner alert runner. Vercel Hobby crons run once a day, so the schedule lives here.
+# Each preset keeps its own interval; the endpoint only evaluates the ones that are due.
+# Needs the CRON_SECRET repo secret, set to the same value as the Vercel env var.
+# GitHub pauses scheduled workflows after 60 days without repo activity — re-enable from the
+# Actions tab if alerts go quiet.
+name: Scanner alerts
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run due alerts
+        run: |
+          curl -fsS -X POST \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            https://rs3-flip-tracker.vercel.app/api/cron/alerts
