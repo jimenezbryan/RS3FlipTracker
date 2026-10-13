@@ -2,6 +2,7 @@ import { users, flips, watchlist, priceAlerts, favorites, profitGoals, portfolio
 import { db } from "./db";
 import { eq, desc, and, isNull, sql, gte, lte, inArray } from "drizzle-orm";
 import { randomUUID } from "crypto";
+import { isDue } from "@shared/scannerPipeline";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -1126,15 +1127,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getDueAlertPresets(now: Date): Promise<ScannerPreset[]> {
-    // One minute of slack: the GitHub cron that drives this lands a little late or early, and
-    // a 60-minute alert ticked at 59m58s should run now, not an hour from now.
-    return await db
-      .select()
-      .from(scannerPresets)
-      .where(and(
-        eq(scannerPresets.alertEnabled, true),
-        sql`(${scannerPresets.lastRunAt} IS NULL OR ${scannerPresets.lastRunAt} <= ${now} - make_interval(mins => ${scannerPresets.intervalMinutes} - 1))`,
-      ));
+    // ponytail: the interval test lives in isDue(), not in SQL. Alert-enabled presets are a
+    // handful of rows, and one rule shared with the check script beats a timestamp-vs-interval
+    // expression whose parameter typing differed between drizzle and Postgres (it threw).
+    const enabled = await db.select().from(scannerPresets).where(eq(scannerPresets.alertEnabled, true));
+    return enabled.filter((p) => isDue(p, now));
   }
 
   async markScannerPresetRun(id: string, now: Date, itemIds: number[]): Promise<void> {
