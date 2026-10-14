@@ -179,6 +179,12 @@ const COLUMN_SPECS = {
   },
   suggestedMarginPct: { key: "suggestedMarginPct", label: "AI est.", kind: "range", format: pct },
   signals: { key: "signals", label: "Signals", kind: "set" },
+  confidence: {
+    key: "confidence",
+    label: "Confidence",
+    kind: "set",
+    optionLabel: (v: string) => v[0].toUpperCase() + v.slice(1),
+  },
 } satisfies Record<string, ColumnFilterSpec>;
 
 interface Favorite {
@@ -1357,7 +1363,7 @@ export default function Scanner() {
                   </TableHead>
                 )}
                 {viewMode === "detailed" && (
-                  <TableHead className="text-center text-muted-foreground">STATUS{funnel(COLUMN_SPECS.volatility)}</TableHead>
+                  <TableHead className="text-center text-muted-foreground">STATUS{funnel(COLUMN_SPECS.volatility)}{funnel(COLUMN_SPECS.confidence)}</TableHead>
                 )}
                 <TableHead
                   className="cursor-pointer select-none text-muted-foreground hover:text-foreground text-right"

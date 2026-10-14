@@ -312,7 +312,7 @@ export async function setupAuth(app: Express) {
       ensureStrategy(req.hostname);
       passport.authenticate(`replitauth:${req.hostname}`, {
         successReturnToOrRedirect: "/",
-        failureRedirect: "/api/login",
+        failureRedirect: "/?error=replit_auth_failed",
       })(req, res, next);
     });
   }

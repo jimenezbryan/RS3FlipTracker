@@ -12,6 +12,7 @@ import {
   getItemPrice,
   getAllItemsForScanner,
   getMarketMovers,
+  REFINE_TOP_N,
 } from "../server/ge-api";
 
 const BASE = "https://prices.runescape.wiki/api/v2/rs";
@@ -68,13 +69,29 @@ assert.equal(
 );
 
 // Money arithmetic, end to end. netProfit and roi are what the user trades on.
+//
+// fillQty: getAllItemsForScanner refines the top REFINE_TOP_N rows by estimated
+// potentialProfit with real /timeseries volume, so only rows OUTSIDE that set are still
+// exactly volume/6 — mirror the same selection here rather than assert exact equality
+// on every row (that would fail on the refined rows by design).
+const estimatedFillQty = (i: (typeof items)[number]) => Math.min(i.geLimit, Math.floor(i.volume / 6));
+const estimatedProfit = (i: (typeof items)[number]) => i.margin * estimatedFillQty(i);
+const refinedIds = new Set(
+  [...items]
+    .filter((i) => estimatedFillQty(i) > 0)
+    .sort((a, b) => estimatedProfit(b) - estimatedProfit(a))
+    .slice(0, REFINE_TOP_N)
+    .map((i) => i.id),
+);
 for (const i of items) {
   const taxPerItem = i.sellPrice <= 49 ? 0 : Math.floor(i.sellPrice * 0.02);
-  assert.equal(
-    i.fillQty,
-    Math.min(i.geLimit, Math.floor(i.volume / 6)),
-    `fillQty is not min(buy limit, 24h volume / 6) on ${i.name}`,
-  );
+  if (!refinedIds.has(i.id)) {
+    assert.equal(
+      i.fillQty,
+      estimatedFillQty(i),
+      `fillQty is not min(buy limit, 24h volume / 6) on non-refined item ${i.name}`,
+    );
+  }
   assert.equal(
     i.netProfit,
     (i.margin - taxPerItem) * i.fillQty,

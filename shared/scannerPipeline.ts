@@ -26,8 +26,9 @@ export interface ScannerItem {
   /** Two-sided volume in the last hourly block; 0 when only one side traded. The
    *  "can I flip this right now" number — 24h volume can be a single burst. */
   hourVolume: number;
-  /** Units you can realistically clear in one 4h buy-limit window:
-   *  min(geLimit, volume / 6). Every profit figure below is scaled to this. */
+  /** Units you can realistically clear in one 4h buy-limit window. Real per-window volume
+   *  from /timeseries for the top REFINE_TOP_N rows by potentialProfit; volume/6 estimate
+   *  for everything else. Every profit figure below is scaled to this. */
   fillQty: number;
   potentialProfit: number;
   marginVolume: number;

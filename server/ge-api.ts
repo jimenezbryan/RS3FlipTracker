@@ -976,8 +976,9 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
     // DAY, so for 57% of rows that quantity does not exist. Measured against the live
     // API: 6 of the top 12 by netProfit could not move a single unit in a 4h window
     // ("Sceptre of enchantment", 2 traded per day, ranked #2 at 2,290M). Cap the
-    // quantity at what actually trades in one window — a sixth of the 24h figure.
-    // Upgrade path: /timeseries gives real per-window volume if the sixth is too crude.
+    // quantity at what actually trades in one window — a sixth of the 24h figure as a
+    // first-pass estimate; refineTopFillQty() below replaces this with the real
+    // /timeseries number for the rows that end up ranking highest.
     const fillQty = Math.min(geLimit, Math.floor(volume / 6));
 
     // Calculate tax (2% of sell price, no cap)
@@ -1072,7 +1073,41 @@ export async function getAllItemsForScanner(): Promise<ScannerItem[]> {
   // value came from the sqrt(7) random-walk guess that used to live here — while the UI
   // labelled it a "data-backed spread". The real 7d/30d range is computed per item from
   // actual history in GET /api/scanner/item/:id/detail.
+  await refineTopFillQty(results);
   return results;
+}
+
+/** volume/6 above is a same-request estimate for all ~2200 items. /timeseries has the real
+ *  per-window number but is a per-item wiki call, so asking it for every row would mean
+ *  thousands of requests on one scanner load. Refine only the rows a user is actually likely
+ *  to see first — top potentialProfit — in small concurrent batches so a cold cache doesn't
+ *  serialize into thousands of sequential round trips. Raise REFINE_TOP_N if more rows need
+ *  real numbers; the volume/6 estimate remains for everything outside that set. */
+export const REFINE_TOP_N = 100;
+const REFINE_BATCH_SIZE = 10;
+const FILL_WINDOW_HOURS = 4;
+
+async function refineTopFillQty(results: ScannerItem[]): Promise<void> {
+  const candidates = [...results]
+    .filter((r) => r.fillQty > 0)
+    .sort((a, b) => b.potentialProfit - a.potentialProfit)
+    .slice(0, REFINE_TOP_N);
+
+  for (let i = 0; i < candidates.length; i += REFINE_BATCH_SIZE) {
+    const batch = candidates.slice(i, i + REFINE_BATCH_SIZE);
+    await Promise.all(
+      batch.map(async (r) => {
+        // getItemIntraday never throws — a wiki failure with no stale cache resolves null.
+        const points = await getItemIntraday(r.id, FILL_WINDOW_HOURS);
+        if (!points || points.length === 0) return;
+        const windowVolume = points.reduce((sum, p) => sum + (p.volume ?? 0), 0);
+        const netPerUnit = r.margin - (r.sellPrice <= 49 ? 0 : Math.floor(r.sellPrice * 0.02));
+        r.fillQty = Math.min(r.geLimit, windowVolume);
+        r.potentialProfit = r.margin * r.fillQty;
+        r.netProfit = netPerUnit * r.fillQty;
+      }),
+    );
+  }
 }
 
 

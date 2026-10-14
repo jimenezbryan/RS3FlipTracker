@@ -96,10 +96,10 @@ function StatCard({
   accent?: "cyan" | "green" | "red" | "purple";
 }) {
   const accentColors = {
-    cyan: "from-cyan-500/20 to-cyan-500/5 border-cyan-500/30 text-cyan-400",
-    green: "from-emerald-500/20 to-emerald-500/5 border-emerald-500/30 text-emerald-400",
-    red: "from-red-500/20 to-red-500/5 border-red-500/30 text-red-400",
-    purple: "from-purple-500/20 to-purple-500/5 border-purple-500/30 text-purple-400",
+    cyan: "from-primary/20 to-primary/5 border-primary/30 text-primary",
+    green: "from-emerald-500/20 to-emerald-500/5 border-emerald-500/30 text-green-500",
+    red: "from-red-500/20 to-red-500/5 border-red-500/30 text-red-500",
+    purple: "from-purple-500/20 to-purple-500/5 border-purple-500/30 text-purple-600",
   };
 
   return (
@@ -131,8 +131,8 @@ function ChangeCell({ value, percent }: { value: number; percent: number }) {
   const color = isZero
     ? "text-muted-foreground"
     : isPositive
-      ? "text-emerald-400"
-      : "text-red-400";
+      ? "text-green-500"
+      : "text-red-500";
 
   return (
     <div className={`flex items-center gap-1 ${color}`}>
@@ -160,10 +160,10 @@ function MoversTable({ items }: { items: MarketMover[] }) {
   }
 
   return (
-    <div className="rounded-lg border border-slate-700/50 overflow-hidden">
+    <div className="rounded-lg border border-border overflow-hidden">
       <Table>
         <TableHeader>
-          <TableRow className="border-slate-700/50 hover:bg-transparent">
+          <TableRow className="border-border hover:bg-transparent">
             <TableHead className="text-xs uppercase tracking-wider text-muted-foreground">
               Item
             </TableHead>
@@ -188,7 +188,7 @@ function MoversTable({ items }: { items: MarketMover[] }) {
           {items.map((item, index) => (
             <TableRow
               key={item.itemId}
-              className="border-slate-700/50 hover:bg-slate-800/50 transition-colors"
+              className="border-border hover:bg-muted/50 transition-colors"
               data-testid={`row-mover-${item.itemId}`}
             >
               <TableCell>
@@ -301,11 +301,11 @@ export default function MarketMovers() {
   const activeItems = data?.[activeTab] ?? [];
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100">
+    <div className="min-h-screen bg-background text-foreground">
       <div className="max-w-7xl mx-auto p-6 space-y-6">
         <div className="space-y-1">
           <div className="flex items-center gap-3">
-            <Activity className="h-6 w-6 text-cyan-400" />
+            <Activity className="h-6 w-6 text-primary" />
             <h1
               className="text-2xl font-bold tracking-tight"
               data-testid="text-page-title"
@@ -322,7 +322,7 @@ export default function MarketMovers() {
 
         {error && (
           <div
-            className="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-red-400 text-sm"
+            className="rounded-lg border border-red-500/30 bg-red-500/10 p-4 text-red-500 text-sm"
             data-testid="text-movers-error"
           >
             Failed to load market data. Please try again later.
@@ -382,8 +382,8 @@ export default function MarketMovers() {
                     onClick={() => setActiveTab(tab.key)}
                     className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                       isActive
-                        ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/40"
-                        : "bg-slate-800/50 text-slate-400 border border-slate-700/50 hover:bg-slate-800 hover:text-slate-200"
+                        ? "bg-primary/20 text-primary border border-primary/40"
+                        : "bg-muted/50 text-muted-foreground border border-border hover:bg-muted hover:text-foreground"
                     }`}
                     data-testid={`button-tab-${tab.key}`}
                   >

@@ -126,7 +126,7 @@ function StatCard({
   children?: React.ReactNode;
 }) {
   const accentColors = {
-    cyan: "from-cyan-500/20 to-cyan-500/5 border-cyan-500/30",
+    cyan: "from-primary/20 to-primary/5 border-primary/30",
     green: "from-emerald-500/20 to-emerald-500/5 border-emerald-500/30",
     purple: "from-purple-500/20 to-purple-500/5 border-purple-500/30",
     yellow: "from-yellow-500/20 to-yellow-500/5 border-yellow-500/30",
@@ -191,12 +191,12 @@ function DayCell({
   const isProfit = stats && stats.totalProfit > 0;
   const isLoss = stats && stats.totalProfit < 0;
 
-  let bgClass = "bg-slate-800/50";
+  let bgClass = "bg-muted/50";
   if (hasTrades) {
     if (isProfit) {
-      bgClass = "bg-teal-900/60 border-teal-700/40";
+      bgClass = "bg-emerald-500/15 border-emerald-500/30";
     } else if (isLoss) {
-      bgClass = "bg-red-900/60 border-red-700/40";
+      bgClass = "bg-red-500/15 border-red-500/30";
     }
   }
 
@@ -215,7 +215,7 @@ function DayCell({
 
   return (
     <div
-      className={`aspect-square min-h-[80px] rounded-md border border-slate-700/50 ${bgClass} p-2 flex flex-col justify-between transition-all hover:border-slate-600 ${isToday ? "ring-2 ring-cyan-500/50" : ""} ${isSelected ? "ring-2 ring-cyan-400 border-cyan-400/60 shadow-[0_0_12px_rgba(34,211,238,0.3)]" : ""} ${hasTrades ? "cursor-pointer" : ""}`}
+      className={`aspect-square min-h-[80px] rounded-md border border-border ${bgClass} p-2 flex flex-col justify-between transition-all hover:border-muted-foreground/40 ${isToday ? "ring-2 ring-primary/50" : ""} ${isSelected ? "ring-2 ring-primary border-primary/60 shadow-[0_0_12px_hsl(var(--primary)/0.3)]" : ""} ${hasTrades ? "cursor-pointer" : ""}`}
       data-testid={hasTrades ? `button-day-${dateString}` : `calendar-cell-${dateString}`}
       onClick={() => hasTrades && onSelect(day)}
       role={hasTrades ? "button" : undefined}
@@ -223,14 +223,14 @@ function DayCell({
     >
       <div className="flex items-start justify-between">
         <span
-          className={`text-xs font-medium ${isToday ? "text-cyan-400" : "text-muted-foreground"}`}
+          className={`text-xs font-medium ${isToday ? "text-primary" : "text-muted-foreground"}`}
         >
           {format(day, "d")}
         </span>
         {hasTrades && (
           <Badge
             variant="secondary"
-            className="text-[9px] px-1 py-0 h-4 bg-slate-700/50"
+            className="text-[9px] px-1 py-0 h-4 bg-muted"
             data-testid={`badge-trade-count-${dateString}`}
           >
             {stats.tradeCount}
@@ -240,7 +240,7 @@ function DayCell({
       {hasTrades && stats && (
         <div className="space-y-1">
           <p
-            className={`text-sm font-bold font-mono ${isProfit ? "text-emerald-400" : isLoss ? "text-red-400" : "text-muted-foreground"}`}
+            className={`text-sm font-bold font-mono ${isProfit ? "text-green-500" : isLoss ? "text-red-500" : "text-muted-foreground"}`}
             data-testid={`text-profit-${dateString}`}
           >
             {formatDayProfit(stats.totalProfit)}
@@ -260,20 +260,20 @@ function WeeklySummary({ week }: { week: WeekStats }) {
 
   return (
     <div
-      className="rounded-md border border-slate-700/50 bg-slate-800/30 p-3 backdrop-blur-sm"
+      className="rounded-md border border-border bg-muted/30 p-3 backdrop-blur-sm"
       data-testid={`card-week-${week.weekNumber}`}
     >
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs text-muted-foreground font-medium">Week {week.weekNumber}</span>
         <Badge
           variant="secondary"
-          className="text-[10px] px-1.5 py-0 bg-slate-700/50"
+          className="text-[10px] px-1.5 py-0 bg-muted"
         >
           {week.tradingDays}d
         </Badge>
       </div>
       <p
-        className={`text-lg font-bold font-mono ${isProfit ? "text-emerald-400" : isLoss ? "text-red-400" : "text-muted-foreground"}`}
+        className={`text-lg font-bold font-mono ${isProfit ? "text-green-500" : isLoss ? "text-red-500" : "text-muted-foreground"}`}
       >
         {isProfit ? "+" : ""}{formatGP(week.totalProfit)}
       </p>
@@ -302,10 +302,10 @@ function TradeReplayPanel({
 
   return (
     <div
-      className="mt-6 rounded-lg border border-slate-700/50 bg-slate-900/80 backdrop-blur-sm overflow-hidden animate-in slide-in-from-top-2 duration-300"
+      className="mt-6 rounded-lg border border-border bg-card/80 backdrop-blur-sm overflow-hidden animate-in slide-in-from-top-2 duration-300"
       data-testid="panel-trade-replay"
     >
-      <div className="p-4 border-b border-slate-700/50 bg-slate-800/40">
+      <div className="p-4 border-b border-border bg-muted/40">
         <div className="flex items-center justify-between gap-4 flex-wrap">
           <div className="flex items-center gap-4 flex-wrap">
             <div>
@@ -317,15 +317,15 @@ function TradeReplayPanel({
             <div className="flex items-center gap-3 flex-wrap">
               <Badge
                 variant="secondary"
-                className={`text-sm px-3 py-1 ${dayStats.totalProfit >= 0 ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" : "bg-red-500/20 text-red-400 border-red-500/30"}`}
+                className={`text-sm px-3 py-1 ${dayStats.totalProfit >= 0 ? "bg-emerald-500/20 text-green-500 border-emerald-500/30" : "bg-red-500/20 text-red-500 border-red-500/30"}`}
                 data-testid="badge-replay-pnl"
               >
                 {dayStats.totalProfit >= 0 ? "+" : ""}{formatGP(dayStats.totalProfit)}
               </Badge>
-              <Badge variant="secondary" className="text-xs px-2 py-0.5 bg-slate-700/50" data-testid="badge-replay-trades">
+              <Badge variant="secondary" className="text-xs px-2 py-0.5 bg-muted" data-testid="badge-replay-trades">
                 {dayStats.tradeCount} trades
               </Badge>
-              <Badge variant="secondary" className="text-xs px-2 py-0.5 bg-slate-700/50" data-testid="badge-replay-winrate">
+              <Badge variant="secondary" className="text-xs px-2 py-0.5 bg-muted" data-testid="badge-replay-winrate">
                 {dayStats.winRate.toFixed(0)}% win rate
               </Badge>
             </div>
@@ -341,12 +341,12 @@ function TradeReplayPanel({
         </div>
       </div>
 
-      <div className="p-4 border-b border-slate-700/50">
+      <div className="p-4 border-b border-border">
         <div className="flex items-center gap-2 mb-2">
           <BarChart3 className="h-4 w-4 text-muted-foreground" />
           <span className="text-xs text-muted-foreground uppercase tracking-wider">Cumulative P&L</span>
         </div>
-        <div className="relative h-8 rounded-md bg-slate-800/60 overflow-hidden" data-testid="bar-cumulative-pnl">
+        <div className="relative h-8 rounded-md bg-muted/60 overflow-hidden" data-testid="bar-cumulative-pnl">
           {timelineEntries.map((entry, idx) => {
             const barWidth = timelineEntries.length > 1 ? ((idx + 1) / timelineEntries.length) * 100 : 100;
             const isPositive = entry.runningPnL >= 0;
@@ -359,7 +359,7 @@ function TradeReplayPanel({
             );
           })}
           <div className="absolute inset-0 flex items-center justify-center z-10">
-            <span className={`text-xs font-bold font-mono ${finalPnL >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+            <span className={`text-xs font-bold font-mono ${finalPnL >= 0 ? "text-green-500" : "text-red-500"}`}>
               {finalPnL >= 0 ? "+" : ""}{formatGP(finalPnL)}
             </span>
           </div>
@@ -371,18 +371,18 @@ function TradeReplayPanel({
           <p className="text-center text-muted-foreground py-8" data-testid="text-no-trades">No trades on this day</p>
         ) : (
           <div className="relative">
-            <div className="absolute left-[19px] top-4 bottom-4 w-px bg-slate-700/60" />
+            <div className="absolute left-[19px] top-4 bottom-4 w-px bg-border" />
             <div className="space-y-4">
               {timelineEntries.map((entry, index) => {
                 const isBuy = entry.action === "BUY";
                 const profit = entry.profit;
                 const dotColor = isBuy
-                  ? "bg-cyan-500 shadow-[0_0_8px_rgba(34,211,238,0.4)]"
+                  ? "bg-primary shadow-[0_0_8px_hsl(var(--primary)/0.4)]"
                   : profit !== null && profit > 0
                     ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.4)]"
                     : profit !== null && profit < 0
                       ? "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.4)]"
-                      : "bg-cyan-500 shadow-[0_0_8px_rgba(34,211,238,0.4)]";
+                      : "bg-primary shadow-[0_0_8px_hsl(var(--primary)/0.4)]";
 
                 return (
                   <div
@@ -393,7 +393,7 @@ function TradeReplayPanel({
                     <div className="relative z-10 flex-shrink-0 mt-1">
                       <div className={`w-[10px] h-[10px] rounded-full ${dotColor}`} style={{ marginLeft: '15px' }} />
                     </div>
-                    <div className="flex-1 rounded-md border border-slate-700/50 bg-slate-800/40 p-3 ml-1">
+                    <div className="flex-1 rounded-md border border-border bg-muted/40 p-3 ml-1">
                       <div className="flex items-start justify-between gap-3 flex-wrap">
                         <div className="flex items-center gap-2 flex-wrap">
                           {entry.itemId && (
@@ -409,12 +409,12 @@ function TradeReplayPanel({
                             <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                               <Badge
                                 variant="secondary"
-                                className={`text-[10px] px-1.5 py-0 ${isBuy ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" : "bg-red-500/20 text-red-400 border-red-500/30"}`}
+                                className={`text-[10px] px-1.5 py-0 ${isBuy ? "bg-emerald-500/20 text-green-500 border-emerald-500/30" : "bg-red-500/20 text-red-500 border-red-500/30"}`}
                               >
                                 {entry.action}
                               </Badge>
                               {entry.strategyTag && entry.strategyTag !== "Other" && (
-                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-purple-500/20 text-purple-400 border-purple-500/30">
+                                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 bg-purple-500/20 text-purple-600 border-purple-500/30">
                                   {entry.strategyTag}
                                 </Badge>
                               )}
@@ -426,7 +426,7 @@ function TradeReplayPanel({
                             {formatGP(entry.price)} x {entry.quantity.toLocaleString()}
                           </p>
                           {entry.profit !== null && (
-                            <p className={`text-xs font-mono font-bold mt-0.5 ${entry.profit >= 0 ? "text-emerald-400" : "text-red-400"}`}>
+                            <p className={`text-xs font-mono font-bold mt-0.5 ${entry.profit >= 0 ? "text-green-500" : "text-red-500"}`}>
                               {entry.profit >= 0 ? "+" : ""}{formatGP(entry.profit)}
                             </p>
                           )}
@@ -437,7 +437,7 @@ function TradeReplayPanel({
                           <Clock className="h-3 w-3" />
                           <span className="text-[10px]">{format(entry.timestamp, "h:mm a")}</span>
                         </div>
-                        <span className={`text-[10px] font-mono ${entry.runningPnL >= 0 ? "text-emerald-400/70" : "text-red-400/70"}`}>
+                        <span className={`text-[10px] font-mono ${entry.runningPnL >= 0 ? "text-green-500/70" : "text-red-500/70"}`}>
                           Running: {entry.runningPnL >= 0 ? "+" : ""}{formatGP(entry.runningPnL)}
                         </span>
                       </div>
@@ -718,7 +718,7 @@ export default function TradingJournal() {
           />
         </div>
 
-        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mb-6 p-4 rounded-lg border border-slate-700/50 bg-slate-800/30 backdrop-blur-sm">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 mb-6 p-4 rounded-lg border border-border bg-muted/30 backdrop-blur-sm">
           <div className="flex items-center gap-2">
             <Button
               variant="ghost"
@@ -752,7 +752,7 @@ export default function TradingJournal() {
           <div className="flex items-center gap-3">
             <Badge
               variant="secondary"
-              className={`text-sm px-3 py-1 ${monthlyStats.totalProfit >= 0 ? "bg-emerald-500/20 text-emerald-400 border-emerald-500/30" : "bg-red-500/20 text-red-400 border-red-500/30"}`}
+              className={`text-sm px-3 py-1 ${monthlyStats.totalProfit >= 0 ? "bg-emerald-500/20 text-green-500 border-emerald-500/30" : "bg-red-500/20 text-red-500 border-red-500/30"}`}
               data-testid="badge-monthly-profit"
             >
               {monthlyStats.totalProfit >= 0 ? "+" : ""}
@@ -760,7 +760,7 @@ export default function TradingJournal() {
             </Badge>
             <Badge
               variant="secondary"
-              className="text-sm px-3 py-1 bg-slate-700/50"
+              className="text-sm px-3 py-1 bg-muted"
               data-testid="badge-trading-days"
             >
               {monthlyStats.tradingDays} trading days
@@ -770,7 +770,7 @@ export default function TradingJournal() {
 
         <div className="flex flex-col lg:flex-row gap-6">
           <div className="flex-1">
-            <div className="rounded-lg border border-slate-700/50 bg-slate-800/20 backdrop-blur-sm p-4">
+            <div className="rounded-lg border border-border bg-muted/20 backdrop-blur-sm p-4">
               <div className="grid grid-cols-7 gap-2 mb-3">
                 {weekDays.map((day) => (
                   <div
