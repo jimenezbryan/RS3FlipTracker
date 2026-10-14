@@ -96,7 +96,7 @@ function Router() {
         <Route path="/goals" component={Goals} />
         <Route path="/recipes" component={Recipes} />
         <Route path="/market">{() => <AdminRoute component={MarketInsights} />}</Route>
-        <Route path="/scanner">{() => <AdminRoute component={Scanner} />}</Route>
+        <Route path="/scanner" component={Scanner} />
         <Route path="/alchemy">{() => <AdminRoute component={Alchemy} />}</Route>
         <Route path="/radar">{() => <AdminRoute component={UpdateRadar} />}</Route>
         <Route path="/alerts" component={Alerts} />

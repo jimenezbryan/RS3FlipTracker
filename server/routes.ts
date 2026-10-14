@@ -1397,19 +1397,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Scanner endpoint - admin only
+  // Scanner endpoint - any logged-in user
   app.get("/api/scanner/items", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.user.claims.sub;
-      const user = await storage.getUser(userId);
-      
-      // Check if user is an admin
-      const isAdminUser = user && (ADMIN_EMAILS.includes(user.email ?? "") || user.isAdmin === true);
-      
-      if (!isAdminUser) {
-        return res.status(403).json({ error: "Admin access required" });
-      }
-      
       const items = await getAllItemsForScanner();
       res.json(items);
     } catch (error) {
@@ -1456,12 +1446,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/scanner/item/:itemId/detail", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
-      const user = await storage.getUser(userId);
-      const isAdminUser = user && (ADMIN_EMAILS.includes(user.email ?? "") || user.isAdmin === true);
-      if (!isAdminUser) {
-        return res.status(403).json({ error: "Admin access required" });
-      }
-
       const itemId = parseInt(req.params.itemId, 10);
       if (isNaN(itemId)) {
         return res.status(400).json({ error: "Invalid item ID" });

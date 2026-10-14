@@ -28,10 +28,10 @@ const navItems = [
   { href: "/stats", label: "Stats", icon: BarChart3 },
   { href: "/journal", label: "Journal", icon: CalendarDays },
   { href: "/movers", label: "Movers", icon: Activity },
+  { href: "/scanner", label: "Scanner", icon: Search },
 ];
 
 const adminOnlyItems = [
-  { href: "/scanner", label: "Scanner", icon: Search },
   { href: "/alchemy", label: "Alchemy", icon: FlaskConical },
   { href: "/radar", label: "Radar", icon: Radar },
   { href: "/market", label: "Market", icon: TrendingUp },
