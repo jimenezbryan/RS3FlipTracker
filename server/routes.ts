@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import multer from "multer";
 import { storage } from "./storage";
 import { insertFlipSchema, insertWatchlistSchema, insertPriceAlertSchema, insertFavoriteSchema, insertProfitGoalSchema, insertPortfolioCategorySchema, insertPortfolioHoldingSchema, updatePortfolioHoldingSchema, insertHoldingTransactionSchema, insertRsAccountSchema, insertRecipeSchema, insertRecipeComponentSchema, insertRecipeRunSchema, insertRecipeRunComponentSchema, insertScannerPresetSchema } from "@shared/schema";
-import { getItemPrice, searchItems, getItemTrend, getItemPriceHistory, getItemPriceHistoryFull, getItemIntraday, getItemSuggestions, getAllItemsForScanner, getMarketMovers, type ScannerItem, type ChartPeriod } from "./ge-api";
+import { getItemPrice, searchItems, getItemTrend, getItemPriceHistory, getItemPriceHistoryFull, getItemIntraday, getLatest, getItemSuggestions, getAllItemsForScanner, getMarketMovers, type ScannerItem, type ChartPeriod } from "./ge-api";
 import { getAlchOpportunities } from "./alch";
 import { getUpdateRadar } from "./update-radar";
 import { calculateTechnicalIndicators, calculateSmartPricing, calculateTradeHistoryStats, calculateObservableRange, type TechnicalIndicators, type SmartPricing, type TradeHistoryStats, type ValueGapAnalysis, type ObservableRange } from "./technical-indicators";
@@ -18,7 +18,8 @@ import { z } from "zod";
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { getDatabaseUrl } from "./databaseUrl";
 import { runDueAlerts, runPresetNow } from "./scannerAlerts";
-import { runOutOfRangeAlerts } from "./outOfRange";
+import { runOutOfRangeAlerts, getOutOfRangeSummary } from "./outOfRange";
+import { detectOutOfRange, type Detection } from "@shared/outOfRange";
 
 const upload = multer({ 
   storage: multer.memoryStorage(),
@@ -1444,6 +1445,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Items currently out of range, from the same detector the Discord alert uses. Cached 5 min.
+  app.get("/api/scanner/out-of-range", isAuthenticated, async (_req: any, res) => {
+    try {
+      res.json(await getOutOfRangeSummary());
+    } catch (error) {
+      console.error("Out-of-range summary error:", error);
+      res.status(500).json({ error: "Failed to load out-of-range items" });
+    }
+  });
+
   app.get("/api/scanner/item/:itemId/detail", isAuthenticated, async (req: any, res) => {
     try {
       const userId = req.user.claims.sub;
@@ -1455,6 +1466,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       let indicators: TechnicalIndicators | null = null;
       let range7d: ObservableRange | null = null;
       let range30d: ObservableRange | null = null;
+      let outOfRange: Detection | null = null;
       let lastPrice = 0;
       try {
         const fullHistory = await getItemPriceHistoryFull(itemId);
@@ -1466,6 +1478,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
             indicators = calculateTechnicalIndicators(fullHistory.daily);
             range7d = calculateObservableRange(fullHistory.daily, 7);
             range30d = calculateObservableRange(fullHistory.daily, 30);
+            const [week, latest] = await Promise.all([getItemIntraday(itemId, 24), getLatest()]);
+            const q = latest[String(itemId)];
+            if (week && q) {
+              outOfRange = detectOutOfRange(
+                week.map((p) => ({ t: new Date(p.date).getTime(), high: p.high ?? null, low: p.low ?? null })),
+                fullHistory.daily.map((p) => ({ t: new Date(p.date).getTime(), price: p.price })),
+                { high: q.high, low: q.low },
+                Date.now(),
+              );
+            }
           }
           lastPrice = fullHistory.daily.at(-1)?.price ?? fullHistory.monthly.at(-1)?.price ?? 0;
         }
@@ -1502,6 +1524,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         tradeStats,
         range7d,
         range30d,
+        outOfRange,
       });
     } catch (error) {
       console.error("Error fetching scanner item detail:", error);

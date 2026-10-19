@@ -112,7 +112,10 @@ interface ItemDetail {
   tradeStats: TradeHistoryStats;
   range7d: ObservableRange | null;
   range30d: ObservableRange | null;
+  outOfRange: { direction: "spike" | "dump"; extreme: number; normalLow: number; normalHigh: number; pctBeyond: number } | null;
 }
+
+interface OutOfRangeRow { itemId: number; direction: "spike" | "dump"; extreme: number; normalLow: number; normalHigh: number; pctBeyond: number }
 
 // Scoring, signals and their thresholds live in shared/scannerPipeline.ts now, so the alert
 // runner and this page cannot drift. ProcessedScannerItem is kept as the local name.
@@ -399,6 +402,7 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
   const stats = detail?.tradeStats;
   const range7d = detail?.range7d;
   const range30d = detail?.range30d;
+  const oor = detail?.outOfRange;
   
   return (
     <div className="space-y-4">
@@ -422,6 +426,11 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
                 ? `Tight ${range7d.spreadPct.toFixed(1)}% range in 7 days. Margins are slim unless you trade high volume.`
                 : "Insufficient data for 7-day range analysis."}
           </p>
+          {oor && (
+            <p className="text-xs mt-2" data-testid="text-out-of-range-detail">
+              Out of range: 24h {oor.direction === "spike" ? "high" : "low"} {oor.extreme.toLocaleString()} gp is {oor.pctBeyond.toFixed(0)}% beyond the normal {oor.normalLow.toLocaleString()}–{oor.normalHigh.toLocaleString()} gp.
+            </p>
+          )}
         </div>
       )}
 
@@ -668,6 +677,7 @@ export default function Scanner() {
   const [viewMode, setViewMode] = useState<ViewMode>("standard");
   const [watchlistOnly, setWatchlistOnly] = useState(false);
   const [signalsOnly, setSignalsOnly] = useState(false);
+  const [outOfRangeOnly, setOutOfRangeOnly] = useState(false);
   // ponytail: hidden by default — ~24% of priced items lose money once the 2% GE tax is
   // taken off, and a flip scanner that lists guaranteed losses by default is answering a
   // question nobody asked. Still one click away, because "why is this item not here" is
@@ -715,6 +725,12 @@ export default function Scanner() {
     queryKey: ["/api/scanner/items"],
     refetchInterval: 60000,
   });
+
+  const { data: outOfRange = [] } = useQuery<OutOfRangeRow[]>({
+    queryKey: ["/api/scanner/out-of-range"],
+    refetchInterval: 5 * 60 * 1000,
+  });
+  const outOfRangeById = useMemo(() => new Map(outOfRange.map((r) => [r.itemId, r])), [outOfRange]);
 
   // Your own trades on the item, so the detail drawer's chart can mark where you actually
   // bought and sold. The chart already supported this; Scanner just never passed it.
@@ -944,8 +960,8 @@ export default function Scanner() {
   };
 
   const baseItems = useMemo(
-    () => applyToggles(processedItems, currentFilters, favoriteItemIds),
-    [processedItems, currentFilters, favoriteItemIds],
+    () => applyToggles(processedItems, currentFilters, favoriteItemIds).filter((i) => !outOfRangeOnly || outOfRangeById.has(i.id)),
+    [processedItems, currentFilters, favoriteItemIds, outOfRangeOnly, outOfRangeById],
   );
 
   const filteredAndSortedItems = useMemo(() => applyFiltersAndSort(baseItems, currentFilters), [baseItems, currentFilters]);
@@ -1180,6 +1196,25 @@ export default function Scanner() {
 
         <div className="flex items-center gap-2">
           <Checkbox
+            id="out-of-range-only"
+            checked={outOfRangeOnly}
+            onCheckedChange={(checked) => {
+              setOutOfRangeOnly(checked === true);
+              setCurrentPage(1);
+            }}
+            className="border-border"
+            data-testid="checkbox-out-of-range-only"
+          />
+          <Label htmlFor="out-of-range-only" className="text-sm cursor-pointer text-muted-foreground flex items-center gap-1">
+            Out of range
+            <Badge variant="outline" className="ml-1 text-xs border-emerald-500/50 text-green-500" data-testid="badge-out-of-range-count">
+              {outOfRange.length}
+            </Badge>
+          </Label>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Checkbox
             id="signals-only"
             checked={signalsOnly}
             onCheckedChange={(checked) => {
@@ -1380,6 +1415,7 @@ export default function Scanner() {
                 const isFavorite = favoriteItemIds.has(item.id);
                 const isProfitable = item.netProfit > 0;
                 const isExpanded = expandedItemId === item.id;
+                const oorRow = outOfRangeById.get(item.id);
                 
                 return (
                   <Fragment key={item.id}>
@@ -1426,6 +1462,16 @@ export default function Scanner() {
                           <TrendArrow trend={item.trend} />
                           <div className="min-w-0">
                             <span className="block truncate max-w-[200px]">{item.name}</span>
+                            {oorRow && (
+                              <Badge
+                                variant="outline"
+                                className={`text-[10px] ${oorRow.direction === "spike" ? "border-emerald-500/50 text-emerald-500" : "border-rose-500/50 text-rose-400"}`}
+                                title={`24h extreme ${oorRow.extreme.toLocaleString()} vs normal ${oorRow.normalLow.toLocaleString()}–${oorRow.normalHigh.toLocaleString()}`}
+                                data-testid={`badge-out-of-range-${item.id}`}
+                              >
+                                {oorRow.direction === "spike" ? "Spike" : "Dump"} +{oorRow.pctBeyond.toFixed(0)}%
+                              </Badge>
+                            )}
                             {/* Secondary line rather than a new column: the table is already
                                 14 columns wide, and this only needs to be scannable. */}
                             <span className="block truncate max-w-[200px] text-xs font-normal text-muted-foreground">
