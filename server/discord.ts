@@ -490,7 +490,7 @@ export async function sendScannerAlertToDiscord(
 
 /** One message, one embed per hit. The caller caps `hits` (Discord allows 10 embeds). */
 export async function sendOutOfRangeAlertsToDiscord(hits: EmbedHit[]): Promise<boolean> {
-  const url = process.env.DISCORD_WEBHOOK_URL;
+  const url = process.env.DISCORD_OUT_OF_RANGE_WEBHOOK_URL || process.env.DISCORD_WEBHOOK_URL;
   if (!url) {
     console.log("[Discord] No DISCORD_WEBHOOK_URL, skipping out-of-range alert");
     return false;
