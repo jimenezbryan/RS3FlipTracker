@@ -101,4 +101,35 @@ const dumpRow = { ...row, direction: "dump" as const, lastPrice: 1000 };
 assert.equal(isCoolingDown(dumpRow, "dump", 900, now), false, "-10% further breaks a dump cooldown");
 assert.equal(isCoolingDown(dumpRow, "dump", 950, now), true, "-5% does not");
 
+// ── 4. embed + chart ──────────────────────────────────────────────────────────────
+import { buildOutOfRangeEmbed, chartUrl } from "../shared/outOfRangeEmbed";
+
+const week: HourlyPoint[] = Array.from({ length: 168 }, (_, i) => ({ t: now - (167 - i) * H, high: 50_000_000 + i * 300_000, low: 48_000_000 }));
+const url = chartUrl(week, 40_000_000, 50_000_000, now);
+assert.ok(url && url.startsWith("https://quickchart.io/chart?"), "chart url");
+assert.ok(url!.length < 2000, `chart url must stay short, was ${url!.length}`);
+assert.equal(chartUrl([], 1, 2, now), null, "no series, no chart");
+
+const embed = buildOutOfRangeEmbed({
+  itemId: 11694, name: "Decimation", icon: "https://example.test/i.gif", geLimit: 8, volume: 2268, margin: 1_251_561,
+  detection: spike!, latest: { high: 100_000_000, highTime: Math.floor(now / 1000) - 35 * 60, low: 95_000_000, lowTime: Math.floor(now / 1000) - 35 * 60 },
+  series7d: week,
+}, now);
+assert.match(embed.title, /^Spike on Decimation/);
+assert.equal(embed.color, 0x22c55e, "spike is green: a price to sell into");
+assert.equal(embed.thumbnail?.url, "https://example.test/i.gif");
+assert.ok(embed.image?.url.startsWith("https://quickchart.io/"), "chart attached");
+assert.match(embed.description, /Volume.*2,268.*Limit.*8/);
+assert.match(embed.description, /<t:\d+:R>/, "relative timestamps for insta buy/sell");
+assert.match(embed.footer.text, /RuneScape Wiki/, "footer names the price source");
+assert.match(embed.footer.text, /Weird Gloop/, "footer names the Normal range source");
+assert.equal(
+  buildOutOfRangeEmbed({ ...{ itemId: 1, name: "X", icon: "i", geLimit: 1, volume: 1, margin: 1, detection: dump!, latest: { high: null, highTime: null, low: 25_000_000, lowTime: null }, series7d: [] } }, now).image,
+  undefined, "no series means no image, and null times must not crash",
+);
+assert.equal(
+  buildOutOfRangeEmbed({ itemId: 1, name: "X", icon: "i", geLimit: 1, volume: 1, margin: 1, detection: dump!, latest: { high: null, highTime: null, low: 25_000_000, lowTime: null }, series7d: [] }, now).color,
+  0xef4444, "dump is red",
+);
+
 console.log("check-out-of-range: ok");
