@@ -1478,15 +1478,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
             indicators = calculateTechnicalIndicators(fullHistory.daily);
             range7d = calculateObservableRange(fullHistory.daily, 7);
             range30d = calculateObservableRange(fullHistory.daily, 30);
-            const [week, latest] = await Promise.all([getItemIntraday(itemId, 24), getLatest()]);
-            const q = latest[String(itemId)];
-            if (week && q) {
-              outOfRange = detectOutOfRange(
-                week.map((p) => ({ t: new Date(p.date).getTime(), high: p.high ?? null, low: p.low ?? null })),
-                fullHistory.daily.map((p) => ({ t: new Date(p.date).getTime(), price: p.price })),
-                { high: q.high, low: q.low },
-                Date.now(),
-              );
+            // Optional: a failure here must not skip the lastPrice assignment below.
+            try {
+              const [week, latest] = await Promise.all([getItemIntraday(itemId, 24), getLatest()]);
+              const q = latest[String(itemId)];
+              if (week && q) {
+                outOfRange = detectOutOfRange(
+                  week.map((p) => ({ t: new Date(p.date).getTime(), high: p.high ?? null, low: p.low ?? null })),
+                  fullHistory.daily.map((p) => ({ t: new Date(p.date).getTime(), price: p.price })),
+                  { high: q.high, low: q.low },
+                  Date.now(),
+                );
+              }
+            } catch (err) {
+              console.error(`Out-of-range lookup failed for item ${itemId}:`, err);
             }
           }
           lastPrice = fullHistory.daily.at(-1)?.price ?? fullHistory.monthly.at(-1)?.price ?? 0;
