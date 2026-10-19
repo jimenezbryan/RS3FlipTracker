@@ -1,8 +1,9 @@
-import { users, flips, watchlist, priceAlerts, favorites, profitGoals, portfolioCategories, portfolioHoldings, portfolioHoldingTransactions, portfolioSnapshots, portfolioSnapshotItems, flipTransactions, itemVolumeDaily, userSessions, rsAccounts, recipes, recipeComponents, recipeRuns, recipeRunComponents, scannerPresets, type ScannerPreset, type InsertScannerPreset, type User, type UpsertUser, type Flip, type InsertFlip, type FlipWithUser, type WatchlistItem, type InsertWatchlistItem, type PriceAlert, type InsertPriceAlert, type Favorite, type InsertFavorite, type ProfitGoal, type InsertProfitGoal, type PortfolioCategory, type InsertPortfolioCategory, type PortfolioHolding, type InsertPortfolioHolding, type UpdatePortfolioHolding, type PortfolioSnapshot, type PortfolioSnapshotItem, type FlipTransaction, type ItemVolumeDaily, type UserSession, type RsAccount, type InsertRsAccount, type HoldingTransaction, type InsertHoldingTransaction, type Recipe, type InsertRecipe, type RecipeComponent, type InsertRecipeComponent, type RecipeRun, type InsertRecipeRun, type RecipeRunComponent, type InsertRecipeRunComponent, type RecipeWithComponents, type RecipeRunWithDetails } from "@shared/schema";
+import { users, flips, watchlist, priceAlerts, favorites, profitGoals, portfolioCategories, portfolioHoldings, portfolioHoldingTransactions, portfolioSnapshots, portfolioSnapshotItems, flipTransactions, itemVolumeDaily, userSessions, rsAccounts, recipes, recipeComponents, recipeRuns, recipeRunComponents, scannerPresets, outOfRangeAlerts, type ScannerPreset, type InsertScannerPreset, type User, type UpsertUser, type Flip, type InsertFlip, type FlipWithUser, type WatchlistItem, type InsertWatchlistItem, type PriceAlert, type InsertPriceAlert, type Favorite, type InsertFavorite, type ProfitGoal, type InsertProfitGoal, type PortfolioCategory, type InsertPortfolioCategory, type PortfolioHolding, type InsertPortfolioHolding, type UpdatePortfolioHolding, type PortfolioSnapshot, type PortfolioSnapshotItem, type FlipTransaction, type ItemVolumeDaily, type UserSession, type RsAccount, type InsertRsAccount, type HoldingTransaction, type InsertHoldingTransaction, type Recipe, type InsertRecipe, type RecipeComponent, type InsertRecipeComponent, type RecipeRun, type InsertRecipeRun, type RecipeRunComponent, type InsertRecipeRunComponent, type RecipeWithComponents, type RecipeRunWithDetails } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, isNull, sql, gte, lte, inArray } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { isDue } from "@shared/scannerPipeline";
+import type { CooldownRow, Direction } from "@shared/outOfRange";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -39,7 +40,9 @@ export interface IStorage {
   /** Alert-enabled presets whose interval has elapsed since lastRunAt (never run counts as due). */
   getDueAlertPresets(now: Date): Promise<ScannerPreset[]>;
   markScannerPresetRun(id: string, now: Date, itemIds: number[]): Promise<void>;
-  
+  getOutOfRangeCooldowns(): Promise<CooldownRow[]>;
+  markOutOfRangeAlerted(rows: { itemId: number; direction: Direction; price: number }[], now: Date): Promise<void>;
+
   createFavorite(userId: string, favorite: InsertFavorite): Promise<Favorite>;
   getFavorites(userId: string): Promise<Favorite[]>;
   deleteFavorite(id: string, userId: string): Promise<boolean>;
@@ -158,6 +161,7 @@ export class MemStorage implements IStorage {
   private portfolioHolds: Map<string, PortfolioHolding> = new Map();
   private portfolioSnaps: Map<string, PortfolioSnapshot> = new Map();
   private portfolioSnapItems: Map<string, PortfolioSnapshotItem> = new Map();
+  private outOfRangeCooldowns: Map<string, CooldownRow> = new Map();
 
   async getUser(id: string): Promise<User | undefined> {
     return this.users.get(id);
@@ -882,6 +886,14 @@ export class MemStorage implements IStorage {
   async deleteScannerPreset(): Promise<boolean> { return false; }
   async getDueAlertPresets(): Promise<ScannerPreset[]> { return []; }
   async markScannerPresetRun(): Promise<void> {}
+  async getOutOfRangeCooldowns(): Promise<CooldownRow[]> {
+    return Array.from(this.outOfRangeCooldowns.values());
+  }
+  async markOutOfRangeAlerted(rows: { itemId: number; direction: Direction; price: number }[], now: Date): Promise<void> {
+    for (const r of rows) {
+      this.outOfRangeCooldowns.set(`${r.itemId}:${r.direction}`, { itemId: r.itemId, direction: r.direction, lastAlertAt: now, lastPrice: r.price });
+    }
+  }
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1136,6 +1148,25 @@ export class DatabaseStorage implements IStorage {
 
   async markScannerPresetRun(id: string, now: Date, itemIds: number[]): Promise<void> {
     await db.update(scannerPresets).set({ lastRunAt: now, lastItemIds: itemIds }).where(eq(scannerPresets.id, id));
+  }
+
+  async getOutOfRangeCooldowns(): Promise<CooldownRow[]> {
+    // The table only ever holds items that alerted in recent days; reading all of it is cheaper
+    // than one query per candidate.
+    const rows = await db.select().from(outOfRangeAlerts);
+    return rows.map((r) => ({ itemId: r.itemId, direction: r.direction as Direction, lastAlertAt: r.lastAlertAt, lastPrice: r.lastPrice }));
+  }
+
+  async markOutOfRangeAlerted(rows: { itemId: number; direction: Direction; price: number }[], now: Date): Promise<void> {
+    for (const r of rows) {
+      await db
+        .insert(outOfRangeAlerts)
+        .values({ itemId: r.itemId, direction: r.direction, lastAlertAt: now, lastPrice: r.price })
+        .onConflictDoUpdate({
+          target: [outOfRangeAlerts.itemId, outOfRangeAlerts.direction],
+          set: { lastAlertAt: now, lastPrice: r.price },
+        });
+    }
   }
 
   async getFavorites(userId: string): Promise<Favorite[]> {

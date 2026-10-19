@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, bigint, timestamp, index, jsonb, boolean, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, bigint, timestamp, index, jsonb, boolean, pgEnum, primaryKey } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { presetFiltersSchema, SCANNER_ALERT_INTERVALS, SCANNER_ALERT_MAX_TOP_N, type PresetFilters } from "./scannerPipeline";
@@ -249,6 +249,20 @@ export const insertScannerPresetSchema = createInsertSchema(scannerPresets).omit
 
 export type InsertScannerPreset = z.infer<typeof insertScannerPresetSchema>;
 export type ScannerPreset = typeof scannerPresets.$inferSelect;
+
+// Cooldown for out-of-range alerts (server/outOfRange.ts). One row per item+direction; a row
+// means "we last told Discord about this at this price". Additive: no existing table changes.
+export const outOfRangeAlerts = pgTable(
+  "out_of_range_alerts",
+  {
+    itemId: integer("item_id").notNull(),
+    direction: varchar("direction", { length: 5 }).notNull(), // 'spike' | 'dump'
+    lastAlertAt: timestamp("last_alert_at").notNull(),
+    lastPrice: bigint("last_price", { mode: "number" }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.itemId, t.direction] })],
+);
+export type OutOfRangeAlertRow = typeof outOfRangeAlerts.$inferSelect;
 
 // Profit goals for tracking targets
 export const profitGoals = pgTable("profit_goals", {
