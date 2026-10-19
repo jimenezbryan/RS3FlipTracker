@@ -2,14 +2,18 @@ import type { Flip } from "@shared/schema";
 import { formatGpShorthand } from "@shared/gpParser";
 import type { IStorage } from "./storage";
 import type { ScoredItem } from "@shared/scannerPipeline";
+import { buildOutOfRangeEmbed, type EmbedHit } from "@shared/outOfRangeEmbed";
 
 interface DiscordEmbed {
   title: string;
   color: number;
+  url?: string;
   description?: string;
   fields: { name: string; value: string; inline?: boolean }[];
   timestamp?: string;
   footer?: { text: string };
+  thumbnail?: { url: string };
+  image?: { url: string };
 }
 
 interface DiscordWebhookPayload {
@@ -422,13 +426,14 @@ export async function sendGoalAchievementToDiscord(achievement: GoalAchievement)
   }
 }
 
-/** One webhook POST. The four senders above each inline this; new senders go through here. */
-export async function postEmbed(webhookUrl: string, embed: DiscordEmbed): Promise<boolean> {
+/** One webhook POST carrying up to 10 embeds. The four older senders each inline this; new
+ *  senders go through here. */
+export async function postEmbeds(webhookUrl: string, embeds: DiscordEmbed[]): Promise<boolean> {
   try {
     const response = await fetch(webhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ embeds: [embed] } satisfies DiscordWebhookPayload),
+      body: JSON.stringify({ embeds } satisfies DiscordWebhookPayload),
     });
     if (!response.ok) {
       console.error("[Discord] Webhook failed:", response.status, await response.text());
@@ -440,6 +445,8 @@ export async function postEmbed(webhookUrl: string, embed: DiscordEmbed): Promis
     return false;
   }
 }
+
+export const postEmbed = (webhookUrl: string, embed: DiscordEmbed) => postEmbeds(webhookUrl, [embed]);
 
 const pct = (n: number) => `${n.toFixed(1)}%`;
 
@@ -479,4 +486,16 @@ export async function sendScannerAlertToDiscord(
     footer: { text: "RS3 Flip Tracker · Scanner alert" },
   };
   return postEmbed(url, embed);
+}
+
+/** One message, one embed per hit. The caller caps `hits` (Discord allows 10 embeds). */
+export async function sendOutOfRangeAlertsToDiscord(hits: EmbedHit[]): Promise<boolean> {
+  const url = process.env.DISCORD_WEBHOOK_URL;
+  if (!url) {
+    console.log("[Discord] No DISCORD_WEBHOOK_URL, skipping out-of-range alert");
+    return false;
+  }
+  if (hits.length === 0) return false;
+  const now = Date.now();
+  return postEmbeds(url, hits.map((h) => buildOutOfRangeEmbed(h, now)));
 }

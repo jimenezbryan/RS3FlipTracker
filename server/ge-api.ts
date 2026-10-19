@@ -215,6 +215,17 @@ function hourlyMid(tick: HourlyTick | undefined): number | null {
   return gp(hi ?? lo);
 }
 
+/** 24h-ago and 7d-ago hourly mid for every item — the cheap anchors the out-of-range screen
+ *  compares the current price against. Two memoized bulk calls, shared with the movers. */
+export async function getPriceAnchors(): Promise<Record<string, { d1: number | null; d7: number | null }>> {
+  const [dayAgo, weekAgo] = await Promise.all([getHourly24hAgo(), getHourly7dAgo()]);
+  const out: Record<string, { d1: number | null; d7: number | null }> = {};
+  for (const id of Array.from(new Set([...Object.keys(dayAgo), ...Object.keys(weekAgo)]))) {
+    out[id] = { d1: hourlyMid(dayAgo[id]), d7: hourlyMid(weekAgo[id]) };
+  }
+  return out;
+}
+
 const CACHE_TTL = 60 * 1000;
 let cacheLastUpdated = 0;
 
