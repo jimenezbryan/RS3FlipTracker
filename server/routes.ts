@@ -3088,9 +3088,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       timingSafeEqual(Buffer.from(token), Buffer.from(secret));
     if (!ok) return res.status(401).json({ error: "Unauthorized" });
     try {
-      // Presets first, then the global out-of-range check. Independent in both directions: a
-      // failure in one must not hide the other, and the second runs even when the first threw.
-      // 500 only when both failed.
+      // Presets first, then the global out-of-range check. Both always run, and both results go
+      // in the body. The status is 500 if either step failed, so the GitHub Actions curl (-f)
+      // turns red.
       let presetsFailed = false;
       let presets: Awaited<ReturnType<typeof runDueAlerts>>;
       try {
@@ -3109,8 +3109,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         outFailed = true;
         outOfRange = { found: 0, sent: 0, error: error instanceof Error ? error.message : String(error) };
       }
-      if (presetsFailed && outFailed) return res.status(500).json({ error: "Failed to run alerts" });
-      res.json({ ...presets, outOfRange });
+      const failed = presetsFailed || outFailed || !!outOfRange.error;
+      res.status(failed ? 500 : 200).json({ ...presets, outOfRange });
     } catch (error) {
       console.error("Cron alerts error:", error);
       res.status(500).json({ error: "Failed to run alerts" });
