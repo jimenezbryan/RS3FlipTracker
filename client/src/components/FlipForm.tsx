@@ -99,6 +99,11 @@ const STRATEGIES = ["Fast Flip", "Slow Flip", "Bulk", "High Margin", "Speculativ
 
 const MEMBERSHIP_STATUSES = ["F2P", "Members", "Unknown"] as const;
 
+const LAST_ACCOUNT_KEY = "flipsync:lastRsAccountId";
+function readLastAccount(): string {
+  try { return localStorage.getItem(LAST_ACCOUNT_KEY) ?? ""; } catch { return ""; }
+}
+
 export function FlipForm({ onSubmit, openPositions = [], userFlips = [] }: FlipFormProps) {
   const [itemName, setItemName] = useState("");
   const [quantity, setQuantity] = useState("1");
@@ -111,7 +116,11 @@ export function FlipForm({ onSubmit, openPositions = [], userFlips = [] }: FlipF
   const [strategyTag, setStrategyTag] = useState<"Fast Flip" | "Slow Flip" | "Bulk" | "High Margin" | "Speculative" | "Other">("Other");
   const [membershipStatus, setMembershipStatus] = useState<"F2P" | "Members" | "Unknown">("Unknown");
   const [tradeType, setTradeType] = useState<"ge" | "street">("ge");
-  const [selectedRsAccountId, setSelectedRsAccountId] = useState<string>("");
+  const [selectedRsAccountId, setSelectedRsAccountIdRaw] = useState<string>(readLastAccount);
+  const setSelectedRsAccountId = (id: string) => {
+    setSelectedRsAccountIdRaw(id);
+    try { id ? localStorage.setItem(LAST_ACCOUNT_KEY, id) : localStorage.removeItem(LAST_ACCOUNT_KEY); } catch { /* private mode: the default just doesn't persist */ }
+  };
   const [buyDateOpen, setBuyDateOpen] = useState(false);
   const [sellDateOpen, setSellDateOpen] = useState(false);
   
@@ -120,6 +129,30 @@ export function FlipForm({ onSubmit, openPositions = [], userFlips = [] }: FlipF
   const { data: rsAccounts = [] } = useQuery<RsAccount[]>({
     queryKey: ["/api/rs-accounts"],
   });
+
+  useEffect(() => {
+    if (selectedRsAccountId && rsAccounts.length > 0 && !rsAccounts.some((a) => a.id === selectedRsAccountId)) setSelectedRsAccountId("");
+  }, [rsAccounts, selectedRsAccountId]);
+
+  const { data: itemDetail } = useQuery<{ range30d: { low: number; high: number } | null; outOfRange: { direction: "spike" | "dump"; pctBeyond: number } | null }>({
+    queryKey: ["/api/scanner/item", gePrice?.id, "detail"],
+    queryFn: async () => {
+      const res = await fetch(`/api/scanner/item/${gePrice!.id}/detail`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch item detail");
+      return res.json();
+    },
+    enabled: !!gePrice?.id,
+    staleTime: 5 * 60 * 1000,
+  });
+  const normal = itemDetail?.range30d ?? null;
+  // Entered price vs the 30-day range. Silent when there is no range or no price yet.
+  const priceWarning = (raw: string): string | null => {
+    const v = parseGp(raw);
+    if (!normal || !v) return null;
+    if (v > normal.high) return `Above the 30-day high (${formatGp(normal.high)} gp)`;
+    if (v < normal.low) return `Below the 30-day low (${formatGp(normal.low)} gp)`;
+    return null;
+  };
   
   const taxCalc = useMemo(() => {
     const buy = parseGp(buyPrice) || 0;
@@ -839,6 +872,11 @@ export function FlipForm({ onSubmit, openPositions = [], userFlips = [] }: FlipF
                       <div className="font-mono text-lg font-semibold text-success">
                         {gePrice.price.toLocaleString()} gp
                       </div>
+                      {itemDetail?.outOfRange && normal && (
+                        <Badge variant="outline" className="text-xs h-5 text-warning" data-testid="badge-out-of-range">
+                          {itemDetail.outOfRange.direction === "spike" ? "Spike" : "Dump"} +{itemDetail.outOfRange.pctBeyond.toFixed(0)}% — normal {formatGp(normal.low)}–{formatGp(normal.high)} gp
+                        </Badge>
+                      )}
                       <div className="flex gap-3 text-xs text-muted-foreground">
                         {gePrice.volume && (
                           <span>Vol: {gePrice.volume.toLocaleString()}</span>
@@ -1072,6 +1110,11 @@ export function FlipForm({ onSubmit, openPositions = [], userFlips = [] }: FlipF
                 className="font-mono"
                 required
               />
+              {priceWarning(buyPrice) && (
+                <p className="text-xs text-warning flex items-center gap-1" data-testid="warning-buy-out-of-range">
+                  <AlertTriangle className="h-3 w-3" />{priceWarning(buyPrice)}
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">
@@ -1099,6 +1142,11 @@ export function FlipForm({ onSubmit, openPositions = [], userFlips = [] }: FlipF
                 data-testid="input-sell-price"
                 className="font-mono"
               />
+              {priceWarning(sellPrice) && (
+                <p className="text-xs text-warning flex items-center gap-1" data-testid="warning-sell-out-of-range">
+                  <AlertTriangle className="h-3 w-3" />{priceWarning(sellPrice)}
+                </p>
+              )}
               {taxCalc && (
                 <div className="space-y-1 text-xs">
                   <div className="flex justify-between text-muted-foreground">

@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import { Search, Filter, Download, X, ChevronDown, ArrowUpDown } from "lucide-react";
+import type { RsAccount } from "@shared/schema";
 import { FlipCard } from "./FlipCard";
 import { EditFlipDialog } from "./EditFlipDialog";
 import { Button } from "@/components/ui/button";
@@ -40,6 +41,7 @@ interface Flip {
   membershipStatus?: string;
   isMembers?: boolean;
   geLimit?: number;
+  rsAccountId?: string | null;
 }
 
 type SortField = "date" | "profit" | "roi" | "item" | "investment";
@@ -48,6 +50,7 @@ type StatusFilter = "all" | "completed" | "open";
 
 interface FlipCardGridProps {
   flips: Flip[];
+  rsAccounts: RsAccount[];
   onDelete: (id: string) => void;
   onEdit: (id: string, data: Partial<{
     quantity: number;
@@ -59,6 +62,8 @@ interface FlipCardGridProps {
   onQuickSell?: (id: string, itemName: string) => Promise<void>;
   onViewChart?: (itemId: number | undefined, itemName: string) => void;
 }
+
+const accountText = (a: RsAccount) => `${a.displayName} (${a.accountType})`;
 
 const GE_TAX_RATE = 0.02;
 
@@ -85,7 +90,7 @@ function calculateROI(flip: Flip) {
   return (profit / totalCost) * 100;
 }
 
-export function FlipCardGrid({ flips, onDelete, onEdit, onQuickSell, onViewChart }: FlipCardGridProps) {
+export function FlipCardGrid({ flips, rsAccounts, onDelete, onEdit, onQuickSell, onViewChart }: FlipCardGridProps) {
   const [editingFlip, setEditingFlip] = useState<Flip | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [sortField, setSortField] = useState<SortField>("date");
@@ -93,6 +98,7 @@ export function FlipCardGrid({ flips, onDelete, onEdit, onQuickSell, onViewChart
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [categoryFilter, setCategoryFilter] = useState<string>("all");
   const [strategyFilter, setStrategyFilter] = useState<string>("all");
+  const [accountFilter, setAccountFilter] = useState<string>("all");
 
   const filteredAndSortedFlips = useMemo(() => {
     let result = [...flips];
@@ -116,6 +122,12 @@ export function FlipCardGrid({ flips, onDelete, onEdit, onQuickSell, onViewChart
 
     if (strategyFilter !== "all") {
       result = result.filter(flip => flip.strategyTag === strategyFilter);
+    }
+
+    if (accountFilter === "unassigned") {
+      result = result.filter(flip => !flip.rsAccountId);
+    } else if (accountFilter !== "all") {
+      result = result.filter(flip => flip.rsAccountId === accountFilter);
     }
 
     result.sort((a, b) => {
@@ -145,7 +157,7 @@ export function FlipCardGrid({ flips, onDelete, onEdit, onQuickSell, onViewChart
     });
 
     return result;
-  }, [flips, searchQuery, statusFilter, categoryFilter, strategyFilter, sortField, sortDirection]);
+  }, [flips, searchQuery, statusFilter, categoryFilter, strategyFilter, accountFilter, sortField, sortDirection]);
 
   const handleEditFlip = (flip: Flip) => {
     setEditingFlip(flip);
@@ -204,6 +216,7 @@ export function FlipCardGrid({ flips, onDelete, onEdit, onQuickSell, onViewChart
     setStatusFilter("all");
     setCategoryFilter("all");
     setStrategyFilter("all");
+    setAccountFilter("all");
     setSearchQuery("");
   };
 
@@ -241,6 +254,20 @@ export function FlipCardGrid({ flips, onDelete, onEdit, onQuickSell, onViewChart
         </div>
 
         <div className="flex gap-2">
+          {rsAccounts.length > 0 && (
+            <Select value={accountFilter} onValueChange={setAccountFilter}>
+              <SelectTrigger className="w-[180px]" data-testid="select-account-filter">
+                <SelectValue placeholder="All accounts" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">All accounts</SelectItem>
+                <SelectItem value="unassigned">Unassigned</SelectItem>
+                {rsAccounts.map(a => (
+                  <SelectItem key={a.id} value={a.id}>{accountText(a)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="default" className="gap-2" data-testid="button-filter">
@@ -393,6 +420,12 @@ export function FlipCardGrid({ flips, onDelete, onEdit, onQuickSell, onViewChart
             onEdit={handleEditFlip}
             onQuickSell={onQuickSell}
             onViewChart={onViewChart}
+            accountLabel={
+              rsAccounts.length === 0 ? undefined : (() => {
+                const a = rsAccounts.find(x => x.id === flip.rsAccountId);
+                return a ? accountText(a) : "Unassigned";
+              })()
+            }
           />
         ))}
       </div>

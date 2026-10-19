@@ -42,6 +42,7 @@ interface FlipCardProps {
   onEdit?: (flip: Flip) => void;
   onQuickSell?: (id: string, itemName: string) => Promise<void>;
   onViewChart?: (itemId: number | undefined, itemName: string) => void;
+  accountLabel?: string;
 }
 
 function getFlipTaxDetails(flip: Flip) {
@@ -66,7 +67,7 @@ function formatFullPrice(price: number) {
   return price.toLocaleString();
 }
 
-export function FlipCard({ flip, onDelete, onEdit, onQuickSell, onViewChart }: FlipCardProps) {
+export function FlipCard({ flip, onDelete, onEdit, onQuickSell, onViewChart, accountLabel }: FlipCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [isQuickSelling, setIsQuickSelling] = useState(false);
 
@@ -119,6 +120,7 @@ export function FlipCard({ flip, onDelete, onEdit, onQuickSell, onViewChart }: F
               <h3 className="font-medium text-sm truncate" data-testid={`flip-item-name-${flip.id}`}>
                 {flip.itemName}
               </h3>
+              {accountLabel && <Badge variant="outline" className="text-[10px]" data-testid="badge-flip-account">{accountLabel}</Badge>}
               {flip.quantity > 1 && (
                 <span className="text-xs text-muted-foreground">x{flip.quantity.toLocaleString()}</span>
               )}

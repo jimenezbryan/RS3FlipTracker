@@ -5,7 +5,7 @@ import { GoalsProgress } from "@/components/GoalsProgress";
 import { PriceHistoryChart } from "@/components/PriceHistoryChart";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import type { Flip, User } from "@shared/schema";
+import type { Flip, User, RsAccount } from "@shared/schema";
 import { useToast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -133,6 +133,8 @@ export default function Home() {
       ? `/api/flips?scope=all&userId=${filterUserId}`
       : `/api/flips?scope=all`
     : `/api/flips`;
+
+  const { data: rsAccounts = [] } = useQuery<RsAccount[]>({ queryKey: ["/api/rs-accounts"] });
 
   const { data: flips = [], isLoading } = useQuery<Flip[]>({
     queryKey: flipsQueryKey,
@@ -534,6 +536,7 @@ export default function Home() {
           <FlipForm onSubmit={handleAddFlip} openPositions={openPositions} userFlips={flips} />
           
           <FlipCardGrid 
+            rsAccounts={rsAccounts}
             flips={flips.map(flip => ({
               ...flip,
               itemIcon: flip.itemIcon ?? undefined,
