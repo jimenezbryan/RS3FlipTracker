@@ -3088,16 +3088,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
       timingSafeEqual(Buffer.from(token), Buffer.from(secret));
     if (!ok) return res.status(401).json({ error: "Unauthorized" });
     try {
-      // Presets first, then the global out-of-range check. Independent: a failure in one must
-      // not hide the other, and the second runs even when no preset is due.
-      const presets = await runDueAlerts();
+      // Presets first, then the global out-of-range check. Independent in both directions: a
+      // failure in one must not hide the other, and the second runs even when the first threw.
+      // 500 only when both failed.
+      let presetsFailed = false;
+      let presets: Awaited<ReturnType<typeof runDueAlerts>>;
+      try {
+        presets = await runDueAlerts();
+      } catch (error) {
+        console.error("Preset alerts error:", error);
+        presetsFailed = true;
+        presets = { ran: 0, sent: 0, errors: [error instanceof Error ? error.message : String(error)] };
+      }
+      let outFailed = false;
       let outOfRange: Awaited<ReturnType<typeof runOutOfRangeAlerts>>;
       try {
         outOfRange = await runOutOfRangeAlerts();
       } catch (error) {
         console.error("Out-of-range alerts error:", error);
+        outFailed = true;
         outOfRange = { found: 0, sent: 0, error: error instanceof Error ? error.message : String(error) };
       }
+      if (presetsFailed && outFailed) return res.status(500).json({ error: "Failed to run alerts" });
       res.json({ ...presets, outOfRange });
     } catch (error) {
       console.error("Cron alerts error:", error);
