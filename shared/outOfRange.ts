@@ -127,3 +127,22 @@ export function isCoolingDown(row: CooldownRow | undefined, direction: Direction
     : ratio <= 1 - COOLDOWN_BREAKOUT;
   return !broke;
 }
+
+/** Which hits go in this tick's message: not cooling, strongest first, at most `cap`. Hits cut
+ *  by the cap are simply not returned, so the caller records no cooldown for them and they
+ *  can post on a later tick. */
+export function pickToSend<T extends { itemId: number; detection: { direction: Direction; pctBeyond: number }; latest: { high: number | null; low: number | null } }>(
+  hits: T[],
+  cooldowns: CooldownRow[],
+  nowMs: number,
+  cap: number,
+): T[] {
+  const cool = new Map(cooldowns.map((c) => [`${c.itemId}:${c.direction}`, c]));
+  return hits
+    .filter((h) => {
+      const price = h.detection.direction === "spike" ? h.latest.high : h.latest.low;
+      return price != null && !isCoolingDown(cool.get(`${h.itemId}:${h.detection.direction}`), h.detection.direction, price, nowMs);
+    })
+    .sort((a, b) => b.detection.pctBeyond - a.detection.pctBeyond)
+    .slice(0, cap);
+}

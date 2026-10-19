@@ -9,7 +9,7 @@ import { getAllItemsForScanner, getItemIntraday, getItemPriceHistoryFull, getLat
 import { storage } from "./storage";
 import { sendOutOfRangeAlertsToDiscord } from "./discord";
 import {
-  detectOutOfRange, screenCandidates, isCoolingDown,
+  detectOutOfRange, screenCandidates, pickToSend,
   type DailyPoint, type Direction, type HourlyPoint,
 } from "@shared/outOfRange";
 import type { EmbedHit } from "@shared/outOfRangeEmbed";
@@ -89,14 +89,8 @@ export async function runOutOfRangeAlerts(now = new Date()): Promise<{ found: nu
     console.error("[outOfRange] cooldown read failed, sending nothing:", error);
     return { found: 0, sent: 0, error: "cooldown read failed" };
   }
-  const cool = new Map(cooldowns.map((c) => [`${c.itemId}:${c.direction}`, c]));
-
   const hits = await findOutOfRange(await getAllItemsForScanner(), now.getTime());
-  const fresh = hits.filter((h) => {
-    const price = h.detection.direction === "spike" ? h.latest.high : h.latest.low;
-    return price != null && !isCoolingDown(cool.get(`${h.itemId}:${h.detection.direction}`), h.detection.direction, price, now.getTime());
-  });
-  const batch = fresh.slice(0, MAX_EMBEDS_PER_TICK);
+  const batch = pickToSend(hits, cooldowns, now.getTime(), MAX_EMBEDS_PER_TICK);
   if (batch.length === 0) return { found: hits.length, sent: 0 };
 
   // Awaited on purpose: Vercel freezes the function once the response flushes.

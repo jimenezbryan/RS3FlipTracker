@@ -132,4 +132,14 @@ assert.equal(
   0xef4444, "dump is red",
 );
 
+// ── 5. pickToSend ─────────────────────────────────────────────────────────────────
+import { pickToSend } from "../shared/outOfRange";
+const mkHit = (itemId: number, pctBeyond: number, high = 100) => ({ itemId, detection: { direction: "spike" as const, pctBeyond }, latest: { high, low: 90 } });
+const seven = [1, 2, 3, 4, 5, 6, 7].map((id) => mkHit(id, id * 10));
+const sent = pickToSend(seven, [], now, 5);
+assert.deepEqual(sent.map((h) => h.itemId), [7, 6, 5, 4, 3], "top 5 by pctBeyond; 1 and 2 are cut and stay un-cooled");
+const cooled = pickToSend(seven, [{ itemId: 7, direction: "spike", lastAlertAt: new Date(now - H), lastPrice: 100 }], now, 5);
+assert.deepEqual(cooled.map((h) => h.itemId), [6, 5, 4, 3, 2], "a cooling item is skipped and the next one takes its slot");
+assert.deepEqual(pickToSend([mkHit(9, 50, null as any)], [], now, 5), [], "no live price on the alert side: skip, do not crash");
+
 console.log("check-out-of-range: ok");

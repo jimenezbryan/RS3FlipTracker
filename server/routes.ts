@@ -18,6 +18,7 @@ import { z } from "zod";
 import { createHmac, randomBytes, timingSafeEqual } from "crypto";
 import { getDatabaseUrl } from "./databaseUrl";
 import { runDueAlerts, runPresetNow } from "./scannerAlerts";
+import { runOutOfRangeAlerts } from "./outOfRange";
 
 const upload = multer({ 
   storage: multer.memoryStorage(),
@@ -3087,7 +3088,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       timingSafeEqual(Buffer.from(token), Buffer.from(secret));
     if (!ok) return res.status(401).json({ error: "Unauthorized" });
     try {
-      res.json(await runDueAlerts());
+      // Presets first, then the global out-of-range check. Independent: a failure in one must
+      // not hide the other, and the second runs even when no preset is due.
+      const presets = await runDueAlerts();
+      let outOfRange: Awaited<ReturnType<typeof runOutOfRangeAlerts>>;
+      try {
+        outOfRange = await runOutOfRangeAlerts();
+      } catch (error) {
+        console.error("Out-of-range alerts error:", error);
+        outOfRange = { found: 0, sent: 0, error: error instanceof Error ? error.message : String(error) };
+      }
+      res.json({ ...presets, outOfRange });
     } catch (error) {
       console.error("Cron alerts error:", error);
       res.status(500).json({ error: "Failed to run alerts" });
