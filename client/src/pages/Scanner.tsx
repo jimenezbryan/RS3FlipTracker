@@ -65,6 +65,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { PriceHistoryChart } from "@/components/PriceHistoryChart";
 import type { Flip } from "@shared/schema";
+import { SourceTag } from "@/components/SourceTag";
 
 interface ValueGapAnalysis {
   fairValue: number;
@@ -413,7 +414,7 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
               <Eye className="h-4 w-4" />
               Observable Market Range
             </h4>
-            <span className="text-xs text-muted-foreground">Based on actual recorded prices</span>
+            <span className="text-xs text-muted-foreground">Based on actual recorded prices <SourceTag source="weirdgloop" /></span>
           </div>
           <div className={`grid ${range7d && range30d ? "grid-cols-1 lg:grid-cols-2" : "grid-cols-1"} gap-4`}>
             {range7d && <PriceRangeBar range={range7d} label="7-Day Range" />}
@@ -526,11 +527,11 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
           </div>
           <div className="grid grid-cols-3 gap-3">
             <div>
-              <p className="text-xs text-muted-foreground">Fair Value</p>
+              <p className="text-xs text-muted-foreground">Fair Value <SourceTag source="weirdgloop" /></p>
               <p className="text-sm font-bold font-mono text-primary">{formatGPExact(ind.valueGap.fairValue)}</p>
             </div>
             <div>
-              <p className="text-xs text-muted-foreground">Current Price</p>
+              <p className="text-xs text-muted-foreground">Current Price <SourceTag source="weirdgloop" /></p>
               <p className="text-sm font-bold font-mono">{formatGPExact(ind.valueGap.currentPrice)}</p>
             </div>
             <div>
@@ -1339,14 +1340,14 @@ export default function Scanner() {
                   onClick={() => handleSort("buyPrice")}
                   data-testid="header-buy"
                 >
-                  BUY <SortIcon columnKey="buyPrice" />{funnel(COLUMN_SPECS.buyPrice)}
+                  BUY <SortIcon columnKey="buyPrice" />{funnel(COLUMN_SPECS.buyPrice)} <SourceTag source="wiki-quote" className="ml-1" />
                 </TableHead>
                 <TableHead 
                   className="cursor-pointer select-none text-muted-foreground hover:text-foreground text-right"
                   onClick={() => handleSort("sellPrice")}
                   data-testid="header-sell"
                 >
-                  SELL <SortIcon columnKey="sellPrice" />{funnel(COLUMN_SPECS.sellPrice)}
+                  SELL <SortIcon columnKey="sellPrice" />{funnel(COLUMN_SPECS.sellPrice)} <SourceTag source="wiki-quote" className="ml-1" />
                 </TableHead>
                 <TableHead 
                   className="cursor-pointer select-none text-muted-foreground hover:text-foreground text-right"

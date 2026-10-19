@@ -17,6 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { SourceTag } from "@/components/SourceTag";
 
 interface GEItem {
   id: number;
@@ -465,7 +466,7 @@ export default function Alerts() {
                           Target Price
                         </th>
                         <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                          Current Price
+                          Current Price <SourceTag source="wiki-quote" />
                         </th>
                         <th className="px-4 py-3 text-center text-xs font-medium uppercase tracking-wide text-muted-foreground">
                           Status

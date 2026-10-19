@@ -18,6 +18,7 @@ import {
   Sparkles
 } from "lucide-react";
 import { ItemIcon } from "@/components/ItemIcon";
+import { SourceTag } from "@/components/SourceTag";
 
 interface CommunityPriceData {
   itemId: number;
@@ -100,7 +101,7 @@ function PriceComparisonCard({ data }: { data: CommunityPriceData }) {
 
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div className="space-y-1">
-            <div className="text-xs text-muted-foreground uppercase tracking-wide">GE Price</div>
+            <div className="text-xs text-muted-foreground uppercase tracking-wide">GE Price <SourceTag source="wiki-quote" /></div>
             <div className="font-mono font-semibold">{formatPrice(gePrice)} gp</div>
             {data.confidence === 'low' && (
               <div className="text-xs text-red-400 flex items-center gap-1">
@@ -280,7 +281,7 @@ function QuickLookup() {
               <div>
                 <div className="font-semibold">{selectedItem.name}</div>
                 <div className="text-sm text-muted-foreground font-mono">
-                  GE Price: {formatFullPrice(selectedItem.price)} gp
+                  GE Price: {formatFullPrice(selectedItem.price)} gp <SourceTag source="wiki-quote" />
                 </div>
               </div>
             </div>

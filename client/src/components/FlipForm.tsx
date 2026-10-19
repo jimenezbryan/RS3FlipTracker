@@ -17,6 +17,7 @@ import type { Favorite, RsAccount, Flip } from "@shared/schema";
 import { PriceHistoryChart } from "./PriceHistoryChart";
 import { calculateFlipTax, formatGp } from "@shared/taxCalculator";
 import { parseGp } from "@shared/gpParser";
+import { SourceTag } from "@/components/SourceTag";
 
 interface GEItem {
   id: number;
@@ -868,6 +869,7 @@ export function FlipForm({ onSubmit, openPositions = [], userFlips = [] }: FlipF
                       <div className="flex items-center gap-2">
                         <TrendingUp className="h-4 w-4 text-success" />
                         <span className="text-sm font-medium">GE Price</span>
+                        <SourceTag source="wiki-quote" />
                       </div>
                       <div className="font-mono text-lg font-semibold text-success">
                         {gePrice.price.toLocaleString()} gp
@@ -875,6 +877,7 @@ export function FlipForm({ onSubmit, openPositions = [], userFlips = [] }: FlipF
                       {itemDetail?.outOfRange && normal && (
                         <Badge variant="outline" className="text-xs h-5 text-warning" data-testid="badge-out-of-range">
                           {itemDetail.outOfRange.direction === "spike" ? "Spike" : "Dump"} +{itemDetail.outOfRange.pctBeyond.toFixed(0)}% — normal {formatGp(normal.low)}–{formatGp(normal.high)} gp
+                          <SourceTag source="weirdgloop" className="ml-1" />
                         </Badge>
                       )}
                       <div className="flex gap-3 text-xs text-muted-foreground">

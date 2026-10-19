@@ -16,6 +16,7 @@ import { format, parseISO } from "date-fns";
 import type { Flip } from "@shared/schema";
 import { calculatePriceZones, movingAverage, ZONE_LABELS, type Zone } from "@shared/priceZones";
 import { chartWindow } from "@shared/chartWindow";
+import { SourceTag } from "@/components/SourceTag";
 
 interface PriceHistoryPoint {
   date: string;
@@ -363,6 +364,7 @@ export function PriceHistoryChart({ itemId, itemName, onClose, userFlips = [] }:
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <div className="flex items-center gap-2">
             <CardTitle className="text-base">{itemName}</CardTitle>
+            <SourceTag source={period === "24h" || period === "7d" ? "wiki-series" : "weirdgloop"} />
             {trend && (
               <div className="flex items-center gap-1">
                 {getTrendIcon()}

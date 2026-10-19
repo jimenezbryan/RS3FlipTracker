@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Trash2, Plus, Loader2, TrendingUp, TrendingDown, Eye, Bell } from "lucide-react";
 import { ItemIcon } from "@/components/ItemIcon";
+import { SourceTag } from "@/components/SourceTag";
 
 interface GEItem {
   id: number;
@@ -310,7 +311,7 @@ export default function Watchlist() {
                           Item
                         </th>
                         <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                          Current Price
+                          Current Price <SourceTag source="wiki-quote" />
                         </th>
                         <th className="px-4 py-3 text-right text-xs font-medium uppercase tracking-wide text-muted-foreground">
                           Target Buy

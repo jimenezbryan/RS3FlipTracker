@@ -15,6 +15,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { formatGP } from "@/lib/formatters";
+import { SourceTag } from "@/components/SourceTag";
 
 interface MarketMover {
   itemId: number;
@@ -168,13 +169,13 @@ function MoversTable({ items }: { items: MarketMover[] }) {
               Item
             </TableHead>
             <TableHead className="text-xs uppercase tracking-wider text-muted-foreground text-right">
-              Price
+              Price <SourceTag source="wiki-hourly" />
             </TableHead>
             <TableHead className="text-xs uppercase tracking-wider text-muted-foreground text-right">
-              24h Change
+              24h Change <SourceTag source="wiki-hourly" />
             </TableHead>
             <TableHead className="text-xs uppercase tracking-wider text-muted-foreground text-right">
-              7d Change
+              7d Change <SourceTag source="wiki-hourly" />
             </TableHead>
             <TableHead className="text-xs uppercase tracking-wider text-muted-foreground text-right">
               Volume
