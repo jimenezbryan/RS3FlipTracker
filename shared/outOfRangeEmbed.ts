@@ -82,7 +82,7 @@ export function buildOutOfRangeEmbed(hit: EmbedHit, nowMs: number): OutOfRangeEm
   const d = hit.detection;
   const spike = d.direction === "spike";
   const fires = d.pctBeyond >= 100 ? "🔥🔥🔥" : d.pctBeyond >= 50 ? "🔥🔥" : "🔥";
-  const wiki = `https://runescape.wiki/w/Exchange:${encodeURIComponent(hit.name.replace(/ /g, "_"))}`;
+  const wiki = `https://runescape.wiki/w/Exchange:${encodeURIComponent(hit.name.replace(/ /g, "_")).replace(/\(/g, "%28").replace(/\)/g, "%29")}`;
   const lines = [
     `[Wiki](${wiki})`,
     `**Rating**: ${fires}`,
@@ -108,6 +108,6 @@ export function buildOutOfRangeEmbed(hit: EmbedHit, nowMs: number): OutOfRangeEm
     timestamp: new Date(nowMs).toISOString(),
     // The 24h extreme is a wiki hourly price; the Normal range is a Weird Gloop daily guide
     // price. Different series, so the embed says so rather than implying one source.
-    footer: { text: `RS3 Flip Tracker · Prices: ${SOURCES["wiki-quote"].name} · Normal range: ${SOURCES.weirdgloop.name} daily` },
+    footer: { text: `RS3 Flip Tracker · Prices: ${SOURCES["wiki-hourly"].name} hourly · Normal range: ${SOURCES.weirdgloop.name} daily` },
   };
 }

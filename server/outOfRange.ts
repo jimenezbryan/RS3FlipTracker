@@ -3,7 +3,7 @@
  * badge endpoint so the two can never disagree about what is out of range.
  *
  * Cost shape: one bulk screen over ~2200 items (already fetched by getAllItemsForScanner),
- * then history for at most MAX_CANDIDATES survivors. History calls are cached upstream.
+ * then history for at most MAX_CANDIDATES survivors. History calls are cached upstream (getItemIntraday 5 min, getItemPriceHistoryFull 1 h).
  */
 import { getAllItemsForScanner, getItemIntraday, getItemPriceHistoryFull, getLatest, getPriceAnchors } from "./ge-api";
 import { storage } from "./storage";
@@ -95,7 +95,10 @@ export async function runOutOfRangeAlerts(now = new Date()): Promise<{ found: nu
 
   // Awaited on purpose: Vercel freezes the function once the response flushes.
   const ok = await sendOutOfRangeAlertsToDiscord(batch);
-  if (!ok) return { found: hits.length, sent: 0 };
+  if (!ok) {
+    // No webhook configured is a config state, not a failure.
+    return process.env.DISCORD_WEBHOOK_URL ? { found: hits.length, sent: 0, error: "discord post failed" } : { found: hits.length, sent: 0 };
+  }
   try {
     await storage.markOutOfRangeAlerted(
       batch.map((h) => ({ itemId: h.itemId, direction: h.detection.direction, price: (h.detection.direction === "spike" ? h.latest.high : h.latest.low)! })),
@@ -104,6 +107,7 @@ export async function runOutOfRangeAlerts(now = new Date()): Promise<{ found: nu
   } catch (error) {
     // Sent but not recorded: the next tick may repeat it once. Loud, because it means the table is unwritable.
     console.error("[outOfRange] cooldown write failed after send:", error);
+    return { found: hits.length, sent: batch.length, error: "cooldown write failed after send" };
   }
   return { found: hits.length, sent: batch.length };
 }

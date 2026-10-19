@@ -729,17 +729,18 @@ function aggregateToMonthly(points: PriceHistoryPoint[]): PriceHistoryPoint[] {
     }));
 }
 
-export async function getItemPriceHistoryFull(itemId: number): Promise<{ monthly: PriceHistoryPoint[]; daily: PriceHistoryPoint[] } | null> {
-  try {
+type FullHistory = { monthly: PriceHistoryPoint[]; daily: PriceHistoryPoint[] };
+
+async function fetchPriceHistoryFull(itemId: number): Promise<FullHistory> {
     const response = await fetch(
       `${GE_API_BASE}/all?id=${itemId}`,
       { headers: { "User-Agent": USER_AGENT } }
     );
-    if (!response.ok) return null;
+    if (!response.ok) throw new Error(`Weird Gloop ${response.status}`);
 
     const data = await response.json();
     const history = data[itemId.toString()];
-    if (!history || history.length === 0) return null;
+    if (!history || history.length === 0) throw new Error("no history");
 
     const sortedHistory = [...history].sort(
       (a: any, b: any) => {
@@ -762,6 +763,21 @@ export async function getItemPriceHistoryFull(itemId: number): Promise<{ monthly
     const daily = allPoints.filter(p => new Date(p.date) >= cutoff90d);
 
     return { monthly, daily };
+}
+
+/** Daily data, so 1 h is plenty. memo() gives inflight dedupe and serve-stale-on-error; the
+ *  cron (up to 20 items / 15 min), the Scanner summary and Log Flip all land here. */
+const FULL_HISTORY_TTL = 60 * 60 * 1000;
+const fullHistoryCache = new Map<number, () => Promise<FullHistory>>();
+
+export async function getItemPriceHistoryFull(itemId: number): Promise<FullHistory | null> {
+  let cached = fullHistoryCache.get(itemId);
+  if (!cached) {
+    cached = memo<FullHistory>(FULL_HISTORY_TTL, () => fetchPriceHistoryFull(itemId));
+    fullHistoryCache.set(itemId, cached);
+  }
+  try {
+    return await cached();
   } catch (error) {
     console.error("Failed to fetch full item price history:", error);
     return null;

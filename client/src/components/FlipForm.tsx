@@ -127,15 +127,15 @@ export function FlipForm({ onSubmit, openPositions = [], userFlips = [] }: FlipF
   
   const [gePrice, setGePrice] = useState<GEItem | null>(null);
   
-  const { data: rsAccounts = [] } = useQuery<RsAccount[]>({
+  const { data: rsAccounts = [], isSuccess: rsAccountsLoaded } = useQuery<RsAccount[]>({
     queryKey: ["/api/rs-accounts"],
   });
 
   useEffect(() => {
-    if (selectedRsAccountId && rsAccounts.length > 0 && !rsAccounts.some((a) => a.id === selectedRsAccountId)) setSelectedRsAccountId("");
-  }, [rsAccounts, selectedRsAccountId]);
+    if (rsAccountsLoaded && selectedRsAccountId && !rsAccounts.some((a) => a.id === selectedRsAccountId)) setSelectedRsAccountId("");
+  }, [rsAccounts, rsAccountsLoaded, selectedRsAccountId]);
 
-  const { data: itemDetail } = useQuery<{ range30d: { low: number; high: number } | null; outOfRange: { direction: "spike" | "dump"; pctBeyond: number } | null }>({
+  const { data: itemDetail } = useQuery<{ range30d: { low: number; high: number } | null; outOfRange: { direction: "spike" | "dump"; pctBeyond: number; normalLow: number; normalHigh: number } | null }>({
     queryKey: ["/api/scanner/item", gePrice?.id, "detail"],
     queryFn: async () => {
       const res = await fetch(`/api/scanner/item/${gePrice!.id}/detail`, { credentials: "include" });
@@ -426,7 +426,7 @@ export function FlipForm({ onSubmit, openPositions = [], userFlips = [] }: FlipF
       category: category && category !== "none" ? category : undefined,
       strategyTag,
       membershipStatus,
-      rsAccountId: selectedRsAccountId || undefined,
+      rsAccountId: rsAccounts.some((a) => a.id === selectedRsAccountId) ? selectedRsAccountId : undefined,
       isMembers: gePrice?.isMembers,
       geLimit: gePrice?.geLimit,
       tradeType,
@@ -874,9 +874,9 @@ export function FlipForm({ onSubmit, openPositions = [], userFlips = [] }: FlipF
                       <div className="font-mono text-lg font-semibold text-success">
                         {gePrice.price.toLocaleString()} gp
                       </div>
-                      {itemDetail?.outOfRange && normal && (
+                      {itemDetail?.outOfRange && (
                         <Badge variant="outline" className="text-xs h-5 text-warning" data-testid="badge-out-of-range">
-                          {itemDetail.outOfRange.direction === "spike" ? "Spike" : "Dump"} +{itemDetail.outOfRange.pctBeyond.toFixed(0)}% — normal {formatGp(normal.low)}–{formatGp(normal.high)} gp
+                          {itemDetail.outOfRange.direction === "spike" ? "Spike +" : "Dump −"}{itemDetail.outOfRange.pctBeyond.toFixed(0)}% — normal {formatGp(itemDetail.outOfRange.normalLow)}–{formatGp(itemDetail.outOfRange.normalHigh)} gp
                           <SourceTag source="weirdgloop" className="ml-1" />
                         </Badge>
                       )}
@@ -1115,7 +1115,7 @@ export function FlipForm({ onSubmit, openPositions = [], userFlips = [] }: FlipF
               />
               {priceWarning(buyPrice) && (
                 <p className="text-xs text-warning flex items-center gap-1" data-testid="warning-buy-out-of-range">
-                  <AlertTriangle className="h-3 w-3" />{priceWarning(buyPrice)}
+                  <AlertTriangle className="h-3 w-3" />{priceWarning(buyPrice)}<SourceTag source="weirdgloop" />
                 </p>
               )}
             </div>
@@ -1147,7 +1147,7 @@ export function FlipForm({ onSubmit, openPositions = [], userFlips = [] }: FlipF
               />
               {priceWarning(sellPrice) && (
                 <p className="text-xs text-warning flex items-center gap-1" data-testid="warning-sell-out-of-range">
-                  <AlertTriangle className="h-3 w-3" />{priceWarning(sellPrice)}
+                  <AlertTriangle className="h-3 w-3" />{priceWarning(sellPrice)}<SourceTag source="weirdgloop" />
                 </p>
               )}
               {taxCalc && (

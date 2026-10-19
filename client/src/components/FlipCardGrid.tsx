@@ -423,7 +423,7 @@ export function FlipCardGrid({ flips, rsAccounts, onDelete, onEdit, onQuickSell,
             accountLabel={
               rsAccounts.length === 0 ? undefined : (() => {
                 const a = rsAccounts.find(x => x.id === flip.rsAccountId);
-                return a ? accountText(a) : "Unassigned";
+                return a ? accountText(a) : flip.rsAccountId ? undefined : "Unassigned";
               })()
             }
           />

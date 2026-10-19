@@ -70,21 +70,23 @@ assert.equal(detectOutOfRange([], daily, { high: 100_000_000, low: 95_000_000 },
 
 // ── 2. screenCandidates ───────────────────────────────────────────────────────────
 const item = (id: number, over: Partial<Parameters<typeof screenCandidates>[0][number]> = {}) =>
-  ({ id, geLimit: 10, volume: 50, hourVolume: 3, buyPrice: 1000, sellPrice: 1000, ...over });
-const anchors = { "1": { d1: 1000, d7: 1000 }, "2": { d1: 1000, d7: 1000 }, "3": { d1: 1000, d7: 1000 }, "4": { d1: null, d7: null }, "5": { d1: 1000, d7: 1000 } };
+  ({ id, geLimit: 10, volume: 50, hourVolume: 3, buyPrice: 10_000, sellPrice: 10_000, ...over });
+const anchors = { "1": { d1: 10_000, d7: 10_000 }, "2": { d1: 10_000, d7: 10_000 }, "3": { d1: 10_000, d7: 10_000 }, "4": { d1: null, d7: null }, "5": { d1: 10_000, d7: 10_000 }, "6": { d1: 10_000, d7: 10_000 }, "7": { d1: 3, d7: 3 } };
 const ids = screenCandidates(
   [
-    item(1, { sellPrice: 1300 }),                  // +30% -> spike candidate
-    item(2, { buyPrice: 700 }),                    // -30% -> dump candidate
-    item(3, { sellPrice: 1300, volume: 5 }),       // moved but under geLimit -> illiquid
-    item(4, { sellPrice: 1300 }),                  // no anchors -> cannot screen
-    item(5, { sellPrice: 1300, hourVolume: 0 }),   // nothing traded this hour
+    item(1, { buyPrice: 13_000, sellPrice: 13_000 }),                  // mid +30% -> spike candidate
+    item(2, { buyPrice: 7000, sellPrice: 7000 }),                    // mid -30% -> dump candidate
+    item(3, { buyPrice: 13_000, sellPrice: 13_000, volume: 5 }),       // moved but under geLimit -> illiquid
+    item(4, { buyPrice: 13_000, sellPrice: 13_000 }),                  // no anchors -> cannot screen
+    item(5, { buyPrice: 13_000, sellPrice: 13_000, hourVolume: 0 }),   // nothing traded this hour
+    item(6, { buyPrice: 8000, sellPrice: 12_000 }),                   // wide steady spread, mid 10_000 -> not movement
+    item(7, { buyPrice: 4, sellPrice: 4 }),                        // 3 -> 4 gp is +33% but under MIN_SCREEN_PRICE
   ],
   anchors,
 );
 assert.deepEqual([...ids].sort(), [1, 2], "only liquid movers with anchors survive");
-const many = Array.from({ length: 30 }, (_, i) => item(i + 100, { sellPrice: 1200 + i * 10 }));
-const manyAnchors = Object.fromEntries(many.map((m) => [String(m.id), { d1: 1000, d7: 1000 }]));
+const many = Array.from({ length: 30 }, (_, i) => item(i + 100, { buyPrice: 12_000 + i * 100, sellPrice: 12_000 + i * 100 }));
+const manyAnchors = Object.fromEntries(many.map((m) => [String(m.id), { d1: 10_000, d7: 10_000 }]));
 const top = screenCandidates(many, manyAnchors);
 assert.equal(top.length, 20, "capped at MAX_CANDIDATES");
 assert.equal(top[0], 129, "strongest move first");
@@ -131,6 +133,13 @@ assert.equal(
   buildOutOfRangeEmbed({ itemId: 1, name: "X", icon: "i", geLimit: 1, volume: 1, margin: 1, detection: dump!, latest: { high: null, highTime: null, low: 25_000_000, lowTime: null }, series7d: [] }, now).color,
   0xef4444, "dump is red",
 );
+
+// Wiki links must survive parentheses in item names.
+const paren = buildOutOfRangeEmbed({ itemId: 2, name: "Rune platebody (g)", icon: "i", geLimit: 1, volume: 1, margin: 1, detection: spike!, latest: { high: 1, highTime: null, low: 1, lowTime: null }, series7d: [] }, now);
+const wikiUrl = paren.description.match(/\[Wiki\]\(([^\n]*)\)\n/)![1];
+assert.ok(wikiUrl.includes("%28g%29"), "parentheses are percent-encoded in the wiki link");
+assert.ok(!wikiUrl.includes("(g)"), "no literal parentheses inside the URL");
+assert.match(embed.footer.text, /hourly/, "footer calls the 24h extreme an hourly price");
 
 // ── 5. pickToSend ─────────────────────────────────────────────────────────────────
 import { pickToSend } from "../shared/outOfRange";

@@ -16,6 +16,8 @@ export const MIN_BASELINE_POINTS = 7;
  *  it is a cheap filter to pick who gets a history fetch, not the verdict. */
 export const SCREEN_MOVE = 0.15;
 export const MAX_CANDIDATES = 20;
+/** Pre-screen floor (gp): below this a single gp is a big percentage, so cheap items are skipped. */
+export const MIN_SCREEN_PRICE = 1000;
 export const COOLDOWN_MS = 6 * 60 * 60 * 1000;
 export const COOLDOWN_BREAKOUT = 0.1;
 
@@ -100,8 +102,11 @@ export function screenCandidates(items: ScreenItem[], anchors: Record<string, An
     if (!a) continue;
     const refs = [a.d1, a.d7].filter((n): n is number => n != null && n > 0);
     if (refs.length === 0) continue;
-    const up = it.sellPrice / Math.min(...refs) - 1;
-    const down = 1 - it.buyPrice / Math.max(...refs);
+    // Mid vs mid: comparing a high/low side to a mid would count half the spread as movement.
+    const cur = (it.buyPrice + it.sellPrice) / 2;
+    if (cur < MIN_SCREEN_PRICE) continue;
+    const up = cur / Math.min(...refs) - 1;
+    const down = 1 - cur / Math.max(...refs);
     const move = Math.max(up, down);
     if (move >= SCREEN_MOVE) scored.push({ id: it.id, move });
   }

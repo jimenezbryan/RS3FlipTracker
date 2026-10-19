@@ -429,7 +429,7 @@ function ItemDetailPanel({ item, detail, isLoading }: { item: ScannerItem; detai
           </p>
           {oor && (
             <p className="text-xs mt-2" data-testid="text-out-of-range-detail">
-              Out of range: 24h {oor.direction === "spike" ? "high" : "low"} {oor.extreme.toLocaleString()} gp is {oor.pctBeyond.toFixed(0)}% beyond the normal {oor.normalLow.toLocaleString()}–{oor.normalHigh.toLocaleString()} gp.
+              Out of range: 24h {oor.direction === "spike" ? "high" : "low"} {oor.extreme.toLocaleString()} gp <SourceTag source="wiki-series" /> is {oor.pctBeyond.toFixed(0)}% beyond the normal {oor.normalLow.toLocaleString()}–{oor.normalHigh.toLocaleString()} gp <SourceTag source="weirdgloop" />.
             </p>
           )}
         </div>
@@ -1470,7 +1470,7 @@ export default function Scanner() {
                                 title={`24h extreme ${oorRow.extreme.toLocaleString()} vs normal ${oorRow.normalLow.toLocaleString()}–${oorRow.normalHigh.toLocaleString()}`}
                                 data-testid={`badge-out-of-range-${item.id}`}
                               >
-                                {oorRow.direction === "spike" ? "Spike" : "Dump"} +{oorRow.pctBeyond.toFixed(0)}%
+                                {oorRow.direction === "spike" ? "Spike +" : "Dump −"}{oorRow.pctBeyond.toFixed(0)}%
                               </Badge>
                             )}
                             {/* Secondary line rather than a new column: the table is already
