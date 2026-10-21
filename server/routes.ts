@@ -15,6 +15,7 @@ import { startOfDay, startOfWeek, startOfMonth, isAfter } from "date-fns";
 import { z } from "zod";
 import { timingSafeEqual } from "crypto";
 import { getDatabaseUrl } from "./databaseUrl";
+import { toPublicUser } from "./publicUser";
 import { runDueAlerts, runPresetNow } from "./scannerAlerts";
 import { runOutOfRangeAlerts, getOutOfRangeSummary } from "./outOfRange";
 import { detectOutOfRange, type Detection } from "@shared/outOfRange";
@@ -179,7 +180,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const userId = req.user.claims.sub;
       const user = await storage.getUser(userId);
-      res.json(user);
+      res.json(toPublicUser(user));
     } catch (error) {
       console.error("Error fetching user:", error);
       res.status(500).json({ message: "Failed to fetch user" });
@@ -2023,7 +2024,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           (now - new Date(session.lastHeartbeat).getTime()) < onlineThreshold;
         
         return {
-          ...user,
+          ...toPublicUser(user),
           isOnline,
           lastHeartbeat: session?.lastHeartbeat,
         };
@@ -2269,7 +2270,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!updated) {
         return res.status(404).json({ error: "User not found" });
       }
-      res.json(updated);
+      res.json(toPublicUser(updated));
     } catch (error) {
       res.status(500).json({ error: "Failed to update profile" });
     }
@@ -2293,7 +2294,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!updated) {
         return res.status(404).json({ error: "User not found" });
       }
-      res.json(updated);
+      res.json(toPublicUser(updated));
     } catch (error) {
       res.status(500).json({ error: "Failed to upload avatar" });
     }
