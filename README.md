@@ -1,14 +1,13 @@
 [README.md](https://github.com/user-attachments/files/29591832/README.md)
 # RS3 Flip Tracker
 
-RS3 Flip Tracker, also branded as FlipSync, is a RuneScape 3 Grand Exchange tracking app for logging flips, reviewing profit, and spotting better trading opportunities. It combines live market data, OCR, AI-assisted suggestions, and portfolio tracking in one place.
+RS3 Flip Tracker, also branded as FlipSync, is a RuneScape 3 Grand Exchange tracking app for logging flips, reviewing profit, and spotting better trading opportunities. It combines live market data, AI-assisted suggestions, and portfolio tracking in one place.
 
 ## What it does
 
 - Log buy and sell flips with item metadata, dates, notes, and strategy tags
 - Track profit, ROI, hold time, and trade history over time
 - Pull live item data and price history from the WeirdGloop GE API
-- Scan screenshots with OCR to help capture flip data faster
 - Show portfolio value, open positions, goals, and performance charts
 - Send Discord summaries and alerts when configured
 - Generate AI-driven suggestions based on trading patterns and market history
@@ -18,7 +17,7 @@ RS3 Flip Tracker, also branded as FlipSync, is a RuneScape 3 Grand Exchange trac
 - Frontend: React 18, TypeScript, Wouter, TanStack Query, Tailwind CSS, shadcn/ui
 - Backend: Node.js, Express, TypeScript
 - Database: PostgreSQL with Drizzle ORM
-- Integrations: WeirdGloop GE API, OpenAI, Discord webhooks, Tesseract OCR
+- Integrations: WeirdGloop GE API, OpenAI, Discord webhooks
 
 ## Getting Started
 
@@ -72,7 +71,7 @@ npm run check
 ## Project Structure
 
 - `client/` - React app and UI components
-- `server/` - API routes, auth, storage, integrations, and OCR
+- `server/` - API routes, auth, storage, and integrations
 - `shared/` - Shared schema and utility logic
 - `attached_assets/` - Branding, screenshots, and media
 
