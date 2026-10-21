@@ -32,6 +32,10 @@ _Avoid_: Pump
 An out-of-range alert where the sell-side price (what sellers received) in the last 24 hours is far below the Normal range low. A price you could buy at.
 _Avoid_: Dip, crash
 
+**Trend**:
+How an item's price moved over the last 7 days: rising above +2%, falling below −2%, stable in between.
+_Avoid_: streak, momentum
+
 **Normal range**:
 An item's low and high price over the prior 30 days, excluding the last 24 hours. The baseline an out-of-range price is measured against.
 _Avoid_: Fair value, average
