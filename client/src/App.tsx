@@ -9,6 +9,7 @@ import { useHeartbeat } from "@/hooks/useHeartbeat";
 import { useVersionCheck } from "@/hooks/useVersionCheck";
 import { AppSidebar } from "@/components/AppSidebar";
 import { Header } from "@/components/Header";
+import { MoveBanner } from "@/components/MoveBanner";
 import Home from "@/pages/Home";
 import Landing from "@/pages/Landing";
 import MarketInsights from "@/pages/MarketInsights";
@@ -55,6 +56,7 @@ function AuthenticatedLayout({ children }: { children: React.ReactNode }) {
         <AppSidebar />
         <div className="flex flex-col flex-1 overflow-hidden">
           <Header />
+          <MoveBanner />
           <main className="flex-1 overflow-auto">
             {children}
           </main>
