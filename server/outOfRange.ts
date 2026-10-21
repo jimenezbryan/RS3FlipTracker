@@ -97,7 +97,7 @@ export async function runOutOfRangeAlerts(now = new Date()): Promise<{ found: nu
   const ok = await sendOutOfRangeAlertsToDiscord(batch);
   if (!ok) {
     // No webhook configured is a config state, not a failure.
-    return process.env.DISCORD_WEBHOOK_URL ? { found: hits.length, sent: 0, error: "discord post failed" } : { found: hits.length, sent: 0 };
+    return (process.env.DISCORD_OUT_OF_RANGE_WEBHOOK_URL || process.env.DISCORD_WEBHOOK_URL) ? { found: hits.length, sent: 0, error: "discord post failed" } : { found: hits.length, sent: 0 };
   }
   try {
     await storage.markOutOfRangeAlerted(
