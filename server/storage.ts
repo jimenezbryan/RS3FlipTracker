@@ -1,5 +1,6 @@
 import { users, flips, watchlist, priceAlerts, favorites, profitGoals, portfolioCategories, portfolioHoldings, portfolioHoldingTransactions, portfolioSnapshots, portfolioSnapshotItems, flipTransactions, itemVolumeDaily, userSessions, rsAccounts, recipes, recipeComponents, recipeRuns, recipeRunComponents, scannerPresets, outOfRangeAlerts, type ScannerPreset, type InsertScannerPreset, type User, type UpsertUser, type Flip, type InsertFlip, type FlipWithUser, type WatchlistItem, type InsertWatchlistItem, type PriceAlert, type InsertPriceAlert, type Favorite, type InsertFavorite, type ProfitGoal, type InsertProfitGoal, type PortfolioCategory, type InsertPortfolioCategory, type PortfolioHolding, type InsertPortfolioHolding, type UpdatePortfolioHolding, type PortfolioSnapshot, type PortfolioSnapshotItem, type FlipTransaction, type ItemVolumeDaily, type UserSession, type RsAccount, type InsertRsAccount, type HoldingTransaction, type InsertHoldingTransaction, type Recipe, type InsertRecipe, type RecipeComponent, type InsertRecipeComponent, type RecipeRun, type InsertRecipeRun, type RecipeRunComponent, type InsertRecipeRunComponent, type RecipeWithComponents, type RecipeRunWithDetails } from "@shared/schema";
 import { db } from "./db";
+import { retry } from "./retry";
 import { eq, desc, and, isNull, sql, gte, lte, inArray } from "drizzle-orm";
 import { randomUUID } from "crypto";
 import { isDue } from "@shared/scannerPipeline";
@@ -1803,7 +1804,9 @@ export class DatabaseStorage implements IStorage {
 
 async function createStorage(): Promise<IStorage> {
   try {
-    await db.select().from(users).limit(1);
+    // ponytail: Neon can take a few seconds to wake from scale-to-zero; one failed probe used to
+    // crash the cold instance (Authentication timed out / Connection terminated, ~67 a week).
+    await retry(() => db.select().from(users).limit(1), [1000, 2000]);
     console.log("[storage] Database connection successful, using DatabaseStorage");
     return new DatabaseStorage();
   } catch (error) {
