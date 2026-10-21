@@ -59,7 +59,6 @@ export interface PriceTrend {
   direction: "rising" | "falling" | "stable";
   changePercent: number;
   changeAmount: number;
-  trendDays: number;
   avgPrice7d: number;
   avgPrice30d: number;
   lowPrice30d: number;
@@ -454,42 +453,15 @@ export async function getItemTrend(itemId: number): Promise<PriceTrend | null> {
     const lowPrice30d = Math.min(...last30d);
     const highPrice30d = Math.max(...last30d);
     
-    let trendDays = 0;
-    let trendDirection: "rising" | "falling" | "stable" = "stable";
-    
-    if (prices.length >= 2) {
-      const recentPrice = prices[prices.length - 1];
-      let lastTrendPrice = recentPrice;
-      
-      for (let i = prices.length - 2; i >= 0; i--) {
-        const diff = recentPrice - prices[i];
-        const percentDiff = Math.abs(diff / prices[i]) * 100;
-        
-        if (percentDiff < 2) {
-          trendDays++;
-          continue;
-        }
-        
-        if (trendDays === 0) {
-          trendDirection = diff > 0 ? "rising" : "falling";
-          trendDays = 1;
-          lastTrendPrice = prices[i];
-        } else {
-          const currentTrend = diff > 0 ? "rising" : "falling";
-          if (currentTrend === trendDirection) {
-            trendDays++;
-            lastTrendPrice = prices[i];
-          } else {
-            break;
-          }
-        }
-      }
-    }
-    
+    // The trend is the 7-day change, nothing else: direction, percentage and recommendation all
+    // read this one number, so they can't disagree. ±2% (inclusive) is noise and reads as stable.
     const priceWeekAgo = prices[Math.max(0, prices.length - 8)] || currentPrice;
     const changeAmount = currentPrice - priceWeekAgo;
-    const changePercent = (changeAmount / priceWeekAgo) * 100;
-    
+    const changePercent = Math.round((changeAmount / priceWeekAgo) * 100 * 100) / 100;
+    const trendDirection: "rising" | "falling" | "stable" =
+      changePercent > 2 ? "rising" : changePercent < -2 ? "falling" : "stable";
+    const change7d = `${Math.abs(changePercent).toFixed(1)}% over 7 days`;
+
     let recommendation: "buy" | "sell" | "hold" = "hold";
     let recommendationReason = "";
     
@@ -503,12 +475,12 @@ export async function getItemTrend(itemId: number): Promise<PriceTrend | null> {
     } else if (priceVsHigh < 10 && trendDirection !== "rising") {
       recommendation = "sell";
       recommendationReason = `Near 30-day high (${priceVsHigh.toFixed(1)}% below). Consider selling.`;
-    } else if (trendDirection === "falling" && trendDays >= 5) {
+    } else if (trendDirection === "falling") {
       recommendation = "hold";
-      recommendationReason = `Falling for ${trendDays} days. Wait for stabilization.`;
-    } else if (trendDirection === "rising" && trendDays >= 5 && priceVs30dAvg < 5) {
+      recommendationReason = `Down ${change7d}. Wait for stabilization.`;
+    } else if (trendDirection === "rising" && priceVs30dAvg < 5) {
       recommendation = "buy";
-      recommendationReason = `Rising trend for ${trendDays} days, still near average.`;
+      recommendationReason = `Up ${change7d}, still near average.`;
     } else if (priceVs30dAvg < -5) {
       recommendation = "buy";
       recommendationReason = `${Math.abs(priceVs30dAvg).toFixed(1)}% below 30-day average.`;
@@ -522,9 +494,8 @@ export async function getItemTrend(itemId: number): Promise<PriceTrend | null> {
 
     return {
       direction: trendDirection,
-      changePercent: Math.round(changePercent * 100) / 100,
+      changePercent,
       changeAmount: Math.round(changeAmount),
-      trendDays: Math.max(1, trendDays),
       avgPrice7d: Math.round(avgPrice7d),
       avgPrice30d: Math.round(avgPrice30d),
       lowPrice30d: Math.round(lowPrice30d),

@@ -34,7 +34,6 @@ interface PriceTrend {
   direction: "rising" | "falling" | "stable";
   changePercent: number;
   changeAmount: number;
-  trendDays: number;
   avgPrice7d: number;
   avgPrice30d: number;
   lowPrice30d: number;
@@ -921,7 +920,7 @@ export function FlipForm({ onSubmit, openPositions = [], userFlips = [] }: FlipF
                            priceTrend.direction === "falling" ? "Falling" : "Stable"}
                         </span>
                         <span className="text-sm text-muted-foreground">
-                          for {priceTrend.trendDays} day{priceTrend.trendDays !== 1 ? "s" : ""}
+                          · 7 days
                         </span>
                       </div>
                       <span className={`font-mono text-sm ${priceTrend.changePercent > 0 ? "text-success" : priceTrend.changePercent < 0 ? "text-destructive" : ""}`}>
