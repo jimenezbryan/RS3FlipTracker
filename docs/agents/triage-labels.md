@@ -12,6 +12,6 @@ The skills speak in terms of five canonical triage roles. This file maps those r
 
 When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the corresponding label string from this table.
 
-One extra label sits outside triage: `in-progress` — an agent has claimed a `ready-for-agent` issue and is working it (see the `implement` skill). Remove it when the PR opens or the issue goes back to `ready-for-human`.
+One extra label sits outside triage: `in-progress` — an agent has claimed the issue (see the `implement` skill). Claiming swaps `ready-for-agent` for `in-progress`, so no second agent picks it up. It stays on while the PR is open; it comes off when the issue goes back to `ready-for-human`.
 
 Edit the right-hand column to match whatever vocabulary you actually use.
