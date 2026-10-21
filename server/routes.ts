@@ -8,6 +8,7 @@ import { getAlchOpportunities } from "./alch";
 import { getUpdateRadar } from "./update-radar";
 import { calculateTechnicalIndicators, calculateSmartPricing, calculateTradeHistoryStats, calculateObservableRange, type TechnicalIndicators, type SmartPricing, type TradeHistoryStats, type ValueGapAnalysis, type ObservableRange } from "./technical-indicators";
 import { setupAuth, isAuthenticated } from "./replitAuth";
+import { moveNotice } from "./moveNotice";
 import { analyzeUserTradingProfile, getPersonalizedRecommendations } from "./ai-recommendations";
 import { calculateFlipTax } from "@shared/taxCalculator";
 import { sendFlipToDiscord, sendFlipUpdateToDiscord, sendGoalAchievementToDiscord, sendDailySummaryToDiscord, type GoalAchievement } from "./discord";
@@ -174,6 +175,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.get('/api/version', (req, res) => {
     res.json({ version: SERVER_START_TIME });
+  });
+
+  // Read per request, so setting or clearing MOVE_AT needs no code change.
+  app.get('/api/move-notice', (req, res) => {
+    res.json(moveNotice(process.env.MOVE_AT));
   });
 
   app.get('/api/auth/user', isAuthenticated, async (req: any, res) => {
