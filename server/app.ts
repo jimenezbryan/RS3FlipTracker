@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { log } from "./log";
 import { storageReady } from "./storage";
+import { readOnlyGuard } from "./readOnly";
 
 export async function createApp() {
   // Never serve a request on the placeholder MemStorage — see storage.ts.
@@ -40,6 +41,8 @@ export async function createApp() {
 
     next();
   });
+
+  app.use(readOnlyGuard());
 
   const server = await registerRoutes(app);
 
