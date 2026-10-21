@@ -22,7 +22,7 @@ The frontend uses a component-based architecture, organizing code into pages, re
 -   **API Design**: RESTful JSON API (`/api` prefix)
 -   **Development**: Hot module replacement via Vite middleware
 
-The server handles API endpoint definitions, data access, external GE API integration, and image OCR.
+The server handles API endpoint definitions, data access, and external GE API integration.
 
 ### Data Storage
 -   **ORM**: Drizzle ORM (PostgreSQL dialect)

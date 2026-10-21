@@ -29,9 +29,11 @@ __export(schema_exports, {
   insertRecipeRunSchema: () => insertRecipeRunSchema,
   insertRecipeSchema: () => insertRecipeSchema,
   insertRsAccountSchema: () => insertRsAccountSchema,
+  insertScannerPresetSchema: () => insertScannerPresetSchema,
   insertWatchlistSchema: () => insertWatchlistSchema,
   itemVolumeDaily: () => itemVolumeDaily,
   membershipStatusEnum: () => membershipStatusEnum,
+  outOfRangeAlerts: () => outOfRangeAlerts,
   portfolioCategories: () => portfolioCategories,
   portfolioHoldingTransactions: () => portfolioHoldingTransactions,
   portfolioHoldings: () => portfolioHoldings,
@@ -46,6 +48,7 @@ __export(schema_exports, {
   recipes: () => recipes,
   rsAccountTypeEnum: () => rsAccountTypeEnum,
   rsAccounts: () => rsAccounts,
+  scannerPresets: () => scannerPresets,
   sessions: () => sessions,
   updatePortfolioHoldingSchema: () => updatePortfolioHoldingSchema,
   userSessions: () => userSessions,
@@ -53,9 +56,258 @@ __export(schema_exports, {
   watchlist: () => watchlist
 });
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, integer, bigint, timestamp, index, jsonb, boolean, pgEnum } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, integer, bigint, timestamp, index, jsonb, boolean, pgEnum, primaryKey } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
+import { z as z2 } from "zod";
+
+// shared/scannerPipeline.ts
 import { z } from "zod";
+
+// shared/scannerFilters.ts
+var BUY_LIMIT_BANDS = [
+  { id: "lim-10", label: "\u2264 10", min: 0, max: 10 },
+  { id: "lim-100", label: "11\u2013100", min: 11, max: 100 },
+  { id: "lim-500", label: "101\u2013500", min: 101, max: 500 },
+  { id: "lim-2500", label: "501\u20132.5K", min: 501, max: 2500 },
+  { id: "lim-12k", label: "2.5K\u201312K", min: 2501, max: 12e3 },
+  { id: "lim-max", label: "12K+", min: 12001, max: Infinity }
+];
+var PRICE_BANDS = [
+  { id: "px-1k", label: "Under 1K", min: 0, max: 999 },
+  { id: "px-10k", label: "1K\u201310K", min: 1e3, max: 9999 },
+  { id: "px-100k", label: "10K\u2013100K", min: 1e4, max: 99999 },
+  { id: "px-1m", label: "100K\u20131M", min: 1e5, max: 999999 },
+  { id: "px-10m", label: "1M\u201310M", min: 1e6, max: 9999999 },
+  { id: "px-100m", label: "10M\u2013100M", min: 1e7, max: 99999999 },
+  { id: "px-1b", label: "100M\u20131B", min: 1e8, max: 999999999 },
+  { id: "px-max", label: "1B+", min: 1e9, max: Infinity }
+];
+var UNCATEGORISED = "Uncategorised";
+function inBand(value, band) {
+  return value >= band.min && value <= band.max;
+}
+function bandById(bands, id) {
+  if (!id) return null;
+  return bands.find((b) => b.id === id) ?? null;
+}
+var matchesLimit = (item, sel) => {
+  const band = bandById(BUY_LIMIT_BANDS, sel.buyLimitBandId);
+  return !band || inBand(item.geLimit, band);
+};
+var matchesPrice = (item, sel) => {
+  const band = bandById(PRICE_BANDS, sel.priceBandId);
+  return !band || inBand(item.buyPrice, band);
+};
+var matchesCategory = (item, sel) => sel.categories.length === 0 || sel.categories.includes(item.category ?? UNCATEGORISED);
+function matchesSelection(item, sel) {
+  return matchesLimit(item, sel) && matchesPrice(item, sel) && matchesCategory(item, sel);
+}
+
+// shared/columnFilters.ts
+function cellOptions(value) {
+  if (value === null || value === void 0) return [];
+  if (Array.isArray(value)) return value;
+  if (typeof value === "boolean") return [String(value)];
+  return [String(value)];
+}
+function isNoOp(filter) {
+  if (!filter) return true;
+  if (filter.kind === "range") return filter.min === null && filter.max === null;
+  if (filter.kind === "set") return filter.values.length === 0;
+  return filter.query.trim() === "";
+}
+function matchesOne(value, filter) {
+  if (isNoOp(filter)) return true;
+  if (filter.kind === "range") {
+    if (value === null || value === void 0 || value === "") return false;
+    const n = typeof value === "number" ? value : Number(value);
+    if (!Number.isFinite(n)) return false;
+    if (filter.min !== null && n < filter.min) return false;
+    if (filter.max !== null && n > filter.max) return false;
+    return true;
+  }
+  if (filter.kind === "set") {
+    const options = cellOptions(value);
+    return options.some((o) => filter.values.includes(o));
+  }
+  const haystack = cellOptions(value).join(" ").toLowerCase();
+  return haystack.includes(filter.query.trim().toLowerCase());
+}
+function matchesColumnFilters(row, filters) {
+  for (const key of Object.keys(filters)) {
+    if (!matchesOne(row[key], filters[key])) return false;
+  }
+  return true;
+}
+
+// shared/scannerPipeline.ts
+var SIGNAL_PRIORITY = {
+  "Smart Money": 1,
+  "Deep Value": 1,
+  "Accumulation": 2,
+  "Strong Trend": 2,
+  "Good Value": 3,
+  "Distribution": 3,
+  "Pullback": 2
+};
+var SIGNAL_DEEP_VALUE_ROI = 30;
+var SIGNAL_GOOD_VALUE_ROI = 15;
+var SIGNAL_MIN_MOVE_PCT = 10;
+var HIGH_SCORE_MIN = 60;
+function scoreItems(items) {
+  if (items.length === 0) return [];
+  const globalAvgVolume = items.reduce((sum, item) => sum + item.volume, 0) / items.length;
+  const volumeRankById = /* @__PURE__ */ new Map();
+  [...items].sort((a, b) => a.volume - b.volume).forEach((item, i) => {
+    volumeRankById.set(item.id, items.length > 1 ? i / (items.length - 1) * 100 : 50);
+  });
+  return items.map((item) => {
+    const marginPercent = item.buyPrice > 0 ? item.margin / item.buyPrice * 100 : 0;
+    const volumeScore = Math.round(volumeRankById.get(item.id) ?? 0);
+    const volumeRatio = globalAvgVolume > 0 ? item.volume / globalAvgVolume : 0;
+    const momentumScore = item.trend === "up" ? 90 : item.trend === "stable" ? 55 : 20;
+    let valueScore = 0;
+    if (marginPercent > 5 || item.roi > 8) {
+      valueScore = 100;
+    } else if (marginPercent > 2 || item.roi > 4) {
+      valueScore = 75;
+    } else if (marginPercent > 0) {
+      valueScore = 50;
+    } else {
+      valueScore = Math.max(0, 30 + marginPercent * 5);
+    }
+    const stopLossAmount = item.buyPrice * 0.02;
+    const riskRewardRatio = stopLossAmount > 0 ? item.margin / stopLossAmount : 0;
+    const riskScore = Math.min(100, Math.max(0, Math.round(riskRewardRatio * 25)));
+    const tradeScore = Math.round(
+      volumeScore * 0.25 + // 25% weight on volume
+      momentumScore * 0.25 + // 25% weight on momentum
+      valueScore * 0.3 + // 30% weight on value (most important)
+      riskScore * 0.2
+      // 20% weight on risk/reward
+    );
+    const signals = [];
+    if (volumeScore >= 90) {
+      signals.push("Smart Money");
+    }
+    if (volumeScore >= 75 && marginPercent > 0 && (item.trend === "stable" || item.trend === "down")) {
+      signals.push("Accumulation");
+    }
+    if (volumeScore >= 75 && marginPercent < 0) {
+      signals.push("Distribution");
+    }
+    const move = Math.abs(item.changePct24h ?? 0);
+    if (item.trend === "down" && move > SIGNAL_MIN_MOVE_PCT) {
+      signals.push("Pullback");
+    }
+    if (item.trend === "up" && move > SIGNAL_MIN_MOVE_PCT) {
+      signals.push("Strong Trend");
+    }
+    if (item.roi > SIGNAL_DEEP_VALUE_ROI) {
+      signals.push("Deep Value");
+    } else if (item.roi > SIGNAL_GOOD_VALUE_ROI) {
+      signals.push("Good Value");
+    }
+    const sortedSignals = signals.sort((a, b) => (SIGNAL_PRIORITY[a] || 99) - (SIGNAL_PRIORITY[b] || 99)).slice(0, 3);
+    return {
+      ...item,
+      volumeRatio,
+      volumeScore,
+      momentumScore,
+      valueScore,
+      riskScore,
+      riskRewardRatio,
+      tradeScore,
+      signals: sortedSignals
+    };
+  });
+}
+var SCANNER_ALERT_INTERVALS = [15, 30, 60, 120, 240, 720, 1440];
+var SCANNER_ALERT_MAX_TOP_N = 25;
+var columnFilterSchema = z.union([
+  z.object({ kind: z.literal("range"), min: z.number().nullable(), max: z.number().nullable() }),
+  z.object({ kind: z.literal("set"), values: z.array(z.string()) }),
+  z.object({ kind: z.literal("text"), query: z.string() })
+]);
+var presetFiltersSchema = z.object({
+  searchQuery: z.string().default(""),
+  f2pOnly: z.boolean().default(false),
+  watchlistOnly: z.boolean().default(false),
+  signalsOnly: z.boolean().default(false),
+  showUnprofitable: z.boolean().default(false),
+  highScoreOnly: z.boolean().default(false),
+  selection: z.object({
+    buyLimitBandId: z.string().nullable(),
+    priceBandId: z.string().nullable(),
+    categories: z.array(z.string())
+  }),
+  columnFilters: z.record(columnFilterSchema),
+  // ponytail: a free string, not an enum of every key. An unknown key sorts as "absent" in
+  // compare() below, which is harmless, and keeping this in sync with ScannerItem by hand is
+  // exactly the kind of drift this module exists to remove.
+  sortKey: z.string(),
+  sortDirection: z.enum(["asc", "desc"])
+});
+var asRow = (item) => item;
+function applyToggles(items, f, favoriteItemIds) {
+  let result = items;
+  if (f.searchQuery.trim()) {
+    const query = f.searchQuery.toLowerCase();
+    result = result.filter((item) => item.name.toLowerCase().includes(query));
+  }
+  if (f.f2pOnly) result = result.filter((item) => !item.isMembers);
+  if (f.watchlistOnly) result = result.filter((item) => favoriteItemIds.has(item.id));
+  if (!f.showUnprofitable) result = result.filter((item) => item.netProfit > 0);
+  if (f.signalsOnly) result = result.filter((item) => item.signals.length > 0);
+  if (f.highScoreOnly) result = result.filter((item) => item.tradeScore >= HIGH_SCORE_MIN);
+  return result;
+}
+var compare = (a, b, key) => {
+  const aVal = a[key];
+  const bVal = b[key];
+  if (typeof aVal === "string" && typeof bVal === "string") {
+    return aVal.localeCompare(bVal);
+  }
+  if (typeof aVal === "boolean" && typeof bVal === "boolean") {
+    return (aVal ? 1 : 0) - (bVal ? 1 : 0);
+  }
+  const numA = aVal == null ? Number.NEGATIVE_INFINITY : Number(aVal) || 0;
+  const numB = bVal == null ? Number.NEGATIVE_INFINITY : Number(bVal) || 0;
+  return numA - numB;
+};
+function applyFiltersAndSort(items, f) {
+  const result = items.filter(
+    (item) => matchesSelection(item, f.selection) && matchesColumnFilters(asRow(item), f.columnFilters)
+  );
+  result.sort((a, b) => {
+    const primary = compare(a, b, f.sortKey);
+    if (primary !== 0) return f.sortDirection === "asc" ? primary : -primary;
+    return f.sortKey === "netProfit" ? 0 : b.netProfit - a.netProfit;
+  });
+  return result;
+}
+function runPreset(items, f, favoriteItemIds = /* @__PURE__ */ new Set()) {
+  return applyFiltersAndSort(applyToggles(scoreItems(items), f, favoriteItemIds), f);
+}
+function isDue(preset, now) {
+  if (!preset.alertEnabled) return false;
+  if (!preset.lastRunAt) return true;
+  const dueAt = preset.lastRunAt.getTime() + (preset.intervalMinutes - 1) * 6e4;
+  return now.getTime() >= dueAt;
+}
+function pickItems(preset, results, opts = {}) {
+  if (preset.mode === "new") {
+    if (preset.lastItemIds == null && !opts.force) return null;
+    const seen = new Set(preset.lastItemIds ?? []);
+    const fresh = results.filter((i) => !seen.has(i.id));
+    if (fresh.length === 0) return null;
+    return { items: fresh.slice(0, preset.topN), total: fresh.length };
+  }
+  if (results.length === 0) return null;
+  return { items: results.slice(0, preset.topN), total: results.length };
+}
+
+// shared/schema.ts
 var membershipStatusEnum = pgEnum("membership_status", ["F2P", "Members", "Unknown"]);
 var rsAccountTypeEnum = pgEnum("rs_account_type", ["Main", "Ironman", "HCIM", "Ultimate", "GIM", "Alt", "Other"]);
 var sessions = pgTable(
@@ -99,11 +351,11 @@ var insertRsAccountSchema = createInsertSchema(rsAccounts).omit({
   createdAt: true,
   updatedAt: true
 }).extend({
-  displayName: z.string().min(1).max(12),
-  accountType: z.enum(["Main", "Ironman", "HCIM", "Ultimate", "GIM", "Alt", "Other"]).default("Main"),
-  isDefault: z.boolean().optional(),
-  preferredWorld: z.coerce.number().int().positive().optional(),
-  notes: z.string().optional()
+  displayName: z2.string().min(1).max(12),
+  accountType: z2.enum(["Main", "Ironman", "HCIM", "Ultimate", "GIM", "Alt", "Other"]).default("Main"),
+  isDefault: z2.boolean().optional(),
+  preferredWorld: z2.coerce.number().int().positive().optional(),
+  notes: z2.string().optional()
 });
 var flips = pgTable("flips", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -131,20 +383,20 @@ var insertFlipSchema = createInsertSchema(flips).omit({
   userId: true,
   deletedAt: true
 }).extend({
-  rsAccountId: z.string().optional(),
-  itemId: z.coerce.number().int().positive().optional(),
-  quantity: z.coerce.number().int().positive().default(1),
-  buyPrice: z.coerce.number().int().positive(),
-  sellPrice: z.coerce.number().int().positive().optional(),
-  buyDate: z.coerce.date(),
-  sellDate: z.coerce.date().optional(),
-  notes: z.string().optional(),
-  category: z.string().max(50).optional(),
-  strategyTag: z.enum(["Fast Flip", "Slow Flip", "Bulk", "High Margin", "Speculative", "Other"]).default("Other"),
-  membershipStatus: z.enum(["F2P", "Members", "Unknown"]).default("Unknown"),
-  isMembers: z.boolean().optional(),
-  geLimit: z.coerce.number().int().positive().optional(),
-  tradeType: z.enum(["ge", "street"]).default("ge")
+  rsAccountId: z2.string().optional(),
+  itemId: z2.coerce.number().int().positive().optional(),
+  quantity: z2.coerce.number().int().positive().default(1),
+  buyPrice: z2.coerce.number().int().positive(),
+  sellPrice: z2.coerce.number().int().positive().optional(),
+  buyDate: z2.coerce.date(),
+  sellDate: z2.coerce.date().optional(),
+  notes: z2.string().optional(),
+  category: z2.string().max(50).optional(),
+  strategyTag: z2.enum(["Fast Flip", "Slow Flip", "Bulk", "High Margin", "Speculative", "Other"]).default("Other"),
+  membershipStatus: z2.enum(["F2P", "Members", "Unknown"]).default("Unknown"),
+  isMembers: z2.boolean().optional(),
+  geLimit: z2.coerce.number().int().positive().optional(),
+  tradeType: z2.enum(["ge", "street"]).default("ge")
 });
 var watchlist = pgTable("watchlist", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -163,10 +415,10 @@ var insertWatchlistSchema = createInsertSchema(watchlist).omit({
   userId: true,
   createdAt: true
 }).extend({
-  itemId: z.coerce.number().int().positive(),
-  targetBuyPrice: z.coerce.number().int().positive().optional(),
-  targetSellPrice: z.coerce.number().int().positive().optional(),
-  membershipStatus: z.enum(["F2P", "Members", "Unknown"]).default("Unknown")
+  itemId: z2.coerce.number().int().positive(),
+  targetBuyPrice: z2.coerce.number().int().positive().optional(),
+  targetSellPrice: z2.coerce.number().int().positive().optional(),
+  membershipStatus: z2.enum(["F2P", "Members", "Unknown"]).default("Unknown")
 });
 var priceAlerts = pgTable("price_alerts", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -189,10 +441,10 @@ var insertPriceAlertSchema = createInsertSchema(priceAlerts).omit({
   triggeredAt: true,
   createdAt: true
 }).extend({
-  itemId: z.coerce.number().int().positive(),
-  alertType: z.enum(["above", "below"]),
-  targetPrice: z.coerce.number().int().positive(),
-  membershipStatus: z.enum(["F2P", "Members", "Unknown"]).default("Unknown")
+  itemId: z2.coerce.number().int().positive(),
+  alertType: z2.enum(["above", "below"]),
+  targetPrice: z2.coerce.number().int().positive(),
+  membershipStatus: z2.enum(["F2P", "Members", "Unknown"]).default("Unknown")
 });
 var favorites = pgTable("favorites", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -207,8 +459,60 @@ var insertFavoriteSchema = createInsertSchema(favorites).omit({
   userId: true,
   createdAt: true
 }).extend({
-  itemId: z.coerce.number().int().positive()
+  itemId: z2.coerce.number().int().positive()
 });
+var scannerPresets = pgTable("scanner_presets", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull().references(() => users.id),
+  name: text("name").notNull(),
+  /** PresetFilters from shared/scannerPipeline.ts, as JSON. */
+  filters: jsonb("filters").$type().notNull(),
+  alertEnabled: boolean("alert_enabled").notNull().default(false),
+  intervalMinutes: integer("interval_minutes").notNull().default(60),
+  mode: varchar("mode", { length: 10 }).notNull().default("new"),
+  // 'new' | 'summary'
+  topN: integer("top_n").notNull().default(10),
+  /** Per-alert Discord webhook. Null falls back to DISCORD_WEBHOOK_URL. */
+  webhookUrl: text("webhook_url"),
+  lastRunAt: timestamp("last_run_at"),
+  /** Item ids of the last full result, so mode 'new' can diff against it. */
+  lastItemIds: jsonb("last_item_ids").$type(),
+  createdAt: timestamp("created_at").defaultNow()
+});
+var insertScannerPresetSchema = createInsertSchema(scannerPresets).omit({
+  id: true,
+  userId: true,
+  lastRunAt: true,
+  lastItemIds: true,
+  createdAt: true
+}).extend({
+  name: z2.string().trim().min(1).max(60),
+  filters: presetFiltersSchema,
+  alertEnabled: z2.boolean().default(false),
+  intervalMinutes: z2.coerce.number().int().refine(
+    (n) => SCANNER_ALERT_INTERVALS.includes(n),
+    { message: `intervalMinutes must be one of ${SCANNER_ALERT_INTERVALS.join(", ")}` }
+  ).default(60),
+  mode: z2.enum(["new", "summary"]).default("new"),
+  topN: z2.coerce.number().int().min(1).max(SCANNER_ALERT_MAX_TOP_N).default(10),
+  // Prefix-checked, not just url(): the server POSTs to this, so anything else would make the
+  // endpoint an SSRF proxy for whoever holds an admin session.
+  webhookUrl: z2.string().trim().regex(
+    /^https:\/\/(discord|discordapp)\.com\/api\/webhooks\/\S+$/,
+    "Must be a Discord webhook URL"
+  ).nullable().optional().transform((v) => v === "" ? null : v ?? null)
+});
+var outOfRangeAlerts = pgTable(
+  "out_of_range_alerts",
+  {
+    itemId: integer("item_id").notNull(),
+    direction: varchar("direction", { length: 5 }).notNull(),
+    // 'spike' | 'dump'
+    lastAlertAt: timestamp("last_alert_at").notNull(),
+    lastPrice: bigint("last_price", { mode: "number" }).notNull()
+  },
+  (t) => [primaryKey({ columns: [t.itemId, t.direction] })]
+);
 var profitGoals = pgTable("profit_goals", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull().references(() => users.id),
@@ -224,8 +528,8 @@ var insertProfitGoalSchema = createInsertSchema(profitGoals).omit({
   createdAt: true,
   updatedAt: true
 }).extend({
-  goalType: z.enum(["daily", "weekly", "monthly"]),
-  targetAmount: z.coerce.number().int().positive()
+  goalType: z2.enum(["daily", "weekly", "monthly"]),
+  targetAmount: z2.coerce.number().int().positive()
 });
 var portfolioCategories = pgTable("portfolio_categories", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -240,8 +544,8 @@ var insertPortfolioCategorySchema = createInsertSchema(portfolioCategories).omit
   userId: true,
   createdAt: true
 }).extend({
-  name: z.string().min(1).max(50),
-  color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional()
+  name: z2.string().min(1).max(50),
+  color: z2.string().regex(/^#[0-9A-Fa-f]{6}$/).optional()
 });
 var portfolioHoldings = pgTable("portfolio_holdings", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -278,18 +582,18 @@ var insertPortfolioHoldingSchema = createInsertSchema(portfolioHoldings).omit({
   createdAt: true,
   updatedAt: true
 }).extend({
-  itemId: z.coerce.number().int().positive(),
-  quantity: z.coerce.number().int().positive().default(1),
-  avgBuyPrice: z.coerce.number().int().positive(),
-  categoryId: z.string().optional(),
-  source: z.enum(["manual", "screenshot", "flip"]).optional(),
-  notes: z.string().optional()
+  itemId: z2.coerce.number().int().positive(),
+  quantity: z2.coerce.number().int().positive().default(1),
+  avgBuyPrice: z2.coerce.number().int().positive(),
+  categoryId: z2.string().optional(),
+  source: z2.enum(["manual", "screenshot", "flip"]).optional(),
+  notes: z2.string().optional()
 });
-var updatePortfolioHoldingSchema = z.object({
-  quantity: z.coerce.number().int().positive().optional(),
-  avgBuyPrice: z.coerce.number().int().positive().optional(),
-  categoryId: z.string().nullable().optional(),
-  notes: z.string().nullable().optional()
+var updatePortfolioHoldingSchema = z2.object({
+  quantity: z2.coerce.number().int().positive().optional(),
+  avgBuyPrice: z2.coerce.number().int().positive().optional(),
+  categoryId: z2.string().nullable().optional(),
+  notes: z2.string().nullable().optional()
 });
 var portfolioHoldingTransactions = pgTable("portfolio_holding_transactions", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -315,13 +619,13 @@ var insertHoldingTransactionSchema = createInsertSchema(portfolioHoldingTransact
   profitLoss: true,
   createdAt: true
 }).extend({
-  holdingId: z.string(),
-  transactionType: z.enum(["buy", "sell"]),
-  quantity: z.coerce.number().int().positive(),
-  pricePerUnit: z.coerce.number().int().positive(),
-  fees: z.coerce.number().int().min(0).optional(),
-  notes: z.string().optional(),
-  transactionDate: z.coerce.date()
+  holdingId: z2.string(),
+  transactionType: z2.enum(["buy", "sell"]),
+  quantity: z2.coerce.number().int().positive(),
+  pricePerUnit: z2.coerce.number().int().positive(),
+  fees: z2.coerce.number().int().min(0).optional(),
+  notes: z2.string().optional(),
+  transactionDate: z2.coerce.date()
 });
 var portfolioSnapshots = pgTable("portfolio_snapshots", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -408,12 +712,12 @@ var insertRecipeSchema = createInsertSchema(recipes).omit({
   createdAt: true,
   updatedAt: true
 }).extend({
-  name: z.string().min(1).max(100),
-  outputItemId: z.coerce.number().int().positive().optional(),
-  outputItemName: z.string().min(1),
-  outputItemIcon: z.string().optional(),
-  outputQuantity: z.coerce.number().int().positive().default(1),
-  notes: z.string().optional()
+  name: z2.string().min(1).max(100),
+  outputItemId: z2.coerce.number().int().positive().optional(),
+  outputItemName: z2.string().min(1),
+  outputItemIcon: z2.string().optional(),
+  outputQuantity: z2.coerce.number().int().positive().default(1),
+  notes: z2.string().optional()
 });
 var recipeComponents = pgTable("recipe_components", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -427,12 +731,12 @@ var recipeComponents = pgTable("recipe_components", {
 var insertRecipeComponentSchema = createInsertSchema(recipeComponents).omit({
   id: true
 }).extend({
-  recipeId: z.string(),
-  itemId: z.coerce.number().int().positive().optional(),
-  itemName: z.string().min(1),
-  itemIcon: z.string().optional(),
-  quantityRequired: z.coerce.number().int().positive().default(1),
-  notes: z.string().optional()
+  recipeId: z2.string(),
+  itemId: z2.coerce.number().int().positive().optional(),
+  itemName: z2.string().min(1),
+  itemIcon: z2.string().optional(),
+  quantityRequired: z2.coerce.number().int().positive().default(1),
+  notes: z2.string().optional()
 });
 var recipeRuns = pgTable("recipe_runs", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -458,10 +762,10 @@ var insertRecipeRunSchema = createInsertSchema(recipeRuns).omit({
   startedAt: true,
   completedAt: true
 }).extend({
-  recipeId: z.string(),
-  targetSellPrice: z.coerce.number().int().positive().optional(),
-  actualSellPrice: z.coerce.number().int().positive().optional(),
-  notes: z.string().optional()
+  recipeId: z2.string(),
+  targetSellPrice: z2.coerce.number().int().positive().optional(),
+  actualSellPrice: z2.coerce.number().int().positive().optional(),
+  notes: z2.string().optional()
 });
 var recipeRunComponents = pgTable("recipe_run_components", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
@@ -478,13 +782,13 @@ var insertRecipeRunComponentSchema = createInsertSchema(recipeRunComponents).omi
   id: true,
   purchaseDate: true
 }).extend({
-  runId: z.string(),
-  componentId: z.string(),
-  rsAccountId: z.string().optional(),
-  quantityAcquired: z.coerce.number().int().positive(),
-  buyPrice: z.coerce.number().int().positive(),
-  totalCost: z.coerce.number().int().positive(),
-  notes: z.string().optional()
+  runId: z2.string(),
+  componentId: z2.string(),
+  rsAccountId: z2.string().optional(),
+  quantityAcquired: z2.coerce.number().int().positive(),
+  buyPrice: z2.coerce.number().int().positive(),
+  totalCost: z2.coerce.number().int().positive(),
+  notes: z2.string().optional()
 });
 
 // server/db.ts
@@ -531,6 +835,7 @@ var MemStorage = class {
   portfolioHolds = /* @__PURE__ */ new Map();
   portfolioSnaps = /* @__PURE__ */ new Map();
   portfolioSnapItems = /* @__PURE__ */ new Map();
+  outOfRangeCooldowns = /* @__PURE__ */ new Map();
   async getUser(id) {
     return this.users.get(id);
   }
@@ -1168,6 +1473,34 @@ var MemStorage = class {
   async deleteRecipeRunComponent() {
     return false;
   }
+  async createScannerPreset() {
+    throw new Error("Not implemented");
+  }
+  async getScannerPresets() {
+    return [];
+  }
+  async getScannerPreset() {
+    return void 0;
+  }
+  async updateScannerPreset() {
+    return void 0;
+  }
+  async deleteScannerPreset() {
+    return false;
+  }
+  async getDueAlertPresets() {
+    return [];
+  }
+  async markScannerPresetRun() {
+  }
+  async getOutOfRangeCooldowns() {
+    return Array.from(this.outOfRangeCooldowns.values());
+  }
+  async markOutOfRangeAlerted(rows, now) {
+    for (const r of rows) {
+      this.outOfRangeCooldowns.set(`${r.itemId}:${r.direction}`, { itemId: r.itemId, direction: r.direction, lastAlertAt: now, lastPrice: r.price });
+    }
+  }
 };
 var DatabaseStorage = class {
   async getUser(id) {
@@ -1293,6 +1626,44 @@ var DatabaseStorage = class {
   async createFavorite(userId, favorite) {
     const [newFavorite] = await db.insert(favorites).values({ ...favorite, userId }).returning();
     return newFavorite;
+  }
+  async createScannerPreset(userId, preset) {
+    const [row] = await db.insert(scannerPresets).values({ ...preset, userId }).returning();
+    return row;
+  }
+  async getScannerPresets(userId) {
+    return await db.select().from(scannerPresets).where(eq(scannerPresets.userId, userId)).orderBy(desc(scannerPresets.createdAt));
+  }
+  async getScannerPreset(id, userId) {
+    const [row] = await db.select().from(scannerPresets).where(and(eq(scannerPresets.id, id), eq(scannerPresets.userId, userId)));
+    return row || void 0;
+  }
+  async updateScannerPreset(id, userId, preset) {
+    const [row] = await db.update(scannerPresets).set(preset).where(and(eq(scannerPresets.id, id), eq(scannerPresets.userId, userId))).returning();
+    return row || void 0;
+  }
+  async deleteScannerPreset(id, userId) {
+    const result = await db.delete(scannerPresets).where(and(eq(scannerPresets.id, id), eq(scannerPresets.userId, userId))).returning();
+    return result.length > 0;
+  }
+  async getDueAlertPresets(now) {
+    const enabled = await db.select().from(scannerPresets).where(eq(scannerPresets.alertEnabled, true));
+    return enabled.filter((p) => isDue(p, now));
+  }
+  async markScannerPresetRun(id, now, itemIds) {
+    await db.update(scannerPresets).set({ lastRunAt: now, lastItemIds: itemIds }).where(eq(scannerPresets.id, id));
+  }
+  async getOutOfRangeCooldowns() {
+    const rows = await db.select().from(outOfRangeAlerts);
+    return rows.map((r) => ({ itemId: r.itemId, direction: r.direction, lastAlertAt: r.lastAlertAt, lastPrice: r.lastPrice }));
+  }
+  async markOutOfRangeAlerted(rows, now) {
+    for (const r of rows) {
+      await db.insert(outOfRangeAlerts).values({ itemId: r.itemId, direction: r.direction, lastAlertAt: now, lastPrice: r.price }).onConflictDoUpdate({
+        target: [outOfRangeAlerts.itemId, outOfRangeAlerts.direction],
+        set: { lastAlertAt: now, lastPrice: r.price }
+      });
+    }
   }
   async getFavorites(userId) {
     return await db.select().from(favorites).where(eq(favorites.userId, userId)).orderBy(desc(favorites.createdAt));
@@ -1730,12 +2101,26 @@ var storageReady = createStorage().then((s) => storage = s).catch((error) => {
   throw error;
 });
 
+// server/ge-api.ts
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 // server/technical-indicators.ts
+var MIN_POINTS_FOR_AVERAGE = 2;
+var MIN_POINTS_FOR_VOLATILITY = 4;
+var DAY_MS = 24 * 60 * 60 * 1e3;
+function pricesWithinDays(history, days) {
+  const cutoff = Date.now() - days * DAY_MS;
+  return history.filter((h) => new Date(h.date).getTime() >= cutoff).map((h) => h.price);
+}
+function meanOrNull(prices) {
+  if (prices.length < MIN_POINTS_FOR_AVERAGE) return null;
+  return Math.round(prices.reduce((a, b) => a + b, 0) / prices.length);
+}
 function calculateObservableRange(history, days) {
   if (history.length === 0) return null;
-  const recent = history.slice(-days);
-  if (recent.length < 2) return null;
-  const prices = recent.map((h) => h.price);
+  const prices = pricesWithinDays(history, days);
+  if (prices.length < MIN_POINTS_FOR_AVERAGE) return null;
   const low = Math.min(...prices);
   const high = Math.max(...prices);
   const current = prices[prices.length - 1];
@@ -1761,25 +2146,18 @@ function calculateRSI(prices, period = 14) {
   const rs = avgGain / avgLoss;
   return Math.round((100 - 100 / (1 + rs)) * 10) / 10;
 }
-function calculateSMA(prices, period) {
-  if (prices.length < period) return null;
-  const recent = prices.slice(-period);
-  return Math.round(recent.reduce((a, b) => a + b, 0) / period);
-}
 function calculateVolatility(prices) {
-  if (prices.length < 2) return 0;
-  const recent = prices.slice(-30);
-  const mean = recent.reduce((a, b) => a + b, 0) / recent.length;
-  if (mean === 0) return 0;
-  const squaredDiffs = recent.map((p) => Math.pow(p - mean, 2));
-  const variance = squaredDiffs.reduce((a, b) => a + b, 0) / recent.length;
+  if (prices.length < MIN_POINTS_FOR_VOLATILITY) return null;
+  const mean = prices.reduce((a, b) => a + b, 0) / prices.length;
+  if (mean === 0) return null;
+  const squaredDiffs = prices.map((p) => Math.pow(p - mean, 2));
+  const variance = squaredDiffs.reduce((a, b) => a + b, 0) / prices.length;
   const stdDev = Math.sqrt(variance);
   return Math.round(stdDev / mean * 1e4) / 100;
 }
 function findSupportResistance(prices) {
   if (prices.length < 10) return { support: null, resistance: null };
-  const recent = prices.slice(-30);
-  const sorted = [...recent].sort((a, b) => a - b);
+  const sorted = [...prices].sort((a, b) => a - b);
   const q1Index = Math.floor(sorted.length * 0.1);
   const q3Index = Math.floor(sorted.length * 0.9);
   return {
@@ -1787,10 +2165,10 @@ function findSupportResistance(prices) {
     resistance: sorted[q3Index]
   };
 }
-function calculateValueGap(currentPrice, sma30, sma200) {
+function calculateValueGap(currentPrice, avg30d, avg90d) {
   const anchors = [];
-  if (sma30 !== null) anchors.push(sma30);
-  if (sma200 !== null) anchors.push(sma200);
+  if (avg30d !== null) anchors.push(avg30d);
+  if (avg90d !== null) anchors.push(avg90d);
   if (anchors.length === 0) return null;
   const fairValue = Math.round(anchors.reduce((a, b) => a + b, 0) / anchors.length);
   if (fairValue === 0) return null;
@@ -1807,30 +2185,29 @@ function calculateValueGap(currentPrice, sma30, sma200) {
 }
 function calculateTechnicalIndicators(history) {
   const prices = history.map((h) => h.price);
+  const currentPrice = prices.length > 0 ? prices[prices.length - 1] : 0;
+  const window30d = pricesWithinDays(history, 30);
+  const avg7d = meanOrNull(pricesWithinDays(history, 7));
+  const avg30d = meanOrNull(window30d);
+  const avg90d = meanOrNull(pricesWithinDays(history, 90));
   const rsi14 = calculateRSI(prices);
-  const sma7 = calculateSMA(prices, 7);
-  const sma30 = calculateSMA(prices, 30);
-  const sma200 = calculateSMA(prices, 200);
   let smaCrossover = "neutral";
-  if (sma7 !== null && sma30 !== null) {
-    const diff = (sma7 - sma30) / sma30;
+  if (avg7d !== null && avg30d !== null) {
+    const diff = (avg7d - avg30d) / avg30d;
     if (diff > 0.01) smaCrossover = "bullish";
     else if (diff < -0.01) smaCrossover = "bearish";
   }
-  const volatilityPct = calculateVolatility(prices);
-  let priceVsAvg30 = 0;
-  if (sma30 !== null && prices.length > 0) {
-    const currentPrice2 = prices[prices.length - 1];
-    priceVsAvg30 = Math.round((currentPrice2 - sma30) / sma30 * 1e4) / 100;
-  }
-  const { support, resistance } = findSupportResistance(prices);
-  const currentPrice = prices.length > 0 ? prices[prices.length - 1] : 0;
-  const valueGap = calculateValueGap(currentPrice, sma30, sma200);
+  const volatilityPct = calculateVolatility(window30d);
+  const priceVsAvg30 = avg30d !== null && avg30d !== 0 && prices.length > 0 ? Math.round((currentPrice - avg30d) / avg30d * 1e4) / 100 : null;
+  let { support, resistance } = findSupportResistance(window30d);
+  if (support !== null && support > currentPrice) support = null;
+  if (resistance !== null && resistance < currentPrice) resistance = null;
+  const valueGap = calculateValueGap(currentPrice, avg30d, avg90d);
   return {
     rsi14,
-    sma7,
-    sma30,
-    sma200,
+    avg7d,
+    avg30d,
+    avg90d,
     smaCrossover,
     volatilityPct,
     priceVsAvg30,
@@ -1856,12 +2233,14 @@ function calculateSmartPricing(currentPrice, indicators, tradeStats) {
   const tierConfig = TIER_MARGINS[tier];
   let marginPct = tierConfig.base;
   if (indicators) {
-    if (indicators.volatilityPct > 5) {
-      marginPct *= 1.3;
-    } else if (indicators.volatilityPct > 3) {
-      marginPct *= 1.15;
-    } else if (indicators.volatilityPct < 1) {
-      marginPct *= 0.85;
+    if (indicators.volatilityPct !== null) {
+      if (indicators.volatilityPct > 5) {
+        marginPct *= 1.3;
+      } else if (indicators.volatilityPct > 3) {
+        marginPct *= 1.15;
+      } else if (indicators.volatilityPct < 1) {
+        marginPct *= 0.85;
+      }
     }
     if (indicators.rsi14 !== null) {
       if (indicators.rsi14 < 30) {
@@ -1952,6 +2331,14 @@ function calculateTradeHistoryStats(flips2, suggestedMarginPct) {
 }
 
 // server/ge-api.ts
+var itemCategories = (() => {
+  try {
+    return JSON.parse(readFileSync(join(import.meta.dirname, "..", "shared", "itemCategories.json"), "utf8"));
+  } catch {
+    console.warn("[ge-api] shared/itemCategories.json missing \u2014 run scripts/refresh-categories.ts");
+    return {};
+  }
+})();
 var WIKI_API_BASE = "https://prices.runescape.wiki/api/v2/rs";
 var GE_API_BASE = "https://api.weirdgloop.org/exchange/history/rs";
 var RS_ITEMDB_BASE = "https://secure.runescape.com/m=itemdb_rs";
@@ -2025,6 +2412,14 @@ function hourlyMid(tick) {
   if (hi != null && lo != null) return Math.round((hi + lo) / 2);
   return gp(hi ?? lo);
 }
+async function getPriceAnchors() {
+  const [dayAgo, weekAgo] = await Promise.all([getHourly24hAgo(), getHourly7dAgo()]);
+  const out = {};
+  for (const id of Array.from(/* @__PURE__ */ new Set([...Object.keys(dayAgo), ...Object.keys(weekAgo)]))) {
+    out[id] = { d1: hourlyMid(dayAgo[id]), d7: hourlyMid(weekAgo[id]) };
+  }
+  return out;
+}
 var CACHE_TTL = 60 * 1e3;
 var cacheLastUpdated = 0;
 var SCANNER_MAX_QUOTE_AGE_MS = 24 * 60 * 60 * 1e3;
@@ -2062,13 +2457,13 @@ async function refreshItemCache() {
       const tick = latest[String(entry.id)];
       const high = gp(tick?.high);
       const low = gp(tick?.low);
-      const mid = high != null && low != null ? Math.round((high + low) / 2) : high ?? low;
-      if (mid == null || mid <= 0) continue;
+      const mid3 = high != null && low != null ? Math.round((high + low) / 2) : high ?? low;
+      if (mid3 == null || mid3 <= 0) continue;
       const hr = hourly[String(entry.id)];
       const hourHigh = gp(hr?.avgHighPrice);
       const hourLow = gp(hr?.avgLowPrice);
       prices.set(entry.id, {
-        price: mid,
+        price: mid3,
         high: high ?? void 0,
         low: low ?? void 0,
         highTime: tick?.highTime ? tick.highTime * 1e3 : void 0,
@@ -2195,36 +2590,11 @@ async function getItemTrend(itemId) {
     const avgPrice30d = last30d.reduce((a, b) => a + b, 0) / last30d.length;
     const lowPrice30d = Math.min(...last30d);
     const highPrice30d = Math.max(...last30d);
-    let trendDays = 0;
-    let trendDirection = "stable";
-    if (prices.length >= 2) {
-      const recentPrice = prices[prices.length - 1];
-      let lastTrendPrice = recentPrice;
-      for (let i = prices.length - 2; i >= 0; i--) {
-        const diff = recentPrice - prices[i];
-        const percentDiff = Math.abs(diff / prices[i]) * 100;
-        if (percentDiff < 2) {
-          trendDays++;
-          continue;
-        }
-        if (trendDays === 0) {
-          trendDirection = diff > 0 ? "rising" : "falling";
-          trendDays = 1;
-          lastTrendPrice = prices[i];
-        } else {
-          const currentTrend = diff > 0 ? "rising" : "falling";
-          if (currentTrend === trendDirection) {
-            trendDays++;
-            lastTrendPrice = prices[i];
-          } else {
-            break;
-          }
-        }
-      }
-    }
     const priceWeekAgo = prices[Math.max(0, prices.length - 8)] || currentPrice;
     const changeAmount = currentPrice - priceWeekAgo;
-    const changePercent = changeAmount / priceWeekAgo * 100;
+    const changePercent = Math.round(changeAmount / priceWeekAgo * 100 * 100) / 100;
+    const trendDirection = changePercent > 2 ? "rising" : changePercent < -2 ? "falling" : "stable";
+    const change7d = `${Math.abs(changePercent).toFixed(1)}% over 7 days`;
     let recommendation = "hold";
     let recommendationReason = "";
     const priceVsLow = (currentPrice - lowPrice30d) / lowPrice30d * 100;
@@ -2236,12 +2606,12 @@ async function getItemTrend(itemId) {
     } else if (priceVsHigh < 10 && trendDirection !== "rising") {
       recommendation = "sell";
       recommendationReason = `Near 30-day high (${priceVsHigh.toFixed(1)}% below). Consider selling.`;
-    } else if (trendDirection === "falling" && trendDays >= 5) {
+    } else if (trendDirection === "falling") {
       recommendation = "hold";
-      recommendationReason = `Falling for ${trendDays} days. Wait for stabilization.`;
-    } else if (trendDirection === "rising" && trendDays >= 5 && priceVs30dAvg < 5) {
+      recommendationReason = `Down ${change7d}. Wait for stabilization.`;
+    } else if (trendDirection === "rising" && priceVs30dAvg < 5) {
       recommendation = "buy";
-      recommendationReason = `Rising trend for ${trendDays} days, still near average.`;
+      recommendationReason = `Up ${change7d}, still near average.`;
     } else if (priceVs30dAvg < -5) {
       recommendation = "buy";
       recommendationReason = `${Math.abs(priceVs30dAvg).toFixed(1)}% below 30-day average.`;
@@ -2254,9 +2624,8 @@ async function getItemTrend(itemId) {
     }
     return {
       direction: trendDirection,
-      changePercent: Math.round(changePercent * 100) / 100,
+      changePercent,
       changeAmount: Math.round(changeAmount),
-      trendDays: Math.max(1, trendDays),
       avgPrice7d: Math.round(avgPrice7d),
       avgPrice30d: Math.round(avgPrice30d),
       lowPrice30d: Math.round(lowPrice30d),
@@ -2280,6 +2649,45 @@ function parseTimestamp(h) {
     return new Date(h.timestamp).toISOString().split("T")[0];
   }
   return (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+}
+var INTRADAY_TTL = 5 * 60 * 1e3;
+var intradayCache = /* @__PURE__ */ new Map();
+async function getItemIntraday(itemId, hours) {
+  let cached = intradayCache.get(itemId);
+  if (!cached) {
+    cached = memo(INTRADAY_TTL, async () => {
+      const body = await wikiFetch(`/timeseries?id=${itemId}&lookback=7d`);
+      const rows = body?.data ?? [];
+      const points = [];
+      for (const r of rows) {
+        const high = gp(r.avgHighPrice);
+        const low = gp(r.avgLowPrice);
+        const price = high != null && low != null ? Math.round((high + low) / 2) : high ?? low;
+        if (price == null || price <= 0) continue;
+        points.push({
+          date: new Date(r.timestamp * 1e3).toISOString(),
+          price,
+          // Two-sided volume, matching hourVolume in the scanner cache.
+          volume: Math.min(r.highPriceVolume ?? 0, r.lowPriceVolume ?? 0),
+          high: high ?? void 0,
+          low: low ?? void 0
+        });
+      }
+      return points;
+    });
+    intradayCache.set(itemId, cached);
+  }
+  const fetcher = cached;
+  try {
+    const series = await fetcher();
+    if (series.length === 0) return null;
+    const cutoff = Date.now() - hours * 60 * 60 * 1e3;
+    const window = series.filter((p) => new Date(p.date).getTime() >= cutoff);
+    return window.length > 0 ? window : null;
+  } catch (error) {
+    console.error(`[ge-api] intraday fetch failed for ${itemId}:`, error);
+    return null;
+  }
 }
 async function getItemPriceHistory(itemId, period = "daily") {
   try {
@@ -2372,33 +2780,43 @@ function aggregateToMonthly(points) {
     volume: data.volumes.length > 0 ? Math.round(data.volumes.reduce((a, b) => a + b, 0) / data.volumes.length) : void 0
   }));
 }
+async function fetchPriceHistoryFull(itemId) {
+  const response = await fetch(
+    `${GE_API_BASE}/all?id=${itemId}`,
+    { headers: { "User-Agent": USER_AGENT } }
+  );
+  if (!response.ok) throw new Error(`Weird Gloop ${response.status}`);
+  const data = await response.json();
+  const history = data[itemId.toString()];
+  if (!history || history.length === 0) throw new Error("no history");
+  const sortedHistory = [...history].sort(
+    (a, b) => {
+      const tsA = typeof a.timestamp === "number" ? a.timestamp > 9999999999 ? a.timestamp : a.timestamp * 1e3 : new Date(a.timestamp).getTime();
+      const tsB = typeof b.timestamp === "number" ? b.timestamp > 9999999999 ? b.timestamp : b.timestamp * 1e3 : new Date(b.timestamp).getTime();
+      return tsA - tsB;
+    }
+  );
+  const allPoints = sortedHistory.map((h) => ({
+    date: parseTimestamp(h),
+    price: h.price,
+    volume: h.volume
+  }));
+  const monthly = aggregateToMonthly(allPoints);
+  const now = /* @__PURE__ */ new Date();
+  const cutoff90d = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1e3);
+  const daily = allPoints.filter((p) => new Date(p.date) >= cutoff90d);
+  return { monthly, daily };
+}
+var FULL_HISTORY_TTL = 60 * 60 * 1e3;
+var fullHistoryCache = /* @__PURE__ */ new Map();
 async function getItemPriceHistoryFull(itemId) {
+  let cached = fullHistoryCache.get(itemId);
+  if (!cached) {
+    cached = memo(FULL_HISTORY_TTL, () => fetchPriceHistoryFull(itemId));
+    fullHistoryCache.set(itemId, cached);
+  }
   try {
-    const response = await fetch(
-      `${GE_API_BASE}/all?id=${itemId}`,
-      { headers: { "User-Agent": USER_AGENT } }
-    );
-    if (!response.ok) return null;
-    const data = await response.json();
-    const history = data[itemId.toString()];
-    if (!history || history.length === 0) return null;
-    const sortedHistory = [...history].sort(
-      (a, b) => {
-        const tsA = typeof a.timestamp === "number" ? a.timestamp > 9999999999 ? a.timestamp : a.timestamp * 1e3 : new Date(a.timestamp).getTime();
-        const tsB = typeof b.timestamp === "number" ? b.timestamp > 9999999999 ? b.timestamp : b.timestamp * 1e3 : new Date(b.timestamp).getTime();
-        return tsA - tsB;
-      }
-    );
-    const allPoints = sortedHistory.map((h) => ({
-      date: parseTimestamp(h),
-      price: h.price,
-      volume: h.volume
-    }));
-    const monthly = aggregateToMonthly(allPoints);
-    const now = /* @__PURE__ */ new Date();
-    const cutoff90d = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1e3);
-    const daily = allPoints.filter((p) => new Date(p.date) >= cutoff90d);
-    return { monthly, daily };
+    return await cached();
   } catch (error) {
     console.error("Failed to fetch full item price history:", error);
     return null;
@@ -2522,7 +2940,6 @@ async function getAllItemsForScanner() {
     const priceData = itemPriceCache.get(item.id);
     if (!priceData || priceData.price <= 0) continue;
     const price = priceData.price;
-    const lastPrice = priceData.last ?? price;
     const geLimit = item.geLimit ?? 0;
     const volume = priceData.volume ?? 0;
     let low;
@@ -2544,15 +2961,14 @@ async function getAllItemsForScanner() {
     const buyPrice = low;
     const sellPrice = high;
     const margin = high - low;
-    const potentialProfit = margin * geLimit;
     const marginVolume = margin * volume;
+    const fillQty = Math.min(geLimit, Math.floor(volume / 6));
     const taxPerItem = sellPrice <= 49 ? 0 : Math.floor(sellPrice * 0.02);
-    const totalTax = taxPerItem * geLimit;
-    const grossProfit = margin * geLimit;
-    const netProfit = grossProfit - totalTax;
-    const totalInvestment = buyPrice * geLimit;
-    const roi = totalInvestment > 0 ? netProfit / totalInvestment * 100 : 0;
-    const capitalEfficiency = totalInvestment > 0 ? netProfit / totalInvestment * 1e4 : 0;
+    const netPerUnit = margin - taxPerItem;
+    const potentialProfit = margin * fillQty;
+    const netProfit = netPerUnit * fillQty;
+    const roi = buyPrice > 0 ? netPerUnit / buyPrice * 100 : 0;
+    const capitalEfficiency = buyPrice > 0 ? netPerUnit / buyPrice * 1e4 : 0;
     const priorMid = hourlyMid(yesterday[String(item.id)]);
     const changePct = priorMid && priorMid > 0 ? (price - priorMid) / priorMid * 100 : null;
     const trend = changePct == null ? "stable" : changePct > 1 ? "up" : changePct < -1 ? "down" : "stable";
@@ -2580,11 +2996,14 @@ async function getAllItemsForScanner() {
       name: item.name,
       icon: `${RS_ITEMDB_BASE}/obj_sprite.gif?id=${item.id}`,
       isMembers: item.isMembers ?? false,
+      category: itemCategories[String(item.id)] ?? UNCATEGORISED,
       geLimit,
       buyPrice,
       sellPrice,
       margin,
       volume,
+      hourVolume: priceData.hourVolume ?? 0,
+      fillQty,
       potentialProfit,
       marginVolume,
       roi: Math.round(roi * 100) / 100,
@@ -2603,7 +3022,28 @@ async function getAllItemsForScanner() {
       range7dSpreadPct: null
     });
   }
+  await refineTopFillQty(results);
   return results;
+}
+var REFINE_TOP_N = 100;
+var REFINE_BATCH_SIZE = 10;
+var FILL_WINDOW_HOURS = 4;
+async function refineTopFillQty(results) {
+  const candidates = [...results].filter((r) => r.fillQty > 0).sort((a, b) => b.potentialProfit - a.potentialProfit).slice(0, REFINE_TOP_N);
+  for (let i = 0; i < candidates.length; i += REFINE_BATCH_SIZE) {
+    const batch = candidates.slice(i, i + REFINE_BATCH_SIZE);
+    await Promise.all(
+      batch.map(async (r) => {
+        const points = await getItemIntraday(r.id, FILL_WINDOW_HOURS);
+        if (!points || points.length === 0) return;
+        const windowVolume = points.reduce((sum, p) => sum + (p.volume ?? 0), 0);
+        const netPerUnit = r.margin - (r.sellPrice <= 49 ? 0 : Math.floor(r.sellPrice * 0.02));
+        r.fillQty = Math.min(r.geLimit, windowVolume);
+        r.potentialProfit = r.margin * r.fillQty;
+        r.netProfit = netPerUnit * r.fillQty;
+      })
+    );
+  }
 }
 async function getMarketMovers(limit = 20) {
   await refreshItemCache();
@@ -2646,6 +3086,251 @@ async function getMarketMovers(limit = 20) {
   };
 }
 
+// server/alch.ts
+var ITEMS_PER_DAY = 600;
+var MACHINES = 2;
+var CHARGE_PER_ITEM = 6;
+var CHARGES_PER_DIVINE_CHARGE = 3e3;
+var MAX_ALCHABLE_GE_PRICE = 5e5;
+var NATURE_RUNE_ID = 561;
+var DIVINE_CHARGE_ID = 36390;
+var DEFAULT_MIN_VOLUME = 1e5;
+var MAX_QUOTE_AGE_MS = 24 * 60 * 60 * 1e3;
+async function getAlchOpportunities(minVolume = DEFAULT_MIN_VOLUME, limit = 10) {
+  const [mapping, latest, volumes] = await Promise.all([getMapping(), getLatest(), getVolumes()]);
+  const askOf = (id) => {
+    const t = latest[String(id)];
+    if (!t || t.high == null) return null;
+    if ((t.highTime ?? 0) * 1e3 < Date.now() - MAX_QUOTE_AGE_MS) return null;
+    return Math.round(t.high);
+  };
+  const naturePrice = askOf(NATURE_RUNE_ID);
+  const chargePrice = askOf(DIVINE_CHARGE_ID);
+  if (naturePrice == null || chargePrice == null) {
+    throw new Error("No live price for nature runes or divine charges");
+  }
+  const chargeCostPerItem = chargePrice * CHARGE_PER_ITEM / CHARGES_PER_DIVINE_CHARGE;
+  const overheadPerItem = naturePrice + chargeCostPerItem;
+  const itemsPerDay = ITEMS_PER_DAY * MACHINES;
+  const rows = [];
+  let qualifyingCount = 0;
+  for (const m of mapping) {
+    if (!m?.id || !m.name || !m.highalch) continue;
+    const volume = volumes[String(m.id)] ?? 0;
+    if (volume < minVolume) continue;
+    const buyPrice = askOf(m.id);
+    if (buyPrice == null || buyPrice <= 0) continue;
+    if (buyPrice > MAX_ALCHABLE_GE_PRICE) continue;
+    qualifyingCount++;
+    const profitPerItem = m.highalch - buyPrice - overheadPerItem;
+    const geLimit = m.limit ?? 0;
+    const dailyCap = Math.min(itemsPerDay, geLimit * 6);
+    rows.push({
+      id: m.id,
+      name: m.name,
+      icon: `https://secure.runescape.com/m=itemdb_rs/obj_sprite.gif?id=${m.id}`,
+      isMembers: m.members ?? false,
+      buyPrice,
+      highalch: m.highalch,
+      profitPerItem: Math.round(profitPerItem),
+      geLimit,
+      volume,
+      dailyCap,
+      dailyProfit: Math.round(profitPerItem * dailyCap)
+    });
+  }
+  const profitable = rows.filter((r) => r.profitPerItem > 0);
+  return {
+    rows: [...profitable].sort((a, b) => b.dailyProfit - a.dailyProfit).slice(0, limit),
+    naturePrice,
+    chargePrice,
+    chargeCostPerItem: Math.round(chargeCostPerItem * 10) / 10,
+    overheadPerItem: Math.round(overheadPerItem * 10) / 10,
+    itemsPerDay,
+    qualifyingCount,
+    profitableCount: profitable.length,
+    minVolume,
+    generatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+}
+
+// shared/marketThemes.ts
+var DEFAULT_STOP_WORDS = /* @__PURE__ */ new Set([
+  "the",
+  "and",
+  "for",
+  "with",
+  "this",
+  "that",
+  "used",
+  "use",
+  "can",
+  "you",
+  "your",
+  "made",
+  "from",
+  "into",
+  "out",
+  "one",
+  "two",
+  "all",
+  "not",
+  "\u4F46",
+  "very",
+  "some",
+  "more",
+  "than",
+  "item",
+  "items",
+  "member",
+  "members",
+  "player",
+  "players",
+  "look",
+  "looks",
+  "looking",
+  "seems",
+  "quite",
+  "just",
+  "its",
+  "has",
+  "have",
+  "was",
+  "are",
+  "will",
+  "would"
+]);
+var DEFAULTS = {
+  moverPercentile: 0.95,
+  minClusterSize: 4,
+  minCoherence: 0.8,
+  minLift: 2,
+  stopWords: DEFAULT_STOP_WORDS
+};
+function tokenize(text2, stopWords = DEFAULT_STOP_WORDS) {
+  const words = text2.toLowerCase().match(/[a-z]{3,}/g) ?? [];
+  return Array.from(new Set(words)).filter((w) => !stopWords.has(w));
+}
+function median(sorted) {
+  if (sorted.length === 0) return 0;
+  const mid3 = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid3] : (sorted[mid3 - 1] + sorted[mid3]) / 2;
+}
+function detectThemes(universe, options = {}) {
+  const opts = { ...DEFAULTS, ...options };
+  const empty = {
+    themes: [],
+    moverThresholdPct: 0,
+    moverCount: 0,
+    universeCount: universe.length
+  };
+  if (universe.length < 20) return empty;
+  const absSorted = universe.map((i) => Math.abs(i.changePct)).sort((a, b) => a - b);
+  const cutIndex = Math.min(absSorted.length - 1, Math.floor(absSorted.length * opts.moverPercentile));
+  const moverThresholdPct = absSorted[cutIndex];
+  const movers = universe.filter((i) => Math.abs(i.changePct) >= moverThresholdPct);
+  if (movers.length < opts.minClusterSize) return { ...empty, moverThresholdPct };
+  const tokensOf = /* @__PURE__ */ new Map();
+  const countIn = (items) => {
+    const counts = /* @__PURE__ */ new Map();
+    for (const item of items) {
+      let tokens = tokensOf.get(item);
+      if (!tokens) {
+        tokens = tokenize(`${item.name} ${item.examine ?? ""}`, opts.stopWords);
+        tokensOf.set(item, tokens);
+      }
+      for (const t of tokens) counts.set(t, (counts.get(t) ?? 0) + 1);
+    }
+    return counts;
+  };
+  const universeCounts = countIn(universe);
+  const moverCounts = countIn(movers);
+  const themes = [];
+  for (const [token, moverCount] of Array.from(moverCounts.entries())) {
+    if (moverCount < opts.minClusterSize) continue;
+    const items = movers.filter((i) => tokensOf.get(i).includes(token));
+    const up = items.filter((i) => i.changePct > 0).length;
+    const coherence = Math.max(up, items.length - up) / items.length;
+    if (coherence < opts.minCoherence) continue;
+    const universeShare = (universeCounts.get(token) ?? moverCount) / universe.length;
+    const lift = moverCount / movers.length / universeShare;
+    if (lift < opts.minLift) continue;
+    themes.push({
+      token,
+      moverCount,
+      lift,
+      coherence,
+      direction: up > items.length / 2 ? "up" : "down",
+      medianMovePct: median(items.map((i) => Math.abs(i.changePct)).sort((a, b) => a - b)),
+      items: [...items].sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct))
+    });
+  }
+  themes.sort((a, b) => b.lift * b.moverCount - a.lift * a.moverCount);
+  const kept = [];
+  for (const theme of themes) {
+    const ids = new Set(theme.items.map((i) => i.name));
+    const subsumed = kept.some((k) => k.items.every((i) => ids.has(i.name)) || theme.items.every((i) => k.items.includes(i)));
+    if (!subsumed) kept.push(theme);
+  }
+  return { themes: kept, moverThresholdPct, moverCount: movers.length, universeCount: universe.length };
+}
+
+// server/update-radar.ts
+var MIN_DAILY_VOLUME = 1e3;
+var MIN_SIDE_VOLUME = 20;
+function hasBook(t) {
+  return !!t && t.avgHighPrice != null && t.avgLowPrice != null && t.highPriceVolume >= MIN_SIDE_VOLUME && t.lowPriceVolume >= MIN_SIDE_VOLUME && t.avgHighPrice >= t.avgLowPrice;
+}
+var mid = (t) => (t.avgHighPrice + t.avgLowPrice) / 2;
+async function getUpdateRadar() {
+  const [mapping, hourly, yesterday, volumes] = await Promise.all([
+    getMapping(),
+    getHourly(),
+    getHourly24hAgo(),
+    getVolumes()
+  ]);
+  const universe = [];
+  for (const m of mapping) {
+    if (!m?.id || !m.name) continue;
+    const volume = volumes[String(m.id)] ?? 0;
+    if (volume < MIN_DAILY_VOLUME) continue;
+    const now = hourly[String(m.id)];
+    const then = yesterday[String(m.id)];
+    if (!hasBook(now) || !hasBook(then)) continue;
+    const price = mid(now);
+    const priceWas = mid(then);
+    if (priceWas <= 0) continue;
+    universe.push({
+      id: m.id,
+      name: m.name,
+      examine: m.examine,
+      icon: `https://secure.runescape.com/m=itemdb_rs/obj_sprite.gif?id=${m.id}`,
+      volume,
+      price: Math.round(price),
+      priceWas: Math.round(priceWas),
+      changePct: (price - priceWas) / priceWas * 100
+    });
+  }
+  const byId = new Map(universe.map((i) => [i.name, i]));
+  const result = detectThemes(universe);
+  return {
+    moverThresholdPct: Math.round(result.moverThresholdPct * 100) / 100,
+    moverCount: result.moverCount,
+    universeCount: result.universeCount,
+    themes: result.themes.slice(0, 12).map((t) => ({
+      token: t.token,
+      moverCount: t.moverCount,
+      lift: Math.round(t.lift * 10) / 10,
+      coherence: Math.round(t.coherence * 100) / 100,
+      direction: t.direction,
+      medianMovePct: Math.round(t.medianMovePct * 10) / 10,
+      items: t.items.slice(0, 10).map((i) => byId.get(i.name)).filter(Boolean)
+    })),
+    topMovers: [...universe].filter((i) => Math.abs(i.changePct) >= result.moverThresholdPct).sort((a, b) => Math.abs(b.changePct) - Math.abs(a.changePct)).slice(0, 25),
+    generatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+}
+
 // server/replitAuth.ts
 import * as client from "openid-client";
 import { Strategy } from "openid-client/passport";
@@ -2654,7 +3339,7 @@ import session from "express-session";
 import memoize from "memoizee";
 import connectPg from "connect-pg-simple";
 import bcrypt from "bcryptjs";
-import { z as z2 } from "zod";
+import { z as z3 } from "zod";
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "crypto";
 var getOidcConfig = memoize(
   async () => {
@@ -2715,22 +3400,22 @@ async function upsertReplitUser(claims) {
   });
   return { id: user.id };
 }
-var registerSchema = z2.object({
-  email: z2.string().email(),
-  password: z2.string().min(6),
-  firstName: z2.string().min(1).optional(),
-  lastName: z2.string().min(1).optional()
+var registerSchema = z3.object({
+  email: z3.string().email(),
+  password: z3.string().min(6),
+  firstName: z3.string().min(1).optional(),
+  lastName: z3.string().min(1).optional()
 });
-var loginSchema = z2.object({
-  email: z2.string().email(),
-  password: z2.string().min(1)
+var loginSchema = z3.object({
+  email: z3.string().email(),
+  password: z3.string().min(1)
 });
-var requestPasswordResetSchema = z2.object({
-  email: z2.string().email()
+var requestPasswordResetSchema = z3.object({
+  email: z3.string().email()
 });
-var confirmPasswordResetSchema = z2.object({
-  token: z2.string().min(20),
-  newPassword: z2.string().min(6)
+var confirmPasswordResetSchema = z3.object({
+  token: z3.string().min(20),
+  newPassword: z3.string().min(6)
 });
 var resetTokenTtlSeconds = 30 * 60;
 var resetTokenVersion = 1;
@@ -2891,7 +3576,7 @@ async function setupAuth(app) {
       ensureStrategy(req.hostname);
       passport.authenticate(`replitauth:${req.hostname}`, {
         successReturnToOrRedirect: "/",
-        failureRedirect: "/api/login"
+        failureRedirect: "/?error=replit_auth_failed"
       })(req, res, next);
     });
   }
@@ -3238,189 +3923,7 @@ var isAuthenticated = async (req, res, next) => {
   }
 };
 
-// server/ocr.ts
-import Tesseract from "tesseract.js";
-async function processScreenshot(imageBuffer) {
-  try {
-    const result = await Tesseract.recognize(imageBuffer, "eng", {
-      logger: (m) => {
-        if (m.status === "recognizing text") {
-          console.log(`[OCR] Progress: ${Math.round(m.progress * 100)}%`);
-        }
-      }
-    });
-    const rawText = result.data.text;
-    const overallConfidence = result.data.confidence;
-    const items = parseRS3Items(rawText);
-    return {
-      items,
-      rawText,
-      overallConfidence
-    };
-  } catch (error) {
-    console.error("[OCR] Failed to process screenshot:", error);
-    throw new Error("Failed to process screenshot");
-  }
-}
-async function processGEHistoryScreenshot(imageBuffer) {
-  try {
-    const result = await Tesseract.recognize(imageBuffer, "eng", {
-      logger: (m) => {
-        if (m.status === "recognizing text") {
-          console.log(`[OCR:GE] Progress: ${Math.round(m.progress * 100)}%`);
-        }
-      }
-    });
-    const rawText = result.data.text || "";
-    const rows = parseGEHistoryRows(rawText);
-    return {
-      rows,
-      rawText,
-      overallConfidence: result.data.confidence
-    };
-  } catch (error) {
-    console.error("[OCR:GE] Failed to process GE history screenshot:", error);
-    throw new Error("Failed to process GE history screenshot");
-  }
-}
-function parseRS3Items(text2) {
-  const items = [];
-  const lines = text2.split("\n").filter((line) => line.trim());
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.length < 3) continue;
-    const quantityMatch = trimmed.match(/^(\d+[KkMm]?)\s*x?\s*(.+)$/);
-    const reverseMatch = trimmed.match(/^(.+?)\s*x?\s*(\d+[KkMm]?)$/);
-    let name = "";
-    let quantity = 1;
-    let confidence = 0.5;
-    if (quantityMatch) {
-      quantity = parseQuantity(quantityMatch[1]);
-      name = quantityMatch[2].trim();
-      confidence = 0.7;
-    } else if (reverseMatch && reverseMatch[2]) {
-      name = reverseMatch[1].trim();
-      quantity = parseQuantity(reverseMatch[2]);
-      confidence = 0.6;
-    } else {
-      name = trimmed;
-      confidence = 0.4;
-    }
-    name = cleanItemName(name);
-    if (name.length >= 3 && !isNoise(name)) {
-      items.push({ name, quantity, confidence });
-    }
-  }
-  return items;
-}
-function parseQuantity(str) {
-  const cleaned = str.toUpperCase().replace(/,/g, "");
-  if (cleaned.endsWith("K")) {
-    return Math.round(parseFloat(cleaned.slice(0, -1)) * 1e3);
-  }
-  if (cleaned.endsWith("M")) {
-    return Math.round(parseFloat(cleaned.slice(0, -1)) * 1e6);
-  }
-  return parseInt(cleaned, 10) || 1;
-}
-function cleanItemName(name) {
-  return name.replace(/[^a-zA-Z0-9\s\-'()]/g, "").replace(/\s+/g, " ").trim();
-}
-function cleanGEItemName(name) {
-  return name.replace(/[^a-zA-Z0-9\s\-'()]/g, "").replace(/\s+/g, " ").trim();
-}
-function parseGEHistoryRows(rawText) {
-  const lines = rawText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-  const rows = [];
-  for (const rawLine of lines) {
-    const line = rawLine.replace(/\s+/g, " ");
-    const full = line.match(
-      /^(Bought|Sold)\s+([\d.,]+[KkMmBb]?)\s*x?\s*(.+?)\s+for\s+([\d.,]+[KkMmBb]?)\s*gp/i
-    );
-    if (full) {
-      const type = full[1].toLowerCase() === "bought" ? "buy" : "sell";
-      const quantity = parseQuantity(full[2]);
-      const itemName = cleanGEItemName(full[3]);
-      const price = parseQuantity(full[4]);
-      if (itemName && quantity > 0 && price > 0) {
-        rows.push({ type, itemName, quantity, price });
-      }
-      continue;
-    }
-    const fallback = line.match(
-      /^(Bought|Sold)\s+(.+?)\s+x?\s*([\d.,]+[KkMmBb]?)\s+for\s+([\d.,]+[KkMmBb]?)\s*gp/i
-    );
-    if (fallback) {
-      const type = fallback[1].toLowerCase() === "bought" ? "buy" : "sell";
-      const itemName = cleanGEItemName(fallback[2]);
-      const quantity = parseQuantity(fallback[3]);
-      const price = parseQuantity(fallback[4]);
-      if (itemName && quantity > 0 && price > 0) {
-        rows.push({ type, itemName, quantity, price });
-      }
-      continue;
-    }
-  }
-  return rows;
-}
-function isNoise(text2) {
-  const noisePatterns = [
-    /^bank$/i,
-    /^inventory$/i,
-    /^equipment$/i,
-    /^worn$/i,
-    /^price$/i,
-    /^value$/i,
-    /^total$/i,
-    /^coins?$/i,
-    /^gp$/i,
-    /^\d+$/,
-    /^x\d+$/i,
-    /^tab\s*\d+$/i
-  ];
-  return noisePatterns.some((pattern) => pattern.test(text2.trim()));
-}
-async function matchItemsToGE(items, searchFn) {
-  const results = [];
-  for (const item of items) {
-    try {
-      const searchResults = await searchFn(item.name);
-      if (searchResults.length > 0) {
-        const bestMatch = searchResults[0];
-        const nameMatch = calculateNameSimilarity(item.name.toLowerCase(), bestMatch.name.toLowerCase());
-        results.push({
-          original: item,
-          match: bestMatch,
-          matchConfidence: nameMatch * item.confidence
-        });
-      } else {
-        results.push({
-          original: item,
-          match: null,
-          matchConfidence: 0
-        });
-      }
-    } catch (error) {
-      results.push({
-        original: item,
-        match: null,
-        matchConfidence: 0
-      });
-    }
-  }
-  return results;
-}
-function calculateNameSimilarity(a, b) {
-  if (a === b) return 1;
-  if (a.includes(b) || b.includes(a)) return 0.9;
-  const aWords = a.split(/\s+/);
-  const bWords = b.split(/\s+/);
-  const commonWords = aWords.filter((word) => bWords.includes(word));
-  const similarity = commonWords.length * 2 / (aWords.length + bWords.length);
-  return Math.max(0.3, similarity);
-}
-
-// server/ai-vision.ts
+// server/ai-recommendations.ts
 import OpenAI from "openai";
 var openai;
 function getOpenAI() {
@@ -3429,124 +3932,6 @@ function getOpenAI() {
   }
   openai ??= new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   return openai;
-}
-async function analyzeRS3Screenshot(imageBuffer) {
-  try {
-    const openai3 = getOpenAI();
-    const base64Image = imageBuffer.toString("base64");
-    const mimeType = detectImageMimeType(imageBuffer);
-    const systemPrompt = `You are an expert at identifying items from RuneScape 3 (RS3) bank screenshots. 
-Your task is to analyze the screenshot and identify all visible items with their quantities.
-
-RS3 Bank Screenshot Characteristics:
-- Items appear in a grid of slots
-- Each slot shows an item icon with a quantity overlay (usually in the corner)
-- Quantities may be abbreviated: K = thousands (1K = 1,000), M = millions (1M = 1,000,000), B = billions
-- Some items stack, showing large numbers; others don't stack and show quantity as separate slots
-- Item names should match official RS3 item names as closely as possible
-
-Output Requirements:
-- Identify each unique item and its total quantity
-- Use official RS3 item names (e.g., "Rune platebody", "Dragon bones", "Grimy ranarr")
-- Convert abbreviated quantities to full numbers (e.g., "12.5K" \u2192 12500)
-- Include a confidence score (0-1) for each identification
-- Add notes for uncertain identifications
-
-Respond with valid JSON only, in this exact format:
-{
-  "items": [
-    {"name": "Item Name", "quantity": 1000, "confidence": 0.95, "notes": "optional notes"},
-    ...
-  ]
-}`;
-    const response = await openai3.chat.completions.create({
-      model: "gpt-5",
-      messages: [
-        {
-          role: "system",
-          content: systemPrompt
-        },
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: "Analyze this RS3 bank screenshot and identify all items with their quantities. Return the results as JSON."
-            },
-            {
-              type: "image_url",
-              image_url: {
-                url: `data:${mimeType};base64,${base64Image}`
-              }
-            }
-          ]
-        }
-      ],
-      response_format: { type: "json_object" },
-      max_completion_tokens: 4096
-    });
-    const content = response.choices[0]?.message?.content;
-    if (!content) {
-      return {
-        items: [],
-        rawResponse: "",
-        success: false,
-        error: "No response from AI"
-      };
-    }
-    const parsed = JSON.parse(content);
-    const items = (parsed.items || []).map((item) => ({
-      name: String(item.name || "").trim(),
-      quantity: parseQuantity2(item.quantity),
-      confidence: Math.min(1, Math.max(0, Number(item.confidence) || 0.5)),
-      notes: item.notes
-    })).filter((item) => item.name.length > 0);
-    return {
-      items,
-      rawResponse: content,
-      success: true
-    };
-  } catch (error) {
-    console.error("[AI Vision] Error analyzing screenshot:", error);
-    return {
-      items: [],
-      rawResponse: "",
-      success: false,
-      error: error.message || "Failed to analyze screenshot"
-    };
-  }
-}
-function parseQuantity2(value) {
-  if (typeof value === "number") return Math.round(value);
-  const str = String(value).toUpperCase().replace(/,/g, "").trim();
-  if (str.endsWith("B")) {
-    return Math.round(parseFloat(str.slice(0, -1)) * 1e9);
-  }
-  if (str.endsWith("M")) {
-    return Math.round(parseFloat(str.slice(0, -1)) * 1e6);
-  }
-  if (str.endsWith("K")) {
-    return Math.round(parseFloat(str.slice(0, -1)) * 1e3);
-  }
-  return parseInt(str, 10) || 1;
-}
-function detectImageMimeType(buffer) {
-  if (buffer[0] === 255 && buffer[1] === 216) return "image/jpeg";
-  if (buffer[0] === 137 && buffer[1] === 80) return "image/png";
-  if (buffer[0] === 71 && buffer[1] === 73) return "image/gif";
-  if (buffer[0] === 82 && buffer[1] === 73) return "image/webp";
-  return "image/png";
-}
-
-// server/ai-recommendations.ts
-import OpenAI2 from "openai";
-var openai2;
-function getOpenAI2() {
-  if (!process.env.OPENAI_API_KEY) {
-    throw new Error("OPENAI_API_KEY is not configured");
-  }
-  openai2 ??= new OpenAI2({ apiKey: process.env.OPENAI_API_KEY });
-  return openai2;
 }
 function analyzeUserTradingProfile(flips2) {
   const completedFlips = flips2.filter((f) => f.sellPrice && f.sellDate && !f.deletedAt);
@@ -3749,8 +4134,8 @@ Respond with JSON containing an "items" array. Each item must use the EXACT item
 }`;
   try {
     console.log("[AI Recommendations] Asking AI to analyze", itemSummaries.length, "items");
-    const openai3 = getOpenAI2();
-    const response = await openai3.chat.completions.create({
+    const openai2 = getOpenAI();
+    const response = await openai2.chat.completions.create({
       model: "gpt-4o",
       messages: [
         { role: "system", content: "You are an RS3 GE trading advisor. Only select items from the provided list. Never suggest items not in the user's history." },
@@ -3921,6 +4306,101 @@ function formatGpShorthand(value) {
     return thousands % 1 === 0 ? `${thousands}K` : `${thousands.toFixed(1).replace(/\.?0+$/, "")}K`;
   }
   return value.toLocaleString();
+}
+
+// shared/priceSources.ts
+var SOURCES = {
+  "wiki-quote": {
+    label: "Wiki",
+    name: "RuneScape Wiki",
+    detail: "RuneScape Wiki real-time prices (prices.runescape.wiki). The average of the last hour's trades where both sides traded, otherwise the latest single trade on each side."
+  },
+  "wiki-hourly": {
+    label: "Wiki \xB7 hourly",
+    name: "RuneScape Wiki",
+    detail: "RuneScape Wiki real-time prices (prices.runescape.wiki): the average of trades in one hour, compared with the same hour 24h and 7d earlier."
+  },
+  "wiki-series": {
+    label: "Wiki \xB7 hourly series",
+    name: "RuneScape Wiki",
+    detail: "RuneScape Wiki real-time prices (prices.runescape.wiki): one point per hour for the last 7 days."
+  },
+  weirdgloop: {
+    label: "Weird Gloop \xB7 daily",
+    name: "Weird Gloop",
+    detail: "Weird Gloop Exchange (api.weirdgloop.org): one guide price per day. No separate buy and sell prices."
+  }
+};
+
+// shared/outOfRangeEmbed.ts
+var MAX_CHART_POINTS = 40;
+var MAX_URL = 1990;
+var gp2 = (n) => n == null ? "\u2014" : n.toLocaleString("en-US");
+var ago = (unixSeconds) => unixSeconds == null ? "" : ` <t:${unixSeconds}:R>`;
+function chartUrl(series7d, normalLow, normalHigh, nowMs) {
+  const prices = series7d.map((p) => ({ t: p.t, v: p.high != null && p.low != null ? Math.round((p.high + p.low) / 2) : p.high ?? p.low })).filter((p) => p.v != null);
+  if (prices.length < 2) return null;
+  const top = Math.max(...prices.map((p) => p.v), normalHigh);
+  const [unit, unitName] = top >= 1e9 ? [1e9, "B"] : top >= 1e6 ? [1e6, "M"] : top >= 1e3 ? [1e3, "K"] : [1, ""];
+  const r = (n) => Math.round(n / unit * 100) / 100;
+  const dayAgo = nowMs - 24 * 36e5;
+  for (const maxPoints of [MAX_CHART_POINTS, 30, 20, 12]) {
+    const step = Math.max(1, Math.ceil(prices.length / maxPoints));
+    const sampled = prices.filter((_, i) => i % step === 0 || i === prices.length - 1);
+    const config = {
+      type: "line",
+      data: {
+        labels: sampled.map((_, i) => i),
+        datasets: [
+          { data: sampled.map((p) => r(p.v)), borderColor: "#60a5fa" },
+          { data: sampled.map((p) => p.t >= dayAgo ? r(p.v) : null), borderColor: "#f59e0b", borderWidth: 3 },
+          { data: sampled.map(() => r(normalHigh)), borderColor: "#6b7280", borderDash: [4, 4], borderWidth: 1 },
+          { data: sampled.map(() => r(normalLow)), borderColor: "#6b7280", borderDash: [4, 4], borderWidth: 1 }
+        ]
+      },
+      options: {
+        legend: { display: false },
+        elements: { point: { radius: 0 }, line: { fill: false, borderWidth: 2 } },
+        scales: { xAxes: [{ display: false }], yAxes: [{ scaleLabel: { display: true, labelString: `gp (${unitName || "raw"})` } }] }
+      }
+    };
+    const url = `https://quickchart.io/chart?bkg=%23202225&w=520&h=180&c=${encodeURIComponent(JSON.stringify(config))}`;
+    if (url.length <= MAX_URL) return url;
+  }
+  return null;
+}
+function buildOutOfRangeEmbed(hit, nowMs) {
+  const d = hit.detection;
+  const spike = d.direction === "spike";
+  const fires = d.pctBeyond >= 100 ? "\u{1F525}\u{1F525}\u{1F525}" : d.pctBeyond >= 50 ? "\u{1F525}\u{1F525}" : "\u{1F525}";
+  const wiki = `https://runescape.wiki/w/Exchange:${encodeURIComponent(hit.name.replace(/ /g, "_")).replace(/\(/g, "%28").replace(/\)/g, "%29")}`;
+  const lines = [
+    `[Wiki](${wiki})`,
+    `**Rating**: ${fires}`,
+    `**Volume**: ${gp2(hit.volume)} | **Limit**: ${gp2(hit.geLimit)}`,
+    `**Max profit**: ${gp2(hit.margin * hit.geLimit)}`,
+    `**${spike ? "24h high" : "24h low"}**: ${gp2(d.extreme)} (${d.pctBeyond.toFixed(0)}% beyond normal)`,
+    `**Normal range**: ${formatGpShorthand(d.normalLow)} \u2013 ${formatGpShorthand(d.normalHigh)}`,
+    `**12h**: ${gp2(d.avg12h)} | **1h**: ${gp2(d.avg1h)}`,
+    ``,
+    `**Insta Buy**: ${gp2(hit.latest.high)}${ago(hit.latest.highTime)}`,
+    `**Insta Sell**: ${gp2(hit.latest.low)}${ago(hit.latest.lowTime)}`
+  ];
+  const chart = chartUrl(hit.series7d, d.normalLow, d.normalHigh, nowMs);
+  return {
+    title: `${spike ? "Spike" : "Dump"} on ${hit.name} \u{1F440}`,
+    // Green when there is something to sell into, red when it is something to buy.
+    color: spike ? 2278750 : 15680580,
+    url: wiki,
+    description: lines.join("\n"),
+    thumbnail: { url: hit.icon },
+    ...chart ? { image: { url: chart } } : {},
+    fields: [],
+    timestamp: new Date(nowMs).toISOString(),
+    // The 24h extreme is a wiki hourly price; the Normal range is a Weird Gloop daily guide
+    // price. Different series, so the embed says so rather than implying one source.
+    footer: { text: `RS3 Flip Tracker \xB7 Prices: ${SOURCES["wiki-hourly"].name} hourly \xB7 Normal range: ${SOURCES.weirdgloop.name} daily` }
+  };
 }
 
 // server/discord.ts
@@ -4264,79 +4744,257 @@ async function sendGoalAchievementToDiscord(achievement) {
     return false;
   }
 }
+async function postEmbeds(webhookUrl, embeds) {
+  try {
+    const response = await fetch(webhookUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ embeds })
+    });
+    if (!response.ok) {
+      console.error("[Discord] Webhook failed:", response.status, await response.text());
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.error("[Discord] Error sending webhook:", error);
+    return false;
+  }
+}
+var postEmbed = (webhookUrl, embed) => postEmbeds(webhookUrl, [embed]);
+var pct = (n) => `${n.toFixed(1)}%`;
+async function sendScannerAlertToDiscord(webhookUrl, presetName, mode, items, totalCount) {
+  const url = webhookUrl || process.env.DISCORD_WEBHOOK_URL;
+  if (!url) {
+    console.log("[Discord] No webhook for scanner alert, skipping:", presetName);
+    return false;
+  }
+  const lines = items.map(
+    (i) => `**${i.name}** \xB7 ${formatGpShorthand(i.buyPrice)} \u2192 ${formatGpShorthand(i.sellPrice)} \xB7 ${i.margin >= 0 ? "+" : ""}${formatGpShorthand(i.margin)}/u \xB7 ROI ${pct(i.roi)} \xB7 score ${i.tradeScore} \xB7 vol ${formatGpShorthand(i.volume)}`
+  );
+  const more = totalCount - items.length;
+  if (more > 0) lines.push(`\u2026and ${more} more`);
+  const embed = {
+    title: mode === "new" ? `\u{1F514} ${presetName}: ${totalCount} new` : `\u{1F4CB} ${presetName}: top ${items.length} of ${totalCount}`,
+    color: mode === "new" ? 16096779 : 3900150,
+    // Discord caps description at 4096 chars; 25 lines of ~80 fits with room to spare.
+    description: lines.join("\n").slice(0, 4e3),
+    fields: [],
+    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+    footer: { text: "RS3 Flip Tracker \xB7 Scanner alert" }
+  };
+  return postEmbed(url, embed);
+}
+async function sendOutOfRangeAlertsToDiscord(hits) {
+  const url = process.env.DISCORD_OUT_OF_RANGE_WEBHOOK_URL || process.env.DISCORD_WEBHOOK_URL;
+  if (!url) {
+    console.log("[Discord] No DISCORD_WEBHOOK_URL, skipping out-of-range alert");
+    return false;
+  }
+  if (hits.length === 0) return false;
+  const now = Date.now();
+  return postEmbeds(url, hits.map((h) => buildOutOfRangeEmbed(h, now)));
+}
 
 // server/routes.ts
 import { startOfDay, startOfWeek, startOfMonth, isAfter } from "date-fns";
-import { z as z3 } from "zod";
-import { createHmac as createHmac2, randomBytes as randomBytes2, timingSafeEqual as timingSafeEqual2 } from "crypto";
+import { z as z4 } from "zod";
+import { timingSafeEqual as timingSafeEqual2 } from "crypto";
+
+// server/scannerAlerts.ts
+async function favoritesFor(preset) {
+  if (!preset.filters.watchlistOnly) return /* @__PURE__ */ new Set();
+  const favs = await storage.getFavorites(preset.userId);
+  return new Set(favs.map((f) => f.itemId));
+}
+async function runPresetNow(preset, items, now, opts = {}) {
+  const results = runPreset(items, preset.filters, await favoritesFor(preset));
+  const pick = pickItems(preset, results, opts);
+  let sent = false;
+  if (pick) {
+    sent = await sendScannerAlertToDiscord(preset.webhookUrl, preset.name, preset.mode, pick.items, pick.total);
+  }
+  await storage.markScannerPresetRun(preset.id, now, results.map((i) => i.id));
+  return { sent, matched: results.length };
+}
+async function runDueAlerts(now = /* @__PURE__ */ new Date()) {
+  const due = await storage.getDueAlertPresets(now);
+  if (due.length === 0) return { ran: 0, sent: 0, errors: [] };
+  const items = await getAllItemsForScanner();
+  let sent = 0;
+  const errors = [];
+  for (const preset of due) {
+    try {
+      if ((await runPresetNow(preset, items, now)).sent) sent++;
+    } catch (error) {
+      errors.push(`${preset.name}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return { ran: due.length, sent, errors };
+}
+
+// shared/outOfRange.ts
+var SPIKE_MULT = 1.25;
+var DUMP_MULT = 0.8;
+var MIN_BASELINE_POINTS = 7;
+var SCREEN_MOVE = 0.15;
+var MAX_CANDIDATES = 20;
+var MIN_SCREEN_PRICE = 1e3;
+var COOLDOWN_MS = 6 * 60 * 60 * 1e3;
+var COOLDOWN_BREAKOUT = 0.1;
+var HOUR = 36e5;
+var BASELINE_DAYS = 30;
+function mid2(p) {
+  if (p.high != null && p.low != null) return Math.round((p.high + p.low) / 2);
+  return p.high ?? p.low;
+}
+function detectOutOfRange(hourly24h, daily, latest, nowMs) {
+  const cutoff = nowMs - 24 * HOUR;
+  const baseline = daily.filter((p) => p.t < cutoff && p.t >= cutoff - BASELINE_DAYS * 24 * HOUR && p.price > 0).map((p) => p.price);
+  if (baseline.length < MIN_BASELINE_POINTS) return null;
+  const normalLow = Math.min(...baseline);
+  const normalHigh = Math.max(...baseline);
+  const highs = hourly24h.map((p) => p.high).filter((n) => n != null);
+  const lows = hourly24h.map((p) => p.low).filter((n) => n != null);
+  const newest = [...hourly24h].sort((a, b) => b.t - a.t)[0];
+  const mids12h = hourly24h.filter((p) => p.t >= nowMs - 12 * HOUR).map(mid2).filter((n) => n != null);
+  const avg12h = mids12h.length ? Math.round(mids12h.reduce((a, b) => a + b, 0) / mids12h.length) : null;
+  const avg1h = newest ? mid2(newest) : null;
+  const out = [];
+  const maxHigh = highs.length ? Math.max(...highs) : null;
+  if (maxHigh != null && maxHigh >= normalHigh * SPIKE_MULT && latest.high != null && latest.high > normalHigh) {
+    out.push({ direction: "spike", extreme: maxHigh, normalLow, normalHigh, pctBeyond: (maxHigh / normalHigh - 1) * 100, avg12h, avg1h });
+  }
+  const minLow = lows.length ? Math.min(...lows) : null;
+  if (minLow != null && minLow <= normalLow * DUMP_MULT && latest.low != null && latest.low < normalLow) {
+    out.push({ direction: "dump", extreme: minLow, normalLow, normalHigh, pctBeyond: (1 - minLow / normalLow) * 100, avg12h, avg1h });
+  }
+  if (out.length === 0) return null;
+  return out.sort((a, b) => b.pctBeyond - a.pctBeyond)[0];
+}
+function screenCandidates(items, anchors) {
+  const scored = [];
+  for (const it of items) {
+    if (!(it.volume >= it.geLimit && it.hourVolume > 0)) continue;
+    const a = anchors[String(it.id)];
+    if (!a) continue;
+    const refs = [a.d1, a.d7].filter((n) => n != null && n > 0);
+    if (refs.length === 0) continue;
+    const cur = (it.buyPrice + it.sellPrice) / 2;
+    if (cur < MIN_SCREEN_PRICE) continue;
+    const up = cur / Math.min(...refs) - 1;
+    const down = 1 - cur / Math.max(...refs);
+    const move = Math.max(up, down);
+    if (move >= SCREEN_MOVE) scored.push({ id: it.id, move });
+  }
+  return scored.sort((a, b) => b.move - a.move).slice(0, MAX_CANDIDATES).map((s) => s.id);
+}
+function isCoolingDown(row, direction, price, nowMs) {
+  if (!row) return false;
+  if (nowMs - row.lastAlertAt.getTime() >= COOLDOWN_MS) return false;
+  const ratio = price / row.lastPrice;
+  const broke = direction === "spike" ? ratio >= 1 + COOLDOWN_BREAKOUT : ratio <= 1 - COOLDOWN_BREAKOUT;
+  return !broke;
+}
+function pickToSend(hits, cooldowns, nowMs, cap) {
+  const cool = new Map(cooldowns.map((c) => [`${c.itemId}:${c.direction}`, c]));
+  return hits.filter((h) => {
+    const price = h.detection.direction === "spike" ? h.latest.high : h.latest.low;
+    return price != null && !isCoolingDown(cool.get(`${h.itemId}:${h.detection.direction}`), h.detection.direction, price, nowMs);
+  }).sort((a, b) => b.detection.pctBeyond - a.detection.pctBeyond).slice(0, cap);
+}
+
+// server/outOfRange.ts
+var MAX_EMBEDS_PER_TICK = 5;
+var SUMMARY_TTL_MS = 5 * 60 * 1e3;
+var CONCURRENCY = 5;
+async function inChunks(xs, n, fn) {
+  const out = [];
+  for (let i = 0; i < xs.length; i += n) out.push(...await Promise.all(xs.slice(i, i + n).map(fn)));
+  return out;
+}
+async function findOutOfRange(items, nowMs = Date.now()) {
+  const [anchors, latestAll] = await Promise.all([getPriceAnchors(), getLatest()]);
+  const ids = screenCandidates(items, anchors);
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const hits = await inChunks(ids, CONCURRENCY, async (id) => {
+    const item = byId.get(id);
+    const quote = latestAll[String(id)];
+    if (!item || !quote) return null;
+    try {
+      const [week, full] = await Promise.all([getItemIntraday(id, 24 * 7), getItemPriceHistoryFull(id)]);
+      if (!week || !full) return null;
+      const series7d = week.map((p) => ({ t: new Date(p.date).getTime(), high: p.high ?? null, low: p.low ?? null }));
+      const hourly24h = series7d.filter((p) => p.t >= nowMs - 24 * 36e5);
+      const daily = full.daily.map((p) => ({ t: new Date(p.date).getTime(), price: p.price }));
+      const detection = detectOutOfRange(hourly24h, daily, { high: quote.high, low: quote.low }, nowMs);
+      if (!detection) return null;
+      return {
+        itemId: id,
+        name: item.name,
+        icon: item.icon,
+        geLimit: item.geLimit,
+        volume: item.volume,
+        margin: item.margin,
+        detection,
+        latest: quote,
+        series7d
+      };
+    } catch (error) {
+      console.error(`[outOfRange] ${id} failed:`, error);
+      return null;
+    }
+  });
+  return hits.filter((h) => h !== null).sort((a, b) => b.detection.pctBeyond - a.detection.pctBeyond);
+}
+var summaryCache = null;
+async function getOutOfRangeSummary() {
+  if (summaryCache && Date.now() - summaryCache.at < SUMMARY_TTL_MS) return summaryCache.rows;
+  const hits = await findOutOfRange(await getAllItemsForScanner());
+  const rows = hits.map((h) => ({
+    itemId: h.itemId,
+    direction: h.detection.direction,
+    extreme: h.detection.extreme,
+    normalLow: h.detection.normalLow,
+    normalHigh: h.detection.normalHigh,
+    pctBeyond: h.detection.pctBeyond
+  }));
+  summaryCache = { at: Date.now(), rows };
+  return rows;
+}
+async function runOutOfRangeAlerts(now = /* @__PURE__ */ new Date()) {
+  let cooldowns;
+  try {
+    cooldowns = await storage.getOutOfRangeCooldowns();
+  } catch (error) {
+    console.error("[outOfRange] cooldown read failed, sending nothing:", error);
+    return { found: 0, sent: 0, error: "cooldown read failed" };
+  }
+  const hits = await findOutOfRange(await getAllItemsForScanner(), now.getTime());
+  const batch = pickToSend(hits, cooldowns, now.getTime(), MAX_EMBEDS_PER_TICK);
+  if (batch.length === 0) return { found: hits.length, sent: 0 };
+  const ok = await sendOutOfRangeAlertsToDiscord(batch);
+  if (!ok) {
+    return process.env.DISCORD_OUT_OF_RANGE_WEBHOOK_URL || process.env.DISCORD_WEBHOOK_URL ? { found: hits.length, sent: 0, error: "discord post failed" } : { found: hits.length, sent: 0 };
+  }
+  try {
+    await storage.markOutOfRangeAlerted(
+      batch.map((h) => ({ itemId: h.itemId, direction: h.detection.direction, price: h.detection.direction === "spike" ? h.latest.high : h.latest.low })),
+      now
+    );
+  } catch (error) {
+    console.error("[outOfRange] cooldown write failed after send:", error);
+    return { found: hits.length, sent: batch.length, error: "cooldown write failed after send" };
+  }
+  return { found: hits.length, sent: batch.length };
+}
+
+// server/routes.ts
 var upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 }
   // 10MB max
 });
-var companionTokenTtlSeconds = 90 * 24 * 60 * 60;
-var companionTokenVersion = 1;
-var companionIngestRowSchema = z3.object({
-  itemName: z3.string().min(1),
-  quantity: z3.coerce.number().int().positive(),
-  price: z3.coerce.number().int().positive(),
-  type: z3.enum(["buy", "sell"]),
-  timestamp: z3.string().datetime().optional()
-});
-var companionIngestSchema = z3.object({
-  rows: z3.array(companionIngestRowSchema).min(1).max(500),
-  source: z3.string().max(100).optional()
-});
-var companionParseSchema = z3.object({
-  imageBase64: z3.string().min(100)
-});
-function encodeBase64Url2(value) {
-  const buffer = Buffer.isBuffer(value) ? value : Buffer.from(value, "utf8");
-  return buffer.toString("base64url");
-}
-function decodeBase64Url2(value) {
-  return Buffer.from(value, "base64url").toString("utf8");
-}
-function getCompanionTokenSecret() {
-  if (!process.env.SESSION_SECRET) {
-    throw new Error("SESSION_SECRET is required for companion tokens");
-  }
-  return process.env.SESSION_SECRET;
-}
-function createCompanionToken(userId) {
-  const payload = {
-    uid: userId,
-    exp: Math.floor(Date.now() / 1e3) + companionTokenTtlSeconds,
-    nonce: encodeBase64Url2(randomBytes2(12)),
-    v: companionTokenVersion
-  };
-  const payloadEncoded = encodeBase64Url2(JSON.stringify(payload));
-  const signature = createHmac2("sha256", getCompanionTokenSecret()).update(payloadEncoded).digest("base64url");
-  return `${payloadEncoded}.${signature}`;
-}
-function parseAndVerifyCompanionToken(token) {
-  const parts = token.split(".");
-  if (parts.length !== 2) return null;
-  const [payloadEncoded, providedSignature] = parts;
-  const expectedSignature = createHmac2("sha256", getCompanionTokenSecret()).update(payloadEncoded).digest("base64url");
-  if (providedSignature.length !== expectedSignature.length) {
-    return null;
-  }
-  const signatureIsValid = timingSafeEqual2(
-    Buffer.from(providedSignature),
-    Buffer.from(expectedSignature)
-  );
-  if (!signatureIsValid) return null;
-  try {
-    const payload = JSON.parse(decodeBase64Url2(payloadEncoded));
-    if (!payload || payload.v !== companionTokenVersion) return null;
-    if (!payload.uid || !payload.exp) return null;
-    if (Math.floor(Date.now() / 1e3) > payload.exp) return null;
-    return payload;
-  } catch {
-    return null;
-  }
-}
 function getBearerToken(req) {
   const auth = req.get("authorization");
   if (!auth) return null;
@@ -4459,185 +5117,6 @@ async function registerRoutes(app) {
       res.status(500).json({ message: "Failed to fetch user" });
     }
   });
-  app.get("/api/companion/token", isAuthenticated, async (req, res) => {
-    try {
-      const userId = req.user.claims.sub;
-      const token = createCompanionToken(userId);
-      const expiresAt = new Date(Date.now() + companionTokenTtlSeconds * 1e3).toISOString();
-      res.json({ token, expiresAt });
-    } catch (error) {
-      console.error("Failed to issue companion token:", error);
-      res.status(500).json({ error: "Failed to issue companion token" });
-    }
-  });
-  app.get("/api/companion/me", async (req, res) => {
-    try {
-      const token = getBearerToken(req);
-      if (!token) {
-        return res.status(401).json({ error: "Missing bearer token" });
-      }
-      const payload = parseAndVerifyCompanionToken(token);
-      if (!payload) {
-        return res.status(401).json({ error: "Invalid companion token" });
-      }
-      const user = await storage.getUser(payload.uid);
-      if (!user) {
-        return res.status(401).json({ error: "Unknown user for token" });
-      }
-      res.json({
-        user: {
-          id: user.id,
-          email: user.email,
-          firstName: user.firstName,
-          lastName: user.lastName
-        }
-      });
-    } catch (error) {
-      console.error("Companion auth check failed:", error);
-      res.status(500).json({ error: "Companion auth check failed" });
-    }
-  });
-  app.post("/api/companion/parse/ge-history", async (req, res) => {
-    try {
-      const token = getBearerToken(req);
-      if (!token) {
-        return res.status(401).json({ error: "Missing bearer token" });
-      }
-      const payload = parseAndVerifyCompanionToken(token);
-      if (!payload) {
-        return res.status(401).json({ error: "Invalid companion token" });
-      }
-      const user = await storage.getUser(payload.uid);
-      if (!user) {
-        return res.status(401).json({ error: "Unknown user for token" });
-      }
-      const parsed = companionParseSchema.safeParse(req.body);
-      if (!parsed.success) {
-        return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid payload" });
-      }
-      const imageBuffer = Buffer.from(parsed.data.imageBase64, "base64");
-      const ocr = await processGEHistoryScreenshot(imageBuffer);
-      res.json({
-        success: true,
-        rows: ocr.rows,
-        rawText: ocr.rawText,
-        confidence: ocr.overallConfidence
-      });
-    } catch (error) {
-      console.error("Companion parse failed:", error);
-      res.status(500).json({ error: "Companion parse failed" });
-    }
-  });
-  app.post("/api/companion/ingest/ge-history", async (req, res) => {
-    try {
-      const token = getBearerToken(req);
-      if (!token) {
-        return res.status(401).json({ error: "Missing bearer token" });
-      }
-      const payload = parseAndVerifyCompanionToken(token);
-      if (!payload) {
-        return res.status(401).json({ error: "Invalid companion token" });
-      }
-      const parsed = companionIngestSchema.safeParse(req.body);
-      if (!parsed.success) {
-        return res.status(400).json({ error: parsed.error.errors[0]?.message ?? "Invalid payload" });
-      }
-      const userId = payload.uid;
-      const existingFlips = await storage.getFlips(userId);
-      const openFlipsByItem = /* @__PURE__ */ new Map();
-      for (const flip of existingFlips) {
-        if (flip.deletedAt || flip.sellDate) continue;
-        const key = flip.itemName.trim().toLowerCase();
-        const arr = openFlipsByItem.get(key) ?? [];
-        arr.push(flip);
-        openFlipsByItem.set(key, arr);
-      }
-      openFlipsByItem.forEach((flips2) => {
-        flips2.sort((a, b) => new Date(b.buyDate).getTime() - new Date(a.buyDate).getTime());
-      });
-      let createdBuys = 0;
-      let matchedSells = 0;
-      let skippedDuplicates = 0;
-      let unmatchedSells = 0;
-      const processed = [];
-      for (const row of parsed.data.rows) {
-        const rowDate = row.timestamp ? new Date(row.timestamp) : /* @__PURE__ */ new Date();
-        const dateValue = Number.isNaN(rowDate.getTime()) ? /* @__PURE__ */ new Date() : rowDate;
-        const normalizedName = row.itemName.trim();
-        const itemKey = normalizedName.toLowerCase();
-        if (row.type === "buy") {
-          const duplicate = existingFlips.find((flip) => {
-            if (flip.deletedAt || flip.itemName.toLowerCase() !== itemKey) return false;
-            if (Number(flip.buyPrice) !== row.price) return false;
-            if ((flip.quantity ?? 1) !== row.quantity) return false;
-            const deltaMs = Math.abs(new Date(flip.buyDate).getTime() - dateValue.getTime());
-            return deltaMs <= 2 * 60 * 1e3;
-          });
-          if (duplicate) {
-            skippedDuplicates += 1;
-            continue;
-          }
-          const matches = await searchItems(normalizedName);
-          const bestMatch = matches[0];
-          const newFlip = await storage.createFlip(userId, {
-            itemName: bestMatch?.name ?? normalizedName,
-            itemId: bestMatch?.id,
-            itemIcon: bestMatch?.icon,
-            quantity: row.quantity,
-            buyPrice: row.price,
-            buyDate: dateValue,
-            strategyTag: "Other",
-            membershipStatus: "Unknown",
-            tradeType: "ge"
-          });
-          const openList = openFlipsByItem.get(itemKey) ?? [];
-          openList.unshift(newFlip);
-          openFlipsByItem.set(itemKey, openList);
-          createdBuys += 1;
-          processed.push({ type: "buy", itemName: newFlip.itemName, quantity: row.quantity, price: row.price });
-          continue;
-        }
-        const candidates = openFlipsByItem.get(itemKey) ?? [];
-        let candidateIndex = candidates.findIndex((flip) => (flip.quantity ?? 1) === row.quantity);
-        if (candidateIndex < 0) {
-          candidateIndex = 0;
-        }
-        if (candidateIndex < 0 || !candidates[candidateIndex]) {
-          unmatchedSells += 1;
-          continue;
-        }
-        const target = candidates[candidateIndex];
-        const existingNotes = target.notes ?? "";
-        const sourceNote = parsed.data.source ? `Imported from companion source=${parsed.data.source}` : "Imported from mac companion";
-        const nextNotes = existingNotes ? `${existingNotes}
-${sourceNote}` : sourceNote;
-        const updated = await storage.updateFlip(target.id, userId, {
-          sellPrice: row.price,
-          sellDate: dateValue,
-          notes: nextNotes
-        });
-        if (!updated) {
-          unmatchedSells += 1;
-          continue;
-        }
-        candidates.splice(candidateIndex, 1);
-        openFlipsByItem.set(itemKey, candidates);
-        matchedSells += 1;
-        processed.push({ type: "sell", itemName: updated.itemName, quantity: row.quantity, price: row.price });
-      }
-      res.json({
-        success: true,
-        createdBuys,
-        matchedSells,
-        skippedDuplicates,
-        unmatchedSells,
-        processedCount: processed.length
-      });
-    } catch (error) {
-      console.error("Companion ingest failed:", error);
-      res.status(500).json({ error: "Companion ingest failed" });
-    }
-  });
   app.get("/api/ge/price", async (req, res) => {
     try {
       const { name } = req.query;
@@ -4689,11 +5168,11 @@ ${sourceNote}` : sourceNote;
         return res.status(400).json({ error: "Invalid item ID" });
       }
       const period = req.query.period || "daily";
-      const validPeriods = ["daily", "weekly", "monthly", "yearly"];
+      const validPeriods = ["24h", "7d", "daily", "weekly", "monthly", "yearly"];
       if (!validPeriods.includes(period)) {
-        return res.status(400).json({ error: "Invalid period. Use: daily, weekly, monthly, yearly" });
+        return res.status(400).json({ error: "Invalid period. Use: 24h, 7d, daily, weekly, monthly, yearly" });
       }
-      const history = await getItemPriceHistory(itemId, period);
+      const history = period === "24h" || period === "7d" ? await getItemIntraday(itemId, period === "24h" ? 24 : 24 * 7) : await getItemPriceHistory(itemId, period);
       if (!history) {
         return res.status(404).json({ error: "Price history not found" });
       }
@@ -5348,12 +5827,6 @@ ${sourceNote}` : sourceNote;
   });
   app.get("/api/scanner/items", isAuthenticated, async (req, res) => {
     try {
-      const userId = req.user.claims.sub;
-      const user = await storage.getUser(userId);
-      const isAdminUser = user && (ADMIN_EMAILS.includes(user.email ?? "") || user.isAdmin === true);
-      if (!isAdminUser) {
-        return res.status(403).json({ error: "Admin access required" });
-      }
       const items = await getAllItemsForScanner();
       res.json(items);
     } catch (error) {
@@ -5361,14 +5834,46 @@ ${sourceNote}` : sourceNote;
       res.status(500).json({ error: "Failed to fetch scanner items" });
     }
   });
+  app.get("/api/alch/scan", isAuthenticated, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.user.claims.sub);
+      const isAdminUser = user && (ADMIN_EMAILS.includes(user.email ?? "") || user.isAdmin === true);
+      if (!isAdminUser) return res.status(403).json({ error: "Admin access required" });
+      const minVolume = Number(req.query.minVolume);
+      const limit = Number(req.query.limit);
+      res.json(
+        await getAlchOpportunities(
+          Number.isFinite(minVolume) && minVolume >= 0 ? minVolume : void 0,
+          Number.isFinite(limit) && limit > 0 ? Math.min(limit, 100) : void 0
+        )
+      );
+    } catch (error) {
+      console.error("Error building alch scan:", error);
+      res.status(500).json({ error: "Failed to build alch scan" });
+    }
+  });
+  app.get("/api/radar/themes", isAuthenticated, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.user.claims.sub);
+      const isAdminUser = user && (ADMIN_EMAILS.includes(user.email ?? "") || user.isAdmin === true);
+      if (!isAdminUser) return res.status(403).json({ error: "Admin access required" });
+      res.json(await getUpdateRadar());
+    } catch (error) {
+      console.error("Error building update radar:", error);
+      res.status(500).json({ error: "Failed to build update radar" });
+    }
+  });
+  app.get("/api/scanner/out-of-range", isAuthenticated, async (_req, res) => {
+    try {
+      res.json(await getOutOfRangeSummary());
+    } catch (error) {
+      console.error("Out-of-range summary error:", error);
+      res.status(500).json({ error: "Failed to load out-of-range items" });
+    }
+  });
   app.get("/api/scanner/item/:itemId/detail", isAuthenticated, async (req, res) => {
     try {
       const userId = req.user.claims.sub;
-      const user = await storage.getUser(userId);
-      const isAdminUser = user && (ADMIN_EMAILS.includes(user.email ?? "") || user.isAdmin === true);
-      if (!isAdminUser) {
-        return res.status(403).json({ error: "Admin access required" });
-      }
       const itemId = parseInt(req.params.itemId, 10);
       if (isNaN(itemId)) {
         return res.status(400).json({ error: "Invalid item ID" });
@@ -5376,21 +5881,36 @@ ${sourceNote}` : sourceNote;
       let indicators = null;
       let range7d = null;
       let range30d = null;
+      let outOfRange = null;
+      let lastPrice = 0;
       try {
         const fullHistory = await getItemPriceHistoryFull(itemId);
         if (fullHistory) {
-          if (fullHistory.monthly.length > 0) {
-            indicators = calculateTechnicalIndicators(fullHistory.monthly);
-          }
           if (fullHistory.daily.length > 0) {
+            indicators = calculateTechnicalIndicators(fullHistory.daily);
             range7d = calculateObservableRange(fullHistory.daily, 7);
             range30d = calculateObservableRange(fullHistory.daily, 30);
+            try {
+              const [week, latest] = await Promise.all([getItemIntraday(itemId, 24), getLatest()]);
+              const q = latest[String(itemId)];
+              if (week && q) {
+                outOfRange = detectOutOfRange(
+                  week.map((p) => ({ t: new Date(p.date).getTime(), high: p.high ?? null, low: p.low ?? null })),
+                  fullHistory.daily.map((p) => ({ t: new Date(p.date).getTime(), price: p.price })),
+                  { high: q.high, low: q.low },
+                  Date.now()
+                );
+              }
+            } catch (err) {
+              console.error(`Out-of-range lookup failed for item ${itemId}:`, err);
+            }
           }
+          lastPrice = fullHistory.daily.at(-1)?.price ?? fullHistory.monthly.at(-1)?.price ?? 0;
         }
       } catch (err) {
         console.error(`Failed to get price history for item ${itemId}:`, err);
       }
-      const currentPrice = indicators?.sma7 ?? 0;
+      const currentPrice = lastPrice;
       const smartPricingBase = calculateSmartPricing(
         currentPrice,
         indicators,
@@ -5414,7 +5934,8 @@ ${sourceNote}` : sourceNote;
         indicators,
         tradeStats,
         range7d,
-        range30d
+        range30d,
+        outOfRange
       });
     } catch (error) {
       console.error("Error fetching scanner item detail:", error);
@@ -5771,92 +6292,6 @@ ${sourceNote}` : sourceNote;
     } catch (error) {
       console.error("Failed to delete transaction:", error);
       res.status(500).json({ error: "Failed to delete transaction" });
-    }
-  });
-  app.post("/api/portfolio/import/screenshot", isAuthenticated, upload.single("screenshot"), async (req, res) => {
-    try {
-      if (!req.file) {
-        return res.status(400).json({ error: "No screenshot uploaded" });
-      }
-      const aiResult = await analyzeRS3Screenshot(req.file.buffer);
-      if (!aiResult.success) {
-        console.warn("[Import] AI vision failed, falling back to OCR:", aiResult.error);
-        const ocrResult = await processScreenshot(req.file.buffer);
-        const matchedItems2 = await matchItemsToGE(ocrResult.items, async (query) => {
-          const items = await searchItems(query);
-          return items.slice(0, 5);
-        });
-        return res.json({
-          items: matchedItems2,
-          rawText: ocrResult.rawText,
-          overallConfidence: ocrResult.overallConfidence,
-          method: "ocr"
-        });
-      }
-      const matchedItems = await Promise.all(
-        aiResult.items.map(async (item) => {
-          try {
-            const searchResults = await searchItems(item.name);
-            const bestMatch = searchResults.length > 0 ? searchResults[0] : null;
-            return {
-              original: {
-                name: item.name,
-                quantity: item.quantity,
-                confidence: item.confidence
-              },
-              match: bestMatch,
-              matchConfidence: bestMatch ? item.confidence * 0.9 : 0,
-              notes: item.notes
-            };
-          } catch (e) {
-            return {
-              original: {
-                name: item.name,
-                quantity: item.quantity,
-                confidence: item.confidence
-              },
-              match: null,
-              matchConfidence: 0,
-              notes: item.notes
-            };
-          }
-        })
-      );
-      res.json({
-        items: matchedItems,
-        rawText: aiResult.rawResponse,
-        overallConfidence: matchedItems.length > 0 ? matchedItems.reduce((sum, i) => sum + i.original.confidence, 0) / matchedItems.length : 0,
-        method: "ai"
-      });
-    } catch (error) {
-      console.error("Screenshot processing error:", error);
-      res.status(500).json({ error: "Failed to process screenshot" });
-    }
-  });
-  app.post("/api/portfolio/import/confirm", isAuthenticated, async (req, res) => {
-    try {
-      const userId = req.user.claims.sub;
-      const { items } = req.body;
-      if (!Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({ error: "No items to import" });
-      }
-      const createdHoldings = [];
-      for (const item of items) {
-        const validatedHolding = insertPortfolioHoldingSchema.parse({
-          itemId: item.itemId,
-          itemName: item.itemName,
-          itemIcon: item.itemIcon,
-          quantity: item.quantity,
-          avgBuyPrice: item.avgBuyPrice,
-          categoryId: item.categoryId,
-          source: "screenshot"
-        });
-        const holding = await storage.createPortfolioHolding(userId, validatedHolding);
-        createdHoldings.push(holding);
-      }
-      res.status(201).json(createdHoldings);
-    } catch (error) {
-      res.status(400).json({ error: "Invalid import data" });
     }
   });
   app.get("/api/portfolio/snapshots", isAuthenticated, async (req, res) => {
@@ -6641,6 +7076,82 @@ ${sourceNote}` : sourceNote;
     } catch (error) {
       console.error("Market movers error:", error);
       res.status(500).json({ error: "Failed to fetch market movers" });
+    }
+  });
+  app.get("/api/scanner/presets", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      res.json(await storage.getScannerPresets(req.user.claims.sub));
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch presets" });
+    }
+  });
+  app.post("/api/scanner/presets", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const preset = insertScannerPresetSchema.parse(req.body);
+      res.status(201).json(await storage.createScannerPreset(req.user.claims.sub, preset));
+    } catch (error) {
+      res.status(400).json({ error: error instanceof z4.ZodError ? error.errors[0]?.message : "Invalid preset" });
+    }
+  });
+  app.patch("/api/scanner/presets/:id", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const patch = insertScannerPresetSchema.partial().parse(req.body);
+      const updated = await storage.updateScannerPreset(req.params.id, req.user.claims.sub, patch);
+      if (!updated) return res.status(404).json({ error: "Preset not found" });
+      res.json(updated);
+    } catch (error) {
+      res.status(400).json({ error: error instanceof z4.ZodError ? error.errors[0]?.message : "Invalid preset" });
+    }
+  });
+  app.delete("/api/scanner/presets/:id", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const ok = await storage.deleteScannerPreset(req.params.id, req.user.claims.sub);
+      if (!ok) return res.status(404).json({ error: "Preset not found" });
+      res.status(204).send();
+    } catch (error) {
+      res.status(500).json({ error: "Failed to delete preset" });
+    }
+  });
+  app.post("/api/scanner/presets/:id/test", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const preset = await storage.getScannerPreset(req.params.id, req.user.claims.sub);
+      if (!preset) return res.status(404).json({ error: "Preset not found" });
+      const items = await getAllItemsForScanner();
+      res.json(await runPresetNow(preset, items, /* @__PURE__ */ new Date(), { force: true }));
+    } catch (error) {
+      console.error("Preset test error:", error);
+      res.status(500).json({ error: "Failed to run preset" });
+    }
+  });
+  app.post("/api/cron/alerts", async (req, res) => {
+    const secret = process.env.CRON_SECRET;
+    const token = getBearerToken(req);
+    const ok = !!secret && !!token && token.length === secret.length && timingSafeEqual2(Buffer.from(token), Buffer.from(secret));
+    if (!ok) return res.status(401).json({ error: "Unauthorized" });
+    try {
+      let presetsFailed = false;
+      let presets;
+      try {
+        presets = await runDueAlerts();
+      } catch (error) {
+        console.error("Preset alerts error:", error);
+        presetsFailed = true;
+        presets = { ran: 0, sent: 0, errors: [error instanceof Error ? error.message : String(error)] };
+      }
+      let outFailed = false;
+      let outOfRange;
+      try {
+        outOfRange = await runOutOfRangeAlerts();
+      } catch (error) {
+        console.error("Out-of-range alerts error:", error);
+        outFailed = true;
+        outOfRange = { found: 0, sent: 0, error: error instanceof Error ? error.message : String(error) };
+      }
+      const failed = presetsFailed || outFailed || !!outOfRange.error;
+      res.status(failed ? 500 : 200).json({ ...presets, outOfRange });
+    } catch (error) {
+      console.error("Cron alerts error:", error);
+      res.status(500).json({ error: "Failed to run alerts" });
     }
   });
   app.post("/api/discord/daily-summary", isAuthenticated, async (req, res) => {
