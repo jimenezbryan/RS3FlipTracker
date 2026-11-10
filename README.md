@@ -1,4 +1,3 @@
-[README.md](https://github.com/user-attachments/files/29591832/README.md)
 # RS3 Flip Tracker
 
 RS3 Flip Tracker, also branded as FlipSync, is a RuneScape 3 Grand Exchange tracking app for logging flips, reviewing profit, and spotting better trading opportunities. It combines live market data, AI-assisted suggestions, and portfolio tracking in one place.
@@ -56,16 +55,20 @@ Not every variable is required for local development, but `DATABASE_URL` is requ
 npm run dev
 ```
 
+### Checks
+
+```bash
+npm test
+npm run check
+```
+
+- `npm test` runs the test suite with the Node test runner (via `tsx`).
+- `npm run check` type-checks the project with the TypeScript compiler (`tsc`).
+
 ### Build
 
 ```bash
 npm run build
-```
-
-### Type Check
-
-```bash
-npm run check
 ```
 
 ## Project Structure
