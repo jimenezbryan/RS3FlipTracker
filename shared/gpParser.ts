@@ -52,15 +52,11 @@ export function parseGp(value: string): number | null {
  * Examples: 4300000000 -> "4.3B", 500000 -> "500K"
  */
 export function formatGpShorthand(value: number): string {
-  if (value >= 1000000000) {
-    const billions = value / 1000000000;
-    return billions % 1 === 0 ? `${billions}B` : `${billions.toFixed(2).replace(/\.?0+$/, '')}B`;
-  } else if (value >= 1000000) {
-    const millions = value / 1000000;
-    return millions % 1 === 0 ? `${millions}M` : `${millions.toFixed(2).replace(/\.?0+$/, '')}M`;
-  } else if (value >= 1000) {
-    const thousands = value / 1000;
-    return thousands % 1 === 0 ? `${thousands}K` : `${thousands.toFixed(1).replace(/\.?0+$/, '')}K`;
-  }
+  const abs = Math.abs(value);
+  const sign = value < 0 ? '-' : '';
+  // Number(toFixed) drops trailing zeros: 2.50 -> 2.5, 3.00 -> 3
+  if (abs >= 1000000000) return `${sign}${Number((abs / 1000000000).toFixed(2))}B`;
+  if (abs >= 1000000) return `${sign}${Number((abs / 1000000).toFixed(2))}M`;
+  if (abs >= 1000) return `${sign}${Number((abs / 1000).toFixed(1))}K`;
   return value.toLocaleString();
 }

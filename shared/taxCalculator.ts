@@ -1,3 +1,5 @@
+import { formatGpShorthand } from "./gpParser";
+
 // RS3 Grand Exchange Tax Calculator
 // Tax rules:
 // - Tax rate = 2% of sell price per item
@@ -106,15 +108,5 @@ export function calculateFlipTax(
   };
 }
 
-export function formatGp(value: number): string {
-  if (Math.abs(value) >= 1000000000) {
-    return `${(value / 1000000000).toFixed(1)}B`;
-  }
-  if (Math.abs(value) >= 1000000) {
-    return `${(value / 1000000).toFixed(1)}M`;
-  }
-  if (Math.abs(value) >= 1000) {
-    return `${(value / 1000).toFixed(1)}K`;
-  }
-  return value.toLocaleString();
-}
+// ponytail: kept as a name so its 23 call sites don't change; the format lives in gpParser (#17).
+export const formatGp = formatGpShorthand;

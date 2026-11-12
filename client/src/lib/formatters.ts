@@ -1,13 +1,7 @@
-export function formatGP(value: number): string {
-  if (Math.abs(value) >= 1_000_000_000) {
-    return `${(value / 1_000_000_000).toFixed(2)}B`;
-  } else if (Math.abs(value) >= 1_000_000) {
-    return `${(value / 1_000_000).toFixed(2)}M`;
-  } else if (Math.abs(value) >= 1_000) {
-    return `${(value / 1_000).toFixed(1)}K`;
-  }
-  return value.toLocaleString();
-}
+import { formatGpShorthand } from "@shared/gpParser";
+
+// ponytail: kept as a name so its 46 call sites don't change; the format lives in shared/gpParser (#17).
+export const formatGP = formatGpShorthand;
 
 /**
  * Exact gp, thousands-separated.
